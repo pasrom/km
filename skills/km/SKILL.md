@@ -17,7 +17,8 @@ Read `CONVENTIONS.md` in the repo root. If missing, offer to initialize (`/km in
 - `@name query` → search `brains/<name>/` (git submodule)
 - `@all query` → search all brains + current repo
 - No `@` → current repo only
-- Before searching a brain: if `.git/modules/brains/<name>/FETCH_HEAD` is >15 min old, run `git submodule update --remote brains/<name>` (fail silently)
+- Before searching a named brain: if `.git/modules/brains/<name>/FETCH_HEAD` is >15 min old, run `git submodule update --remote brains/<name>` (fail silently)
+- Before searching `@all`: run `git submodule update --remote brains/` to update all peer brains (fail silently)
 - Cite brain sources as `[name@hash] path/file.md`
 
 ## Brain management
