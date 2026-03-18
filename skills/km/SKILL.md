@@ -12,6 +12,19 @@ $ARGUMENTS
 
 Read `CONVENTIONS.md` in the repo root. If missing, offer to initialize (`/km init`).
 
+## Init (`/km init`)
+
+When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt):
+
+1. Ask for the user's author initials (e.g. `ABC`) — required for the `author` field default
+2. Ask which domain folders to add (optional — skip to use `inbox/` only)
+3. Read `CONVENTIONS.template.md` from the same directory as this SKILL.md
+4. Replace `<initials>` placeholder with the provided initials
+5. Add any domain folders to the Folder Structure table
+6. Write `CONVENTIONS.md` to the repo root
+7. Create `inbox/` folder with a minimal `_index.md` (frontmatter + one-line description)
+8. Commit: `chore: initialize knowledge base conventions`
+
 ## Brain support (`@` prefix)
 
 - `@name query` → search `brains/<name>/` (git submodule)
