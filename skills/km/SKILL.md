@@ -23,7 +23,10 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 5. Add any domain folders to the Folder Structure table
 6. Write `CONVENTIONS.md` to the repo root
 7. Create `inbox/` folder with a minimal `_index.md` (frontmatter + one-line description)
-8. Commit: `chore: initialize knowledge base conventions`
+8. Read `CLAUDE.template.md` from the same directory as this SKILL.md
+9. Replace `<initials>` placeholder with the provided initials
+10. Write `CLAUDE.md` to the repo root (skip if it already exists)
+11. Commit: `chore: initialize knowledge base conventions`
 
 ## Brain support (`@` prefix)
 
