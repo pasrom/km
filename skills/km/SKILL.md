@@ -64,6 +64,49 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 - **Update:** Preserve frontmatter, update `date` field, show diff
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
 
+## Lint (`/km lint`)
+
+Periodic health check for knowledge base consistency. Run all checks and report findings grouped by severity.
+
+### Scope
+
+Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude files exempt from frontmatter per CONVENTIONS.md, plus `_index.md` files and `brains/`.
+
+### Checks
+
+**🔴 Errors** (break conventions — must fix):
+- Missing required frontmatter fields (per CONVENTIONS.md Frontmatter Schema)
+- Invalid `type` or `status` values (not in CONVENTIONS.md schema)
+- `superseded` status without `superseded_by:` field (or vice versa)
+- If file A has `supersedes: B.md`, file B must have `status: superseded` and `superseded_by: A.md`
+- `related:`, `supersedes:`, `superseded_by:` pointing to non-existent files. Resolve repo-root-relative first, then file-relative
+- Broken markdown links (`[text](path.md)`) to local files
+
+**🟡 Warnings** (reduce quality — should fix):
+- `status: draft` documents with no git commits touching them in >30 days (use `git log -1 --format=%ct -- <file>`)
+- Folders containing `.md` files but no `_index.md`
+- `_index.md` that doesn't link all non-index `.md` files in its folder
+- Files in `inbox/` with first git commit date >14 days ago
+
+**🔵 Suggestions** (nice to fix):
+- Orphaned pages: no incoming `related:` references AND not listed in any `_index.md`
+- Empty `tags: []` array
+
+### Output format
+
+```
+## KB Lint Report — <date>
+
+### 🔴 Errors (<count>)
+...
+### 🟡 Warnings (<count>)
+...
+### 🔵 Suggestions (<count>)
+...
+### Summary
+<total files> files, <errors> errors, <warnings> warnings, <suggestions> suggestions
+```
+
 ## Rules
 
 - Respond in the user's language
