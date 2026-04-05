@@ -64,6 +64,16 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 - **Update:** Preserve frontmatter, update `date` field, show diff
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
 
+### Ripple update (after every save/update)
+
+After writing the main file, update related pages before committing:
+
+1. **Cross-reference:** Find up to 5 related files (ranked by: shared `project:` > shared tags > same folder). Add the new file's repo-root-relative path to their `related:` frontmatter (create the field if absent). Only add genuinely useful links
+2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist — do not create new `_index.md`)
+3. **Confirm:** List all proposed ripple updates and wait for user approval before committing
+
+Ripple is **one level deep** — never cascade into further ripple updates. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added.
+
 ## Lint (`/km lint`)
 
 Periodic health check for knowledge base consistency. Run all checks and report findings grouped by severity.
