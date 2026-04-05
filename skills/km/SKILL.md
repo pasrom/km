@@ -53,6 +53,12 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 
 Response: summary, sources (with paths), recency, gaps, related topics.
 
+### Query-to-wiki
+
+After answering, check: did the response synthesize information from 3+ sources or establish connections not found in any single file? If yes, offer to save the synthesis as a `type: summary` document. Use the standard save flow (frontmatter, folder placement, ripple update). The `related:` field should list all source files used in the synthesis.
+
+Do not offer for simple lookups or single-source answers.
+
 ## Writing content
 
 All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. Always confirm before writing. Commit with `docs(<scope>): <description>`.
