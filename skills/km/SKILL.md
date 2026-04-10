@@ -28,19 +28,44 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 10. Write `CLAUDE.md` to the repo root (skip if it already exists)
 11. Commit: `chore: initialize knowledge base conventions`
 
-## Brain support (`@` prefix)
+## `@` prefix — brains and shared resources
 
-- `@name query` → search `brains/<name>/` (git submodule)
-- `@all query` → search all brains + current repo
+### Routing
+
+- `@<name>` → resolve in this order: (1) `brains/<name>/` if it exists, (2) shared resource `<name>/` if it exists. First match wins
+- `@all` → search current repo, then all brains, then all shared resources
 - No `@` → current repo only
-- Before searching a named brain: if `.git/modules/brains/<name>/FETCH_HEAD` is >15 min old, run `git submodule update --remote brains/<name>` (fail silently)
-- Before searching `@all`: run `git submodule update --remote brains/` to update all peer brains (fail silently)
-- Cite brain sources as `[name@hash] path/file.md`
+
+### Brains (peer knowledge bases)
+
+- Located under `brains/<name>/` (git submodules)
+- Sync: if `.git/modules/brains/<name>/FETCH_HEAD` is >15 min old, run `git submodule update --remote brains/<name>` (fail silently)
+
+### Shared resources (self-describing repos)
+
+Any git submodule **not** under `brains/` is a shared resource. Discover them from `.gitmodules`.
+
+- On first `@<name>` query in a session, read `<name>/CLAUDE.md` to learn the repo's search scope, file types, commands, and citation format. Cache this for the rest of the session
+- If `<name>/CLAUDE.md` is missing, fall back to recursive `.md` search in `<name>/`
+- Sync: check `.git/modules/<name>/FETCH_HEAD` age before updating. Default threshold: 15 min. The resource's `CLAUDE.md` may specify a different interval
+
+### `@all` sync
+
+Before searching, sync all submodules that are stale (FETCH_HEAD older than their threshold):
+1. `git submodule update --remote brains/` (fail silently)
+2. For each shared resource: check FETCH_HEAD age against its threshold, update if stale (fail silently)
+
+Then search in order: current repo → brains → shared resources.
+
+### Citation format
+
+- Brain sources: `[<name>@<hash>] path/file.md`
+- Shared resource sources: `[<name>] path/file.md` (or as specified in the resource's `CLAUDE.md`)
 
 ## Brain management
 
 - `brain add <url> [name]` → `git submodule add <url> brains/<name>`, validate CONVENTIONS.md exists, `git config submodule.recurse true`, commit
-- `brain list` → table: name, URL, commit, last updated
+- `brain list` → table: name, URL, commit, last updated. Discover shared resources from `.gitmodules` and list them in a separate section
 - `brain remove <name>` → confirm, `git submodule deinit -f` + `git rm -f`, commit
 
 ## Search strategy
@@ -86,7 +111,7 @@ Periodic health check for knowledge base consistency. Run all checks and report 
 
 ### Scope
 
-Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude files exempt from frontmatter per CONVENTIONS.md, plus `_index.md` files and `brains/`.
+Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude files exempt from frontmatter per CONVENTIONS.md, plus `_index.md` files, `brains/`, and all shared resource submodules (they have their own conventions).
 
 ### Checks
 
@@ -126,6 +151,6 @@ Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude f
 ## Rules
 
 - Respond in the user's language
-- Always cite sources. Brain sources: `[name@commit]`
+- Always cite sources (see "Citation format" above)
 - Prefer current repo over brains in contradictions; prefer newer info; mention conflicts
 - Never hallucinate — say if nothing found
