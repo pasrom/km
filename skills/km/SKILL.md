@@ -68,6 +68,32 @@ Then search in order: current repo → brains → shared resources.
 - `brain list` → table: name, URL, commit, last updated. Discover shared resources from `.gitmodules` and list them in a separate section
 - `brain remove <name>` → confirm, `git submodule deinit -f` + `git rm -f`, commit
 
+## Foreign-brain corrections (`brain fix @<name> ...`)
+
+Errors in a foreign brain are fixed as a **PR against the brain's own repo**, never silently overridden in the parent.
+
+Trigger: user says e.g. "fix this in @<brain>" / "das in @<brain> stimmt nicht", or an `@`-query would otherwise have to cite a known wrong statement — offer the PR instead. For shared resources, defer to the resource's `CONTRIBUTING.md` or `CLAUDE.md` if present.
+
+### Workflow
+
+Show the proposed diff and wait for explicit OK before any git write. Then, inside `brains/<name>/`:
+
+1. `gh auth status` — abort if not authenticated
+2. `git fetch origin && git checkout main && git pull --ff-only`
+3. Branch `fix/km-<slug>` (or `docs/km-<slug>` for non-bug edits)
+4. Apply the edit; follow the brain's own `CONVENTIONS.md` for frontmatter/naming and the Ripple update rules above
+5. Commit per "Writing content" conventions
+6. `git push -u origin <branch>` — if denied, `gh repo fork --remote=false`, push to fork, PR from fork
+7. `gh pr create` — body must **paraphrase, not paste** any parent-repo source that surfaced the error
+8. Return the PR URL
+
+### Hard rules
+
+- Never push to a brain's `main`, never `--force` push
+- Never bump the parent's submodule pointer to an unmerged branch — wait for merge, then `git submodule update --remote brains/<name>` from the parent
+- Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
+- If the brain has no `CONVENTIONS.md`, ask before editing — rules may live in `README` or `CONTRIBUTING`
+
 ## Search strategy
 
 1. Frontmatter tags (skip `status: obsolete/superseded` unless asked)
