@@ -79,6 +79,17 @@ Each main folder should have an `_index.md` with:
 - All content: English
 - Code comments: English
 
+## Audience Tags
+
+Documents have different audiences. Mark customer-shippable documents explicitly with the `customer-facing` tag in the `tags:` frontmatter array. AI assistants treat tagged documents under stricter rules:
+
+- No internal symbol names (e.g. C macros, function names)
+- No header file paths or implementation file references
+- No build-system specifics (Kconfig, environment variables, ...)
+- Open questions list only functional behavior and shared-interface wire format (e.g. CAN bit positions), never internal naming
+
+Internal-only documents (no `customer-facing` tag) keep full implementation detail — they exist to make work traceable for the team.
+
 ## Cross-References
 
 - Use relative markdown links: `[Title](../path/to/file.md)`
