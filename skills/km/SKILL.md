@@ -81,7 +81,7 @@ Show the proposed diff and wait for explicit OK before any git write. Then, insi
 1. `gh auth status` — abort if not authenticated
 2. `git fetch origin && git checkout main && git pull --ff-only`
 3. Branch `fix/km-<slug>` (or `docs/km-<slug>` for non-bug edits)
-4. Apply the edit; follow the brain's own `CONVENTIONS.md` for frontmatter/naming and the Ripple update rules above
+4. Apply the edit; follow the brain's own `CONVENTIONS.md` for frontmatter/naming and the Ripple update rules (see "Ripple update" below)
 5. Commit per "Writing content" conventions
 6. `git push -u origin <branch>` — if denied, `gh repo fork --remote=false`, push to fork, PR from fork
 7. `gh pr create` — body must **paraphrase, not paste** any parent-repo source that surfaced the error
