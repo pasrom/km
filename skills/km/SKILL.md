@@ -139,6 +139,8 @@ Periodic health check for knowledge base consistency. Run all checks and report 
 
 Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude files exempt from frontmatter per CONVENTIONS.md, plus `_index.md` files, `brains/`, and all shared resource submodules (they have their own conventions).
 
+**Prefer a machine-readable validator when present.** If the repo root has both `schema.yaml` and `scripts/validate.py`, run `uv run scripts/validate.py` (fallback: `python3 scripts/validate.py`) and use its output verbatim as the 🔴 Errors section — it is deterministic and also catches non-`/km` writers. The prose checks below are the **fallback** for repos without a validator, and still supply the 🟡 Warnings / 🔵 Suggestions the script does not cover.
+
 ### Checks
 
 **🔴 Errors** (break conventions — must fix):
