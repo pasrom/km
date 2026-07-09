@@ -26,7 +26,18 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 8. Read `CLAUDE.template.md` from the same directory as this SKILL.md
 9. Replace `<initials>` placeholder with the provided initials
 10. Write `CLAUDE.md` to the repo root (skip if it already exists)
-11. Commit: `chore: initialize knowledge base conventions`
+11. Copy `schema.base.yaml` and `validate.py` from this SKILL.md's directory into the repo (`schema.base.yaml` at the root; `validate.py` → `scripts/validate.py`). These are **km-owned** — refreshed via `/km upgrade`, never hand-edited
+12. Write a minimal `schema.local.yaml` at the repo root for repo-specific `skip_prefixes` / `exempt_files` (start with just a header comment; lists here EXTEND the base), and copy `.pre-commit-config.template.yaml` → `.pre-commit-config.yaml`
+13. Commit: `chore: initialize knowledge base conventions`
+
+## Upgrade (`/km upgrade`)
+
+Refresh the km-owned schema + validator without touching repo-specific overlays:
+
+1. Copy `schema.base.yaml` and `validate.py` from this SKILL.md's directory over the repo's `schema.base.yaml` and `scripts/validate.py`
+2. Leave `schema.local.yaml` untouched (repo-owned)
+3. Report `meta.schema_version` before → after, then run `uv run scripts/validate.py` (fallback `python3`) to confirm the repo still passes with **0 errors**
+4. Commit: `chore(km): upgrade schema/validator to <version>`
 
 ## `@` prefix — brains and shared resources
 
@@ -139,7 +150,7 @@ Periodic health check for knowledge base consistency. Run all checks and report 
 
 Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude files exempt from frontmatter per CONVENTIONS.md, plus `_index.md` files, `brains/`, and all shared resource submodules (they have their own conventions).
 
-**Prefer a machine-readable validator when present.** If the repo root has both `schema.yaml` and `scripts/validate.py`, run `uv run scripts/validate.py` (fallback: `python3 scripts/validate.py`) and use its output verbatim as the 🔴 Errors section — it is deterministic and also catches non-`/km` writers. The prose checks below are the **fallback** for repos without a validator, and still supply the 🟡 Warnings / 🔵 Suggestions the script does not cover.
+**Prefer a machine-readable validator when present.** If the repo root has `schema.base.yaml` (or a legacy `schema.yaml`) and `scripts/validate.py`, run `uv run scripts/validate.py` (fallback: `python3 scripts/validate.py`) and use its output verbatim as the 🔴 Errors section — it is deterministic, merges `schema.local.yaml` over the base, and also catches non-`/km` writers. The prose checks below are the **fallback** for repos without a validator, and still supply the 🟡 Warnings / 🔵 Suggestions the script does not cover.
 
 ### Checks
 

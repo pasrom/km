@@ -1,0 +1,112 @@
+# schema.base.yaml — CANONICAL frontmatter schema for /km knowledge bases.
+# A strict PROFILE of Open Knowledge Format (OKF) v0.1 plus a governance layer.
+# Owned by km (dotclaude); vendored into each brain and refreshed via `/km upgrade`.
+# Repo-specific scope (skip_prefixes / exempt_files / extra fields) lives in
+# schema.local.yaml, which validate.py merges OVER this file at runtime.
+# OKF base fields are wire-compatible; governance fields are OKF-tolerated extensions.
+
+meta:
+  okf_version: "0.1"
+  profile: "km"            # brains may override in schema.local.yaml (e.g. profile: "team-km")
+  schema_version: "1.1.0"
+
+fields:
+  # --- OKF base (externally OKF-conformant) ---
+  type:
+    required: true
+    enum: [note, concept, decision, transcript, artifact, summary, reference, verbatim-block]
+  title:
+    required: true
+  timestamp:              # OKF: ISO-8601 datetime of last meaningful change
+    required: true
+    format: iso8601
+    alias: date           # legacy `date` accepted and treated as timestamp
+  description:            # OKF: one-sentence summary
+    required: false
+  resource:               # OKF: URI of the underlying asset (datasheet / repo / API)
+    required: false
+  tags:
+    required: true
+    type: list
+
+  # --- Governance extensions (custom keys; OKF consumers preserve them) ---
+  status:
+    required: true
+    enum: [draft, review, accepted, superseded, obsolete]
+  author:
+    required: true
+  owner:                  # responsible for keeping the fact true (staleness)
+    required: false
+  review_by:              # review-by date
+    required: false
+    format: iso8601
+  project:
+    required: false
+  supersedes:
+    required: false
+    ref: true
+  superseded_by:
+    required: false
+    ref: true
+  related:
+    required: false
+    type: list
+    ref: true
+  participants:
+    required: false
+    type: list
+  sources:                # provenance pinning: path.md@hash (hash verified against git)
+    required: false
+    type: list
+    format: path_at_hash
+  language:
+    required: false
+    enum: [en, de]
+  translates:             # linked translation source: path.md@hash
+    required: false
+    format: path_at_hash
+
+  # --- Governance hardening (round 2 — adversarial review findings) ---
+  approved_by:            # who signed off — forge PR-approvals live outside git history
+    required: false
+  approved_at:            # when sign-off happened (audit-grade record inside the repo)
+    required: false
+    format: iso8601
+  audience:               # replaces the fragile free-form `customer-facing` tag
+    required: false
+    enum: [internal, customer]
+  claim_kategorie:        # regulated-claim routing — carbon/green/security are regulated text
+    required: false
+    enum: [technisch, umwelt, sicherheit, ir]
+  herkunft:               # human vs AI-drafted (AI feedback loop)
+    required: false
+    enum: [mensch, ki-entwurf]
+  gilt_fuer:              # scope a technical claim applies to (evidence anchor)
+    required: false
+  beleg:                  # evidence source for a claim
+    required: false
+  license:                # SPDX expression for cross-brain federation
+    required: false
+
+# Extra required fields per type — missing field is an ERROR
+type_rules:
+  decision:       { require: [status] }
+  transcript:     { require: [participants] }
+  verbatim-block: { require: [language, owner] }
+
+# Recommended fields per type — missing field is a WARNING (retroactive-friendly rollout).
+# `summary` provenance should be backfilled during review, not fabricated.
+type_rules_soft:
+  summary:        { recommend: [sources] }
+  verbatim-block: { recommend: [audience, approved_by, beleg] }
+
+# Status lifecycle constraints
+status_rules:
+  superseded_requires: [superseded_by]
+  obsolete_forbids: [superseded_by]
+  accepted_recommends: [approved_by, approved_at]   # soft rollout; flip to *_requires once backfilled
+
+# Universal defaults — brains EXTEND these in schema.local.yaml (lists are concatenated).
+exempt_files: [CLAUDE.md, README.md, CONVENTIONS.md, SKILL.md]
+skip_prefixes: [brains/]                 # peer brains carry their own conventions
+reserved_no_frontmatter: [index.md, log.md]
