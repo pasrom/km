@@ -75,15 +75,15 @@ fields:
   audience:               # replaces the fragile free-form `customer-facing` tag
     required: false
     enum: [internal, customer]
-  claim_kategorie:        # regulated-claim routing — carbon/green/security are regulated text
+  claim_category:         # regulated-claim routing: carbon/green/security are regulated text
     required: false
-    enum: [technisch, umwelt, sicherheit, ir]
-  herkunft:               # human vs AI-drafted (AI feedback loop)
+    enum: [technical, environmental, security, ir]
+  origin:                 # human vs AI-drafted (AI feedback loop)
     required: false
-    enum: [mensch, ki-entwurf]
-  gilt_fuer:              # scope a technical claim applies to (evidence anchor)
+    enum: [human, ai-draft]
+  valid_for:              # scope a technical claim applies to (evidence anchor)
     required: false
-  beleg:                  # evidence source for a claim
+  evidence:               # evidence source for a claim
     required: false
   license:                # SPDX expression for cross-brain federation
     required: false
@@ -98,7 +98,7 @@ type_rules:
 # `summary` provenance should be backfilled during review, not fabricated.
 type_rules_soft:
   summary:        { recommend: [sources] }
-  verbatim-block: { recommend: [audience, approved_by, beleg] }
+  verbatim-block: { recommend: [audience, approved_by, evidence] }
 
 # Status lifecycle constraints
 status_rules:
