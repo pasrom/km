@@ -4,22 +4,37 @@ This file defines the rules every AI assistant must follow when working with thi
 
 ## Frontmatter Schema
 
+The machine-readable schema is [`schema.base.yaml`](schema.base.yaml) — a strict profile of the
+[Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf),
+owned by `/km` and refreshed via `/km upgrade`. Repo-specific scope lives in
+[`schema.local.yaml`](schema.local.yaml), merged over the base at runtime. Both are enforced by
+[`scripts/validate.py`](scripts/validate.py) (run manually, in CI, or via the pre-commit hook).
+The block below is the human summary; `schema.base.yaml` + `schema.local.yaml` are authoritative.
+
 Every markdown file (except CLAUDE.md, README.md, CONVENTIONS.md, and SKILL.md files) must have YAML frontmatter:
 
 ```yaml
 ---
-title: "Descriptive title"
-type: <note|decision|concept|transcript|artifact|summary>
-date: YYYY-MM-DD
-author: <initials>
-status: <draft|accepted|superseded|obsolete>
-tags: [tag1, tag2, tag3]
-# Optional fields:
+type: <note|concept|decision|transcript|artifact|summary|reference|verbatim-block>  # required (OKF)
+title: "Descriptive title"                          # required
+timestamp: 2026-01-15T09:00:00Z                     # required (OKF); legacy `date: YYYY-MM-DD` still accepted
+author: <initials>                                  # required
+status: <draft|review|accepted|superseded|obsolete> # required
+tags: [tag1, tag2, tag3]                             # required
+# Optional (OKF base):
+description: "One-sentence summary."
+resource: "https://…"                               # URI of the underlying asset (datasheet / repo / API)
+# Optional (governance):
+owner: <name>                                       # responsible for keeping the fact true
+review_by: 2027-01-15                               # review-by date
 project: <project-name>
-supersedes: <filename.md>
-superseded_by: <filename.md>
-related: [file1.md, file2.md]
+supersedes: <path.md>
+superseded_by: <path.md>
+related: [path1.md, path2.md]
 participants: [name1, name2]
+sources: [path.md@abc1234]                          # provenance pinning (recommended for type: summary)
+language: <en|de>
+translates: <path.md@abc1234>                       # linked translation source
 ---
 ```
 
@@ -32,15 +47,18 @@ participants: [name1, name2]
 | `note` | Unstructured notes, observations | Free-form, no template required |
 | `transcript` | Meeting transcripts | Summary → Decisions → Actions → Raw transcript |
 | `artifact` | Deliverables, specs, formal documents | Structured per content |
-| `summary` | AI-generated summaries | Auto-generated with source references |
+| `summary` | AI-generated summaries | Auto-generated with pinned `sources:` |
+| `reference` | Reference material, lookups, how-tos, manuals | Structured per content |
+| `verbatim-block` | Approved prose reused **verbatim** in customer materials | Verbatim; change only via supersede |
 
 ## Status Lifecycle
 
 ```
-draft → accepted → superseded | obsolete
+draft → review → accepted → superseded | obsolete
 ```
 
 - `draft`: Work in progress
+- `review`: Submitted for review, not yet approved
 - `accepted`: Reviewed, current, valid
 - `superseded`: Replaced by newer document (set `superseded_by:` field)
 - `obsolete`: No longer relevant, no replacement
@@ -79,21 +97,18 @@ Each main folder should have an `_index.md` with:
 - All content: English
 - Code comments: English
 
-## Audience Tags
+## Audience
 
-Documents have different audiences. Mark customer-shippable documents explicitly with the `customer-facing` tag in the `tags:` frontmatter array. AI assistants treat tagged documents under stricter rules:
-
-- No internal symbol names (e.g. C macros, function names)
-- No header file paths or implementation file references
-- No build-system specifics (Kconfig, environment variables, ...)
-- Open questions list only functional behavior and shared-interface wire format (e.g. CAN bit positions), never internal naming
-
-Internal-only documents (no `customer-facing` tag) keep full implementation detail — they exist to make work traceable for the team.
+Documents have different audiences. Set the optional `audience:` field to `customer` for
+customer-shippable content; omit it (or set `internal`) otherwise. AI assistants can apply
+stricter rules to `audience: customer` documents (e.g. no internal identifiers, no build-system
+specifics) — define the exact rules for this repository here if needed.
 
 ## Cross-References
 
 - Use relative markdown links: `[Title](../path/to/file.md)`
-- Prefer `related:` frontmatter field for machine-readable links
+- `related:`, `supersedes:`, `superseded_by:` frontmatter fields use **repo-root-relative** paths
+  (e.g., `concepts/foo.md`), not paths relative to the linking file
 - Never duplicate content — link instead
 
 ## Obsolescence

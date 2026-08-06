@@ -19,7 +19,7 @@ See [CONVENTIONS.md](CONVENTIONS.md) for document structure, frontmatter schema,
 
 ## Repository Conventions
 
-- Every markdown file must have YAML frontmatter (`title`, `type`, `date`, `author`, `status`, `tags`)
+- Every markdown file must have YAML frontmatter (`title`, `type`, `timestamp`, `author`, `status`, `tags`)
 - Use your initials as `author` (e.g., `<initials>`)
 - Use `inbox/` for unsorted content
 - One idea per file — never duplicate, link instead
