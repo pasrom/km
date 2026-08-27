@@ -197,6 +197,50 @@ Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude f
 <total files> files, <errors> errors, <warnings> warnings, <suggestions> suggestions
 ```
 
+## Gate — optional serving-lint (opt-in)
+
+An **advisory** extension of `validate.py` for brains whose content is read by a wider
+audience or an AI/RAG layer. Off by default (existing brains unaffected, bit-identical).
+It catches honest mistakes before commit; it is **not** an enforcement boundary (a determined
+author can flip a field or disable it — the real boundary is the publish/release step).
+
+Enable in `schema.local.yaml` (repo overlay; never touched by `/km upgrade`):
+
+```yaml
+gate:
+  enabled: true
+  served_status: accepted          # which status counts as "served/shared"
+  customer_audience: customer      # audience value that must not name other customers
+  forbidden_terms_file: .gate-terms.txt   # gitignored: keep real customer names out of the repo
+  email_allowlist: [your-domain.com]
+  # forbidden_terms: [ACME]        # or inline (test/demo only)
+```
+
+Checks, keyed per concern (so an internal `accepted` doc may legitimately name a customer):
+- **secret** (ERROR) — AWS/GitHub keys, private-key headers in ANY tracked doc (incl. exempt/reserved
+  files like README/_index; excl. skip_prefixes) — a key needs no frontmatter.
+- **leak** (ERROR) — forbidden terms + external emails only in an `audience: customer` doc.
+- **bergab** (ERROR) — a served doc links to an unfinished (`draft`/`review`) doc; a link to
+  `superseded`/`obsolete` is a WARNING. Reuses the `status`/`audience` frontmatter, no new fields.
+- **freshness** (WARNING) — a served doc past its `review_by`.
+
+Findings are redacted. The link scan strips code fences; the secret/leak scans see the whole document
+(stricter, so a forbidden term inside a code sample still fails). A configured-but-missing
+`forbidden_terms_file` is a WARNING, not silent. Malformed OR unknown `gate:` config fails fast.
+
+### Promote (`km_promote.py`)
+
+`scripts/km_promote.py <slug> <source>` moves a note into the brain as a `status: review`
+doc, **dedups by slug** (updates the existing topic doc, never a duplicate), gates the
+candidate **before** placing it (a failing promote writes nothing), and prints a pointer to
+paste back into personal scratch instead of a copy. `--replace` overwrites an existing served
+doc and **invalidates its approval** (`status: review`, `approved_*` dropped); slug collisions
+across folders are a hard stop.
+
+Known limitations (advisory scope, follow-ups): whole-repo mode sees TRACKED files only;
+per-file mode does not check reverse edges (a target flipping to `draft` is caught only in a
+full run); link-form coverage is inline/reference/wiki/HTML/angle-bracket (not exhaustive).
+
 ## Rules
 
 - Respond in the user's language
