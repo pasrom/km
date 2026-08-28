@@ -37,6 +37,7 @@ import re
 import subprocess
 import sys
 import unicodedata
+import urllib.parse
 from collections import defaultdict
 from pathlib import Path
 
@@ -117,6 +118,14 @@ if _gate_cfg_errors:
 SERVED_STATUS = GATE.get("served_status", "accepted")
 CUSTOMER_AUDIENCE = GATE.get("customer_audience", "customer")
 EMAIL_ALLOWLIST = [d.lower() for d in (GATE.get("email_allowlist") or [])]
+_ci_raw = SCHEMA.get("check_index", False)
+if not isinstance(_ci_raw, bool):                       # fail-fast on a non-bool, matching gate.enabled
+    sys.exit(f"schema.local.yaml: check_index must be true or false, got {_ci_raw!r}")
+CHECK_INDEX = _ci_raw
+_isp = SCHEMA.get("index_skip_prefixes") or []
+if not (isinstance(_isp, list) and all(isinstance(x, str) for x in _isp)):
+    sys.exit("schema.local.yaml: index_skip_prefixes must be a list of strings")
+INDEX_SKIP_PREFIXES = tuple(_isp)                       # folders left out of the index lint but still valid link targets
 
 
 def _load_terms() -> list[str]:
@@ -149,7 +158,7 @@ SECRET_PATTERNS = {
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 HYPHENS = {0x2010: "-", 0x2011: "-", 0x2012: "-", 0x2013: "-", 0x2014: "-"}
 INLINE = re.compile(r"\]\(<?([^)>]+)>?\)")
-REFDEF = re.compile(r"(?m)^\s*\[[^\]]+\]:\s*(\S+)")
+REFDEF = re.compile(r"(?m)^\s*\[(?!\^)[^\]]+\]:\s*(<[^>]*>|\S+)")   # (?!\^) skips footnotes; <...> keeps a spaced target
 WIKI = re.compile(r"\[\[([^\]|]+)")
 HREF = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.I)
 TODAY = datetime.date.today()
@@ -305,6 +314,7 @@ def _norm(s: str) -> str:
 
 
 def _strip_code(s: str) -> str:
+    s = re.sub(r"<!--.*?-->", " ", s, flags=re.S)   # HTML comments are not links
     s = re.sub(r"```.*?```", " ", s, flags=re.S)
     return re.sub(r"`[^`]*`", " ", s)
 
@@ -319,6 +329,102 @@ def link_targets(text: str):
     for pat in (INLINE, REFDEF, WIKI, HREF):
         for m in pat.finditer(body):
             yield m.group(1)
+
+
+_TITLE = re.compile(r'^(\S.*?)\s+("[^"]*"|\'[^\']*\')\s*$')   # strip a quoted title (either quote may nest in the other)
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*:", re.I)        # any URL scheme (http:, mailto:, ftp:, ...)
+
+
+def _join_repo(base: str, target: str) -> str | None:
+    """Join a repo-relative link target onto `base` dir, collapse '.'/'..', reject escapes above
+    ROOT. Returns a normalized repo-relative path (no leading slash) or None."""
+    segs: list[str] = []
+    for seg in (f"{base}/{target}" if base else target).split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if not segs:
+                return None
+            segs.pop()
+        else:
+            segs.append(seg)
+    return "/".join(segs) or None
+
+
+def check_index_tree() -> None:
+    """Opt-in (check_index: true): navigation lint on `_index.md` files, reported as WARNINGS
+    (`_index.md` is otherwise excluded from article validation):
+      * index-missing    a folder holds CONTENT docs but has no `_index.md`
+      * index-incomplete an `_index.md` fails to link a content doc in its own folder
+      * index-dead-link  an `_index.md` links a `.md` that is not a tracked repo file
+    'Content docs' = real articles only (excludes `_index.md`, exempt files, and index.md/log.md
+    — the same notion is_validatable() uses). The dead-link scan runs on EVERY `_index.md`,
+    including a navigation hub whose folder has no direct docs. Link targets resolve against the
+    FULL git-TRACKED file set (not disk), so results are clone-stable and case-exact and a link
+    into a skip_prefixes folder is not dead; a relative target resolves document-relative first
+    then repo-root, an absolute /path at the root only; angle brackets, a quoted title and a
+    #fragment are stripped and %-escapes decoded first. Scope is per-folder sibling completeness
+    (each subfolder owns its own `_index.md`), not cross-folder reachability. `skip_prefixes`
+    folders and `index_skip_prefixes` folders are not linted (the latter is the index-only opt-out,
+    leaving article validation on). Whole-repo only: skipped on per-file (pre-commit) runs."""
+    res = subprocess.run(["git", "ls-files", "-z", "*.md"], cwd=ROOT, capture_output=True, text=True)
+    if res.returncode != 0:
+        return
+    tracked = {p for p in res.stdout.split("\x00") if p}             # existence oracle: ALL tracked .md
+    walk = {p for p in tracked                                      # only these folders are linted
+            if not p.startswith(SKIP_PREFIXES) and not p.startswith(INDEX_SKIP_PREFIXES)}
+
+    def _resolve(base: str, raw: str) -> tuple[str | None, str]:
+        """(tracked repo path or None, cleaned target for reporting). Existence is checked against
+        the FULL tracked set, so a link into a skip_prefixes folder is NOT a dead link."""
+        t = str(raw).strip()
+        if t.startswith("<") and t.endswith(">"):
+            t = t[1:-1].strip()
+        mt = _TITLE.match(t)                       # drop a quoted markdown title (not a bare space)
+        if mt:
+            t = mt.group(1).strip()
+        t = urllib.parse.unquote(t.split("#", 1)[0].strip())
+        if not t or _SCHEME.match(t):
+            return None, ""                        # external / non-repo target: never a dead *repo* link
+        probe = t if t.endswith(".md") else t + ".md"
+        if probe.startswith("/"):
+            cands = (_join_repo("", probe.lstrip("/")),)              # absolute: root only
+        else:
+            cands = (_join_repo(base, probe), _join_repo("", probe))  # doc-relative first, then root
+        for cand in cands:
+            if cand and cand in tracked:
+                return cand, t
+        if not t.endswith(".md") and "/" not in t:                   # bare [[slug]]: repo-wide unique
+            return resolve_slug(t), t
+        return None, (t if t.endswith(".md") else "")                # unresolved slug/wiki: not a *.md dead link
+
+    by_folder: dict[str, list[str]] = defaultdict(list)
+    for p in walk:
+        by_folder[p.rsplit("/", 1)[0] if "/" in p else "."].append(p)
+    for folder, members in sorted(by_folder.items()):
+        base = "" if folder == "." else folder
+        docs = [m for m in members if is_validatable(m) and m.rsplit("/", 1)[-1] not in RESERVED_NF]
+        idx = "_index.md" if folder == "." else f"{folder}/_index.md"
+        if idx not in walk:
+            if docs:
+                warnings.append(("index-missing", f"{folder}/", f"folder has {len(docs)} content doc(s) but no _index.md"))
+            continue
+        idx_path = ROOT / idx
+        if not idx_path.is_file():                 # tracked but absent from the worktree (staged deletion)
+            warnings.append(("index-missing", f"{folder}/", "_index.md is tracked but absent from the worktree"))
+            continue
+        linked: set[str] = set()
+        dead: set[str] = set()                     # dedup identical dead targets
+        for _tgt in link_targets(idx_path.read_text(encoding="utf-8-sig", errors="replace")):
+            _tp, _clean = _resolve(base, _tgt)
+            if _tp:
+                linked.add(_tp)
+            elif _clean.endswith(".md"):
+                dead.add(_clean)
+        for _dl in sorted(dead):
+            warnings.append(("index-dead-link", idx, f"links missing {_dl}"))
+        for _d in sorted(set(docs) - linked):
+            warnings.append(("index-incomplete", idx, f"does not link {_d}"))
 
 
 # --- secret pre-pass: a key/token must never be committed to ANY tracked doc ---
@@ -449,6 +555,9 @@ def report(title: str, items: list[tuple[str, str, str]]) -> None:
         if len(rows) > 4:
             print(f"          ... +{len(rows) - 4} more")
 
+
+if CHECK_INDEX and not _args():   # whole-repo lint only; skip on per-file (pre-commit) runs
+    check_index_tree()
 
 report("ERRORS", errors)
 report("WARNINGS", warnings)
