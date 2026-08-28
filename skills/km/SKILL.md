@@ -36,7 +36,7 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 8. Read `CLAUDE.template.md` from the same directory as this SKILL.md
 9. Replace `<initials>` placeholder with the provided initials
 10. Write `CLAUDE.md` to the repo root (skip if it already exists)
-11. Copy `schema.base.yaml` and `validate.py` from this SKILL.md's directory into the repo (`schema.base.yaml` at the root; `validate.py` → `scripts/validate.py`). These are **km-owned** — refreshed via `/km upgrade`, never hand-edited
+11. Copy `schema.base.yaml`, `validate.py` and `km_promote.py` from this SKILL.md's directory into the repo (`schema.base.yaml` at the root; the two scripts into `scripts/`). These are **km-owned** — refreshed via `/km upgrade`, never hand-edited
 12. Write a minimal `schema.local.yaml` at the repo root for repo-specific `skip_prefixes` / `exempt_files` (start with just a header comment; lists here EXTEND the base), and copy `.pre-commit-config.template.yaml` → `.pre-commit-config.yaml`
 13. Commit: `chore: initialize knowledge base conventions`
 
@@ -44,7 +44,7 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 
 Refresh the km-owned schema + validator without touching repo-specific overlays:
 
-1. Copy `schema.base.yaml` and `validate.py` from this SKILL.md's directory over the repo's `schema.base.yaml` and `scripts/validate.py`
+1. Copy `schema.base.yaml`, `validate.py` and `km_promote.py` from this SKILL.md's directory over the repo's `schema.base.yaml`, `scripts/validate.py` and `scripts/km_promote.py`
 2. Leave `schema.local.yaml` untouched (repo-owned)
 3. Report `meta.schema_version` before → after, then run `uv run scripts/validate.py` (fallback `python3`) to confirm the repo still passes with **0 errors**
 4. Commit: `chore(km): upgrade schema/validator to <version>`

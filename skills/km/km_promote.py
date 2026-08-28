@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml"]
+# ///
 """km promote — safe: gate before placing, never destroy content silently.
 
 Vendored next to validate.py at `scripts/km_promote.py`. Moves a note into the brain as a
