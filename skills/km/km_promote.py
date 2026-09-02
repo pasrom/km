@@ -16,8 +16,12 @@ scratch instead of keeping a copy). Safety rules:
     approval (status -> review, approved_* dropped, timestamp bumped).
   * Slug collisions are a HARD STOP; a non-served target is refused; a peer-brain target is
     refused (correct a foreign brain via a PR against its own repo, never in the parent).
+  * A verbatim-block is never --replace'd (change it only via supersede).
+  * The source's own frontmatter is carried forward (type/title/author/tags/...); status, approval
+    and supersede fields are dropped and re-stamped, so a source WITH frontmatter never yields a
+    double header. A new doc needs --folder and a type+author (from --flags or the source).
 
-Usage: python3 scripts/km_promote.py <slug> <src> [--folder DIR] [--owner X] [--title T] [--replace]
+Usage: python3 scripts/km_promote.py <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--replace]
 """
 import argparse
 import datetime
@@ -67,13 +71,25 @@ def split_fm(txt: str):
     return {}, txt
 
 
-def status_of(p: Path):
-    fm, _ = split_fm(p.read_text(encoding="utf-8"))
-    return fm.get("status")
-
-
 def dump(fm: dict, body: str) -> str:
     return "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n\n" + body.strip() + "\n"
+
+
+def type_enum() -> set[str] | None:
+    """Allowed `type` values from the merged schema, or None if unreadable (the gate still backstops)."""
+    vals: set[str] = set()
+    for name in ("schema.base.yaml", "schema.local.yaml"):
+        p = ROOT / name
+        if not p.is_file():
+            continue
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            continue
+        enum = ((data.get("fields") or {}).get("type") or {}).get("enum")
+        if isinstance(enum, list):
+            vals.update(str(v) for v in enum)
+    return vals or None
 
 
 def run_gate(target: Path):
@@ -86,12 +102,14 @@ def run_gate(target: Path):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Promote a scratch note into the brain as a status: review doc.")
     ap.add_argument("slug")
     ap.add_argument("source")
-    ap.add_argument("--folder", default="topics")
-    ap.add_argument("--owner", default="RPA")
-    ap.add_argument("--title", default=None)
+    ap.add_argument("--folder", default=None, help="target folder (required when creating a new doc)")
+    ap.add_argument("--type", dest="doctype", default=None, help="doc type (else taken from the source frontmatter)")
+    ap.add_argument("--title", default=None, help="title override (else source frontmatter, else the slug)")
+    ap.add_argument("--author", default=None, help="author (else taken from the source frontmatter)")
+    ap.add_argument("--owner", default=None, help="owner for staleness (optional)")
     ap.add_argument("--replace", action="store_true")
     a = ap.parse_args()
 
@@ -99,7 +117,8 @@ def main() -> int:
         print(f"promote: REFUSED — slug must be a single path segment (no '/' or '..'), got {a.slug!r}")
         return 2
 
-    body = Path(a.source).read_text(encoding="utf-8").strip()
+    src_fm, body = split_fm(Path(a.source).read_text(encoding="utf-8"))   # strip source frontmatter -> no doubling
+    body = body.strip()
     today = datetime.date.today().isoformat()
     review_by = (datetime.date.today() + datetime.timedelta(days=180)).isoformat()
     prefixes = submodule_prefixes()
@@ -113,15 +132,18 @@ def main() -> int:
 
     existing = hits[0] if hits else None
     if existing:
-        st = status_of(existing)
-        if st != "accepted":
-            print(f"promote: REFUSED — target {existing.relative_to(ROOT)} is not served (status={st!r}).")
+        ex_fm, _old = split_fm(existing.read_text(encoding="utf-8"))
+        if ex_fm.get("type") == "verbatim-block":
+            print(f"promote: REFUSED — {existing.relative_to(ROOT)} is a verbatim-block; change it only via supersede, not --replace.")
+            return 2
+        if ex_fm.get("status") != "accepted":
+            print(f"promote: REFUSED — target {existing.relative_to(ROOT)} is not served (status={ex_fm.get('status')!r}).")
             return 2
         if not a.replace:
             print(f"promote: REFUSED — {existing.relative_to(ROOT)} exists. Re-run with --replace")
             print("         (that invalidates its approval and sets status: review).")
             return 2
-        fm, _old = split_fm(existing.read_text(encoding="utf-8"))
+        fm = ex_fm
         fm["status"] = "review"
         fm.pop("approved_by", None)
         fm.pop("approved_at", None)
@@ -129,19 +151,36 @@ def main() -> int:
         target = existing
         action = "replaced existing served doc (approval invalidated -> status: review)"
     else:
+        if not a.folder:
+            print("promote: REFUSED — a new doc needs --folder DIR (there is no default).")
+            return 2
+        doctype = a.doctype or src_fm.get("type")
+        if not doctype:
+            print("promote: REFUSED — no type; pass --type or give the source frontmatter a type.")
+            return 2
+        allowed = type_enum()
+        if allowed and doctype not in allowed:
+            print(f"promote: REFUSED — type {doctype!r} not in the schema enum ({', '.join(sorted(allowed))}).")
+            return 2
+        author = a.author or src_fm.get("author")
+        if not author:
+            print("promote: REFUSED — no author; pass --author or give the source frontmatter an author.")
+            return 2
+        title = a.title or src_fm.get("title") or a.slug.replace("-", " ").title()
         target = ROOT / a.folder / f"{a.slug}.md"
-        title = a.title or a.slug.replace("-", " ").title()
-        fm = {
-            "type": "concept",
-            "title": title,
-            "timestamp": today,
-            "author": a.owner,
-            "status": "review",
-            "tags": [a.slug],
-            "owner": a.owner,
-            "audience": "internal",
-            "review_by": review_by,
-        }
+        # carry the source's own frontmatter, dropping provenance that must not survive a promote
+        fm = {k: v for k, v in src_fm.items()
+              if k not in ("status", "approved_by", "approved_at", "superseded_by", "supersedes")}
+        fm["type"] = doctype
+        fm["title"] = title
+        fm["timestamp"] = today
+        fm["author"] = author
+        fm["status"] = "review"
+        fm.setdefault("tags", [a.slug])
+        if a.owner:
+            fm["owner"] = a.owner
+        fm.setdefault("audience", "internal")
+        fm.setdefault("review_by", review_by)
         action = "created new doc (status: review — submitted, not yet approved)"
 
     # containment: the target must live inside the repo and NOT inside a peer brain/submodule,

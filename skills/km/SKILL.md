@@ -230,12 +230,17 @@ Findings are redacted. The link scan strips code fences; the secret/leak scans s
 
 ### Promote (`km_promote.py`)
 
-`scripts/km_promote.py <slug> <source>` moves a note into the brain as a `status: review`
-doc, **dedups by slug** (updates the existing topic doc, never a duplicate), gates the
-candidate **before** placing it (a failing promote writes nothing), and prints a pointer to
-paste back into personal scratch instead of a copy. `--replace` overwrites an existing served
-doc and **invalidates its approval** (`status: review`, `approved_*` dropped); slug collisions
-across folders are a hard stop.
+`scripts/km_promote.py <slug> <source> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--replace]`
+moves a note into the brain as a `status: review` doc, **dedups by slug** (updates the existing
+topic doc, never a duplicate), gates the candidate **before** placing it (a failing promote writes
+nothing), and prints a pointer to paste back into personal scratch instead of a copy. The source's
+own frontmatter is **carried forward** (`type`/`title`/`author`/`tags`/…) and its `status`/approval/
+supersede fields are dropped and re-stamped, so a source that already has frontmatter never yields a
+double header; `--type`/`--title`/`--author` override it. A **new** doc needs `--folder` (no default)
+and a resolvable `type`+`author` (from a flag or the source). `--replace` overwrites an existing
+served doc and **invalidates its approval** (`status: review`, `approved_*` dropped), but a
+`verbatim-block` is **never** `--replace`d (change it only via supersede); slug collisions across
+folders are a hard stop.
 
 Known limitations (advisory scope, follow-ups): whole-repo mode sees TRACKED files only;
 per-file mode does not check reverse edges (a target flipping to `draft` is caught only in a

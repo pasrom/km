@@ -63,10 +63,26 @@ printf 'body\n' > "$T/src.txt"
 python3 "$T/scripts/km_promote.py" "../../../../tmp/km-escape" "$T/src.txt" >/dev/null 2>&1
 [ $? -eq 2 ] && [ ! -f /tmp/km-escape.md ] && ok "B1 slug escape refused" || no "B1 slug escape refused"
 
-# B2: --replace does not clobber a doc inside a peer brain (submodule)
+# B2: promoting a slug that also exists in a peer brain creates in the parent, never touches the peer
 acc "$T/brains/peer/shared.md" internal "peer content"
-python3 "$T/scripts/km_promote.py" "shared" "$T/src.txt" --replace >/dev/null 2>&1
+python3 "$T/scripts/km_promote.py" "shared" "$T/src.txt" --folder bms --type note --author X >/dev/null 2>&1
 grep -q 'status: accepted' "$T/brains/peer/shared.md" && ok "B2 peer-brain doc untouched" || no "B2 peer-brain doc untouched"
+
+# P1: a source WITH frontmatter keeps its type, re-stamps the lifecycle, and does not double the header
+printf -- '---\ntype: decision\ntitle: Src Title\ntimestamp: 2026-08-26\nauthor: Y\nstatus: draft\ntags: [t]\n---\ndecision body\n' > "$T/srcfm.md"
+python3 "$T/scripts/km_promote.py" "promoted-dec" "$T/srcfm.md" --folder bms >/dev/null 2>&1
+PF="$T/bms/promoted-dec.md"
+{ grep -q '^type: decision' "$PF" && [ "$(grep -c '^---$' "$PF")" = "2" ] && grep -q '^status: review' "$PF"; } \
+  && ok "promote carries source type + no double header" || no "promote carries source type + no double header"
+
+# P2: a new doc without --folder is refused (no silent 'topics' default)
+python3 "$T/scripts/km_promote.py" "no-folder" "$T/srcfm.md" >/dev/null 2>&1
+{ [ $? -eq 2 ] && [ ! -f "$T/bms/no-folder.md" ]; } && ok "new doc without --folder refused" || no "new doc without --folder refused"
+
+# P3: --replace on a verbatim-block is refused (change only via supersede)
+printf -- '---\ntype: verbatim-block\ntitle: VB\ntimestamp: 2026-08-26\nauthor: X\nstatus: accepted\nlanguage: en\nowner: X\naudience: internal\ntags: [t]\n---\nquote\n' > "$T/bms/vb.md"
+python3 "$T/scripts/km_promote.py" "vb" "$T/srcfm.md" --folder bms --replace >/dev/null 2>&1
+{ [ $? -eq 2 ] && grep -q '^status: accepted' "$T/bms/vb.md"; } && ok "verbatim-block replace refused" || no "verbatim-block replace refused"
 
 echo "smoke: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
