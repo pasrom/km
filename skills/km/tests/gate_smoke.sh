@@ -13,7 +13,7 @@ cp "$KM/km_promote.py" "$T/scripts/km_promote.py"
 cp "$KM/schema.base.yaml" "$T/schema.base.yaml"
 printf '[submodule "brains/peer"]\n  path = brains/peer\n  url = x\n' > "$T/.gitmodules"
 printf 'PROJECT-BLUEBIRD\nACME_CORP\n' > "$T/.gate-terms.txt"
-BASE_LOCAL=$'meta: {profile: smoke}\ngate:\n  enabled: true\n  forbidden_terms_file: .gate-terms.txt\n  email_allowlist: [example.org]\n'
+BASE_LOCAL=$'meta: {profile: smoke}\nauthor_default: RPA\ngate:\n  enabled: true\n  forbidden_terms_file: .gate-terms.txt\n  email_allowlist: [example.org]\n'
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 
 pass=0; fail=0
@@ -83,6 +83,44 @@ python3 "$T/scripts/km_promote.py" "no-folder" "$T/srcfm.md" >/dev/null 2>&1
 printf -- '---\ntype: verbatim-block\ntitle: VB\ntimestamp: 2026-08-26\nauthor: X\nstatus: accepted\nlanguage: en\nowner: X\naudience: internal\ntags: [t]\n---\nquote\n' > "$T/bms/vb.md"
 python3 "$T/scripts/km_promote.py" "vb" "$T/srcfm.md" --folder bms --replace >/dev/null 2>&1
 { [ $? -eq 2 ] && grep -q '^status: accepted' "$T/bms/vb.md"; } && ok "verbatim-block replace refused" || no "verbatim-block replace refused"
+
+# P4: author falls back to author_default (schema.local) when neither flag nor source provides one
+printf 'plain body, no frontmatter\n' > "$T/plain.txt"
+python3 "$T/scripts/km_promote.py" "def-author" "$T/plain.txt" --folder bms --type note >/dev/null 2>&1
+grep -q '^author: RPA' "$T/bms/def-author.md" && ok "author_default fills a sourceless author" || no "author_default fills a sourceless author"
+
+# P5: --stub-source leaves a VALID superseded redirect stub (gated), no duplicate
+mkdir -p "$T/inbox"
+printf -- '---\ntype: note\ntitle: Scratch\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nfull body\n' > "$T/inbox/scratch.md"
+python3 "$T/scripts/km_promote.py" "moved-topic" "$T/inbox/scratch.md" --folder bms --stub-source >/dev/null 2>&1
+python3 "$T/scripts/validate.py" "$T/inbox/scratch.md" >/dev/null 2>&1; stubrc=$?
+{ [ -f "$T/bms/moved-topic.md" ] && grep -q '^status: superseded' "$T/inbox/scratch.md" && grep -q 'superseded_by: bms/moved-topic.md' "$T/inbox/scratch.md" && [ "$stubrc" = "0" ]; } \
+  && ok "--stub-source: valid redirect stub, no duplicate" || no "--stub-source: valid redirect stub, no duplicate"
+
+# P6: a verbatim-block source yields a schema-VALID stub (language/owner survive; the stub is gated)
+printf -- '---\ntype: verbatim-block\ntitle: VBSrc\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\nlanguage: en\nowner: X\ntags: [t]\n---\nquote body\n' > "$T/inbox/vbsrc.md"
+python3 "$T/scripts/km_promote.py" "vb-moved" "$T/inbox/vbsrc.md" --folder bms --stub-source >/dev/null 2>&1
+python3 "$T/scripts/validate.py" "$T/inbox/vbsrc.md" >/dev/null 2>&1; vbrc=$?
+{ [ -f "$T/bms/vb-moved.md" ] && grep -q '^status: superseded' "$T/inbox/vbsrc.md" && grep -q '^language: en' "$T/inbox/vbsrc.md" && [ "$vbrc" = "0" ]; } \
+  && ok "verbatim-block stub keeps type_rules fields + validates" || no "verbatim-block stub keeps type_rules fields + validates"
+
+# P7: a source whose basename equals the slug is NOT mistaken for the existing served doc
+printf -- '---\ntype: note\ntitle: Foo\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nfoo body\n' > "$T/inbox/foo.md"
+python3 "$T/scripts/km_promote.py" "foo" "$T/inbox/foo.md" --folder bms >/dev/null 2>&1
+[ -f "$T/bms/foo.md" ] && ok "source basename == slug promotes (no self-dedup)" || no "source basename == slug promotes (no self-dedup)"
+
+# P8: an exempt source (README.md) is promoted but NOT turned into a stub
+printf 'clean readme body\n' > "$T/inbox/README.md"
+python3 "$T/scripts/km_promote.py" "readme-x" "$T/inbox/README.md" --folder bms --type note --author X --stub-source >/dev/null 2>&1
+{ [ -f "$T/bms/readme-x.md" ] && grep -q 'clean readme body' "$T/inbox/README.md" && ! grep -q '^status: superseded' "$T/inbox/README.md"; } \
+  && ok "exempt source not turned into a stub" || no "exempt source not turned into a stub"
+
+# P9: a non-string author_default is ignored (refuse, not author: [..])
+printf 'meta: {profile: smoke}\nauthor_default: [A, B]\ngate: {enabled: true}\n' > "$T/schema.local.yaml"
+printf 'plain body\n' > "$T/plain2.txt"
+python3 "$T/scripts/km_promote.py" "nd-author" "$T/plain2.txt" --folder bms --type note >/dev/null 2>&1
+{ [ $? -eq 2 ] && [ ! -f "$T/bms/nd-author.md" ]; } && ok "non-string author_default refused" || no "non-string author_default refused"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 
 echo "smoke: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
