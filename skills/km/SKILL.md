@@ -100,20 +100,24 @@ Trigger: user says e.g. "fix this in @<brain>" / "das in @<brain> stimmt nicht",
 
 The fix is made in a THROWAWAY clone, never in the mounted `brains/<name>/` working tree, so that
 tree stays on its pinned commit and the parent never drifts (no stray branch, no dirty pointer).
-Show the proposed diff and wait for explicit OK before any git write. Then:
+Show the proposed diff and wait for explicit OK. **Each step below runs in a fresh shell** — do not
+rely on env vars or an `EXIT` trap surviving between steps; use a FIXED working dir you retype
+verbatim in every command and delete explicitly at the end.
 
 1. `gh auth status` — abort if not authenticated.
-2. `SLUG="km-<short>-$(date +%Y%m%d)"` — the date suffix avoids colliding with a leftover branch from an earlier fix.
-3. Clone the brain into a temp dir and detach, so no local branch is created and the brain's real default branch is used:
+2. Pick a branch name `km-<short>-<YYYYMMDD>` (the date avoids colliding with a leftover branch) and a
+   fixed working dir, e.g. `/tmp/km-fix-<name>`, reused literally below.
+3. Clone the brain and detach (no local branch; the brain's real default branch is used):
    ```
-   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-   git clone "$(git -C brains/<name> remote get-url origin)" "$TMP"
-   git -C "$TMP" checkout --detach origin/HEAD
+   rm -rf /tmp/km-fix-<name>
+   git clone "$(git -C brains/<name> remote get-url origin)" /tmp/km-fix-<name>
+   git -C /tmp/km-fix-<name> checkout --detach origin/HEAD
    ```
-4. Apply the edit in `$TMP`; follow the brain's own `CONVENTIONS.md` for frontmatter/naming and the Ripple update rules (see "Ripple update" below). Commit per "Writing content" conventions.
-5. Push straight to a remote branch, without a local branch: `git -C "$TMP" push origin "HEAD:refs/heads/$SLUG"`. If push is denied: `gh repo fork --remote=false <owner>/<repo>`, then push by URL: `git -C "$TMP" push "https://github.com/<you>/<repo>.git" "HEAD:refs/heads/$SLUG"`.
-6. `gh pr create --head "$SLUG"` (fork path: `--head "<you>:$SLUG"`); the body must **paraphrase, not paste** any parent-repo source that surfaced the error.
-7. Return the PR URL. The trap removes the temp dir; the mounted submodule was never touched.
+4. Apply the edit under `/tmp/km-fix-<name>`; follow the brain's own `CONVENTIONS.md` for
+   frontmatter/naming and the Ripple update rules (see "Ripple update" below). Commit there per "Writing content".
+5. Push straight to a remote branch, no local branch: `git -C /tmp/km-fix-<name> push origin "HEAD:refs/heads/km-<short>-<YYYYMMDD>"`. If push is denied: `gh repo fork --remote=false <owner>/<repo>`, then push by URL: `git -C /tmp/km-fix-<name> push "https://github.com/<you>/<repo>.git" "HEAD:refs/heads/km-<short>-<YYYYMMDD>"`.
+6. `gh pr create --head "km-<short>-<YYYYMMDD>"` (fork path: `--head "<you>:km-<short>-<YYYYMMDD>"`); the body must **paraphrase, not paste** any parent-repo source that surfaced the error.
+7. Return the PR URL, then `rm -rf /tmp/km-fix-<name>`. The mounted submodule was never touched.
 
 ### Hard rules
 
@@ -131,11 +135,88 @@ links against it, never write in it.
 - **Read / cite** → the mounted submodule (pinned); a `[name@hash]` citation names a commit everyone can resolve.
 - **Occasional correction** to a foreign brain → the throwaway-clone `brain fix` flow above; the submodule is untouched.
 - **You are a PRIMARY author** of a brain (a team brain you feed regularly) → do NOT author it through a submodule. Keep a **standalone clone** of that brain and work there: `git switch -c <ticket>` for one change, or `git worktree add ../<brain>-<ticket> -b <ticket>` off that clone for two at once. Merges land in the brain's own repo; a personal brain only ever *reads* it (mounted submodule, or just point at the sibling clone).
+- **Contribute without write access** (you have READ on a shared/team brain) → `contribute @<name>` below: the throwaway-clone + PR (fork PR if read-only) flow, with the doc gated by the target brain's rules.
 
 Caveat when a brain you author in **itself mounts brains**: a fresh linked worktree has EMPTY
 submodule dirs until `git submodule update --init`, and the sync-staleness path is
 `git rev-parse --git-path modules/brains/<name>/FETCH_HEAD` (in a linked worktree `.git` is a file,
 so a literal `.git/modules/...` path is wrong).
+
+## Contributing content to a brain (`contribute @<name> ...`)
+
+Add or update a doc in a brain you have READ (not write) on, e.g. a shared team brain, from your own
+brain. Same throwaway-clone + PR recipe as `brain fix`; the edit is a **cross-repo `km_promote`**, so
+the doc is placed and gated by the TARGET brain's schema.
+
+**Prerequisites and invariants.** The target is mounted (`brain add <url>` first) so you can read/cite
+it and so `--finish` can point at it. The source is a doc in YOUR brain: refuse a source under
+`brains/<other>/` (route that to `brain fix`). **Each step runs in a fresh shell** — use a FIXED
+working dir retyped verbatim below (no `mktemp`+trap), deleted at the end. Show the proposed doc and
+wait for explicit OK. Then:
+
+1. `gh auth status`. Choose a branch name `<BR>` (a ticket key if there is one, else a short slug plus
+   date; a ticket is NOT required) and a fixed working dir `/tmp/km-contrib-<slug>`, reused below.
+2. Clone the target and detach:
+   ```
+   rm -rf /tmp/km-contrib-<slug>
+   git clone "$(git -C brains/<name> remote get-url origin)" /tmp/km-contrib-<slug>
+   git -C /tmp/km-contrib-<slug> checkout --detach origin/HEAD
+   ```
+   To ADD to an already-open contribution, `checkout --detach origin/<BR>` instead, and in step 7 skip
+   `gh pr create` if `gh pr list --head <BR>` already shows one.
+3. **Trusted gate.** Copy your OWN km-owned `scripts/validate.py`, `scripts/km_promote.py` and
+   `schema.base.yaml` into the clone (the target's `schema.local.yaml` stays), so trusted code gates
+   against the target's schema rather than the clone's scripts. (A `meta.schema_version` mismatch is
+   only a warning.)
+4. **Terms hand-off.** If the target's `schema.local.yaml` sets `gate.forbidden_terms_file`, that file
+   is out of git and the target's maintainer distributes it; put it at the path the target names,
+   inside the clone, before promoting. If you cannot get it, STOP — by design, the leak check must not
+   silently disable.
+5. Promote the source into the clone (cross-repo mode auto-applies: `--author` from YOUR identity,
+   source-repo refs/links stripped or refused):
+   ```
+   python3 /tmp/km-contrib-<slug>/scripts/km_promote.py <slug> "<ABS-path-to-source-in-your-brain>.md" \
+       --folder <target-folder> --author <your-initials> [--ticket KEY] [--type T]
+   ```
+   To UPDATE a doc already `accepted` on the target, add `--replace` (the PR then shows the approval
+   drop, which IS the review signal). A doc already in `review` on the target cannot be re-promoted;
+   edit it in the clone as in `brain fix`.
+6. Track the doc so `gen_index` sees it, regenerate the index, run the whole-repo gate, then commit
+   ONLY the doc and its index:
+   ```
+   git -C /tmp/km-contrib-<slug> add -- <target-folder>/<slug>.md   # track it FIRST: gen_index / check_index read git ls-files, so an untracked doc is invisible
+   [ -f /tmp/km-contrib-<slug>/scripts/gen_index.py ] \
+       && python3 /tmp/km-contrib-<slug>/scripts/gen_index.py \
+       || echo "no gen_index: add the doc to its folder's _index.md by hand"
+   git -C /tmp/km-contrib-<slug> add -- <target-folder>/_index.md
+   python3 /tmp/km-contrib-<slug>/scripts/validate.py    # WHOLE-REPO gate; the per-file promote gate never sees index-incomplete. Fix any error.
+   git -C /tmp/km-contrib-<slug> diff --cached --name-only   # MUST list ONLY the doc + its _index; the copied scripts/schema (and a terms file) stay UNSTAGED
+   git -C /tmp/km-contrib-<slug> commit -m "docs(<scope>): <what>"
+   ```
+   Never `git add -A`: the copied scripts, `schema.base.yaml` and any terms file must NOT be committed.
+   `gen_index.py` is TARGET code — read it before running (or hand-edit the index instead).
+7. Push and open the PR: `git -C /tmp/km-contrib-<slug> push origin "HEAD:refs/heads/<BR>"` (fork path
+   as in `brain fix` if push is denied), then `gh pr create --head "<BR>"`. Return the PR URL, then
+   `rm -rf /tmp/km-contrib-<slug>`. **Leave the source in your brain until the PR merges** — do not stub
+   a not-yet-merged contribution.
+
+### `contribute --finish <PR-url>` (after the PR merges)
+
+`gh pr view <PR> --json state,files` must show merged; take the merged path from `.files`. Then
+`git submodule update --remote brains/<name>` to pin the brain to the merged state, and turn the
+source in your brain into a redirect stub: keep its frontmatter but set `status: superseded` and
+`superseded_by: brains/<name>/<merged-path>` (point at the MERGED content, canonical even if a
+reviewer changed it on the branch), body a one-line pointer. Commit that in your brain (the stub plus
+the bumped submodule pointer). Before the sync `superseded_by` only warns; after, it resolves.
+
+### Hard rules
+
+- Prerequisite: the target is mounted (`brain add` first); the source is a doc in YOUR brain, never one under `brains/`.
+- Each step is a fresh shell: a FIXED working dir, no `mktemp`+trap; `rm -rf` it at the end.
+- Gate with YOUR km-owned `validate.py`/`km_promote.py` copied into the clone; treat the target's other scripts (`gen_index.py`) as target code (read before running, or hand-edit the index).
+- Run the WHOLE-REPO `validate.py` in the clone before pushing; the per-file promote gate does not catch index-incompleteness.
+- Commit ONLY the doc and its `_index.md` (`git add -- ...`, never `add -A`); never the copied scripts, `schema.base.yaml`, or a terms file.
+- `--author` is your identity; leave the source until merge, then `contribute --finish`.
 
 ## Search strategy
 
