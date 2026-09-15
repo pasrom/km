@@ -230,7 +230,7 @@ Findings are redacted. The link scan strips code fences; the secret/leak scans s
 
 ### Promote (`km_promote.py`)
 
-`scripts/km_promote.py <slug> <source> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--replace] [--stub-source]`
+`scripts/km_promote.py <slug> <source> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--ticket KEY] [--replace] [--stub-source]`
 moves a note into the brain as a `status: review` doc, **dedups by slug** (updates the existing
 topic doc, never a duplicate), gates the candidate **before** placing it (a failing promote writes
 nothing), and prints a pointer to paste back into personal scratch instead of a copy. The source's
@@ -238,7 +238,12 @@ own frontmatter is **carried forward** (`type`/`title`/`author`/`tags`/…) and 
 supersede fields are dropped and re-stamped, so a source that already has frontmatter never yields a
 double header; `--type`/`--title`/`--author` override it. A **new** doc needs `--folder` (no default)
 and a resolvable `type`+`author`. Author resolves `--author` > source frontmatter > `author_default`
-(a repo-local default in `schema.local.yaml`). `--replace` overwrites an existing served doc and
+(a repo-local default in `schema.local.yaml`). **Cross-repo** (the source lives outside this repo,
+e.g. promoting from a personal brain into a team brain): `--author` is required (the target's
+`author_default` would mis-attribute the source's author), `related`/`sources`/`translates`/`project`
+are dropped (they point at the source repo) and any body link into the source repo is refused;
+`--ticket KEY` (optional, any key, need not be a Jira ticket) stamps the `ticket` field. `--replace`
+overwrites an existing served doc and
 **invalidates its approval** (`status: review`, `approved_*` dropped), but a `verbatim-block` is
 **never** `--replace`d (change it only via supersede); slug collisions across folders are a hard stop.
 `--stub-source` rewrites an in-repo source note into a superseded redirect stub pointing at the

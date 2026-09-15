@@ -122,5 +122,39 @@ python3 "$T/scripts/km_promote.py" "nd-author" "$T/plain2.txt" --folder bms --ty
 { [ $? -eq 2 ] && [ ! -f "$T/bms/nd-author.md" ]; } && ok "non-string author_default refused" || no "non-string author_default refused"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 
+# X1: cross-repo promote (source OUTSIDE the repo) requires --author (no silent author_default)
+XSRC="$(mktemp -d)"
+printf -- '---\ntype: note\ntitle: X\ntimestamp: 2026-08-26\nstatus: draft\ntags: [t]\nrelated: [foo.md]\nproject: p\n---\nplain body\n' > "$XSRC/x.md"
+python3 "$T/scripts/km_promote.py" "xr-noauth" "$XSRC/x.md" --folder bms >/dev/null 2>&1
+{ [ $? -eq 2 ] && [ ! -f "$T/bms/xr-noauth.md" ]; } && ok "cross-repo without --author refused" || no "cross-repo without --author refused"
+
+# X2: cross-repo with --author strips source-repo refs (related/project) and sets --ticket
+python3 "$T/scripts/km_promote.py" "xr-ok" "$XSRC/x.md" --folder bms --author MSO --ticket ABC-9 >/dev/null 2>&1
+XF="$T/bms/xr-ok.md"
+{ [ -f "$XF" ] && grep -q '^author: MSO' "$XF" && grep -q '^ticket: ABC-9' "$XF" && ! grep -q '^related:' "$XF" && ! grep -q '^project:' "$XF"; } \
+  && ok "cross-repo strips refs + sets author/ticket" || no "cross-repo strips refs + sets author/ticket"
+
+# X3: cross-repo with a body link into the source repo is refused
+printf -- '---\ntype: note\ntitle: Y\ntimestamp: 2026-08-26\nauthor: MSO\nstatus: draft\ntags: [t]\n---\nsee [other](../other.md) and [[wiki-x]]\n' > "$XSRC/y.md"
+python3 "$T/scripts/km_promote.py" "xr-link" "$XSRC/y.md" --folder bms --author MSO >/dev/null 2>&1
+{ [ $? -eq 2 ] && [ ! -f "$T/bms/xr-link.md" ]; } && ok "cross-repo body link into source refused" || no "cross-repo body link into source refused"
+
+# X4: a source INSIDE a mounted brain is cross-repo (needs --author), not in-repo
+printf -- '---\ntype: note\ntitle: Z\ntimestamp: 2026-08-26\nstatus: draft\ntags: [t]\n---\nz\n' > "$T/brains/peer/z.md"
+python3 "$T/scripts/km_promote.py" "xr-sub" "$T/brains/peer/z.md" --folder bms >/dev/null 2>&1
+{ [ $? -eq 2 ] && [ ! -f "$T/bms/xr-sub.md" ]; } && ok "submodule source treated cross-repo (needs --author)" || no "submodule source treated cross-repo (needs --author)"
+
+# X5: a code fence containing [[ is not a link -> not refused
+printf -- '---\ntype: note\ntitle: F\ntimestamp: 2026-08-26\nauthor: MSO\nstatus: draft\ntags: [t]\n---\nshell:\n```bash\nif [[ -f x ]]; then echo hi; fi\n```\n' > "$XSRC/f.md"
+python3 "$T/scripts/km_promote.py" "xr-fence" "$XSRC/f.md" --folder bms --author MSO >/dev/null 2>&1
+[ -f "$T/bms/xr-fence.md" ] && ok "cross-repo: fenced [[ not treated as a link" || no "cross-repo: fenced [[ not treated as a link"
+
+# X6: a body link that RESOLVES in the target is allowed (the one link kind a contributed doc should have)
+printf 'x\n' > "$T/bms/exists.md"
+printf -- '---\ntype: note\ntitle: L\ntimestamp: 2026-08-26\nauthor: MSO\nstatus: draft\ntags: [t]\n---\nsee [E](bms/exists.md)\n' > "$XSRC/l.md"
+python3 "$T/scripts/km_promote.py" "xr-inlink" "$XSRC/l.md" --folder bms --author MSO >/dev/null 2>&1
+[ -f "$T/bms/xr-inlink.md" ] && ok "cross-repo: in-target link allowed" || no "cross-repo: in-target link allowed"
+rm -rf "$XSRC"
+
 echo "smoke: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

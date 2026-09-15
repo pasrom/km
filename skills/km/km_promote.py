@@ -25,11 +25,18 @@ scratch instead of keeping a copy). Safety rules:
     doc; the stub is built from the source's own frontmatter and gated the same way, skipped (source
     untouched) if it would be invalid. A source in another repo or a non-article (README/index/...)
     is left untouched. Runs only after the promote passes the gate.
+  * Cross-repo promote (source OUTSIDE this repo or inside a mounted brain, e.g. a personal brain ->
+    a team brain): --author is REQUIRED (the target's author_default would mis-attribute the source's
+    author); related/sources/translates/project/evidence and a non-web resource: are dropped (they
+    reference the source), and any body link that does NOT resolve in the target is refused (a dead
+    link / a leaked source path; code fences excluded). --replace keeps the existing doc's author.
+    --ticket (optional, any key, need not be a Jira ticket) stamps the `ticket` field.
 
-Usage: python3 scripts/km_promote.py <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--replace] [--stub-source]
+Usage: python3 scripts/km_promote.py <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--ticket KEY] [--replace] [--stub-source]
 """
 import argparse
 import datetime
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -176,6 +183,70 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
     print(f"stub: {src_rel} -> superseded, superseded_by: {target_rel}")
 
 
+_INLINE = re.compile(r"\]\(<?([^)>]+)>?\)")
+_REFDEF = re.compile(r"(?m)^\s*\[(?!\^)[^\]]+\]:\s*(<[^>]*>|\S+)")
+_WIKI = re.compile(r"\[\[([^\]|]+)")
+_HREF = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.I)
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*:", re.I)
+
+
+def _nz(v):
+    """A non-empty string, else None."""
+    return v if isinstance(v, str) and v.strip() else None
+
+
+def _strip_code(s: str) -> str:
+    s = re.sub(r"<!--.*?-->", " ", s, flags=re.S)
+    s = re.sub(r"```.*?```", " ", s, flags=re.S)
+    return re.sub(r"`[^`]*`", " ", s)
+
+
+def _resolves_in_repo(target_dir: Path, raw: str, wiki: bool) -> bool:
+    """Does a link target resolve to a file inside ROOT? Doc-relative then root-relative (containment
+    checked); a bare [[slug]] also repo-wide. A scheme URL or empty target counts as external."""
+    t = str(raw).strip()
+    if t.startswith("<") and t.endswith(">"):
+        t = t[1:-1].strip()
+    parts = t.split()
+    t = (parts[0] if parts else "").split("#", 1)[0].split("?", 1)[0].strip()
+    if not t or _SCHEME.match(t):
+        return True
+    if wiki and not t.endswith(".md"):
+        t = t + ".md"
+    for cand in (target_dir / t, ROOT / t.lstrip("/")):
+        try:
+            rp = cand.resolve()
+            rp.relative_to(ROOT)
+            if rp.is_file():
+                return True
+        except (ValueError, OSError):
+            continue
+    if wiki and "/" not in t:
+        try:
+            if any(p.is_file() for p in ROOT.rglob(t.rsplit("/", 1)[-1])):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def outward_links(body: str, target_dir: Path) -> list[str]:
+    """Links in `body` that do NOT resolve inside ROOT (dead / source-repo paths). Code stripped first."""
+    stripped = _strip_code(body)
+    out: list[str] = []
+    seen: set[str] = set()
+    for pat, wiki in ((_INLINE, False), (_REFDEF, False), (_WIKI, True), (_HREF, False)):
+        for m in pat.finditer(stripped):
+            raw = m.group(1)
+            if _resolves_in_repo(target_dir, raw, wiki):
+                continue
+            label = f"[[{raw.strip()}]]" if wiki else raw.strip()
+            if label not in seen:
+                seen.add(label)
+                out.append(label)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Promote a scratch note into the brain as a status: review doc.")
     ap.add_argument("slug")
@@ -187,6 +258,7 @@ def main() -> int:
     ap.add_argument("--owner", default=None, help="owner for staleness (optional)")
     ap.add_argument("--replace", action="store_true")
     ap.add_argument("--stub-source", action="store_true", help="rewrite an in-repo source note into a superseded stub pointing at the promoted doc")
+    ap.add_argument("--ticket", default=None, help="Jira/work-item key -> the `ticket` frontmatter field")
     a = ap.parse_args()
 
     if not a.slug or a.slug != Path(a.slug).name:
@@ -199,6 +271,10 @@ def main() -> int:
     review_by = (datetime.date.today() + datetime.timedelta(days=180)).isoformat()
     prefixes = submodule_prefixes()
     src_resolved = Path(a.source).resolve()
+    try:                                            # cross-repo = outside this repo OR inside a mounted brain
+        cross_repo = in_submodule(str(src_resolved.relative_to(ROOT)), prefixes)
+    except ValueError:
+        cross_repo = True
 
     hits = find_hits(a.slug, prefixes, exclude=src_resolved)   # the source is never its own "existing doc"
     if len(hits) > 1:
@@ -241,10 +317,14 @@ def main() -> int:
         if allowed and doctype not in allowed:
             print(f"promote: REFUSED — type {doctype!r} not in the schema enum ({', '.join(sorted(allowed))}).")
             return 2
-        _ad = cfg("author_default")
-        author = a.author or src_fm.get("author") or (_ad if isinstance(_ad, str) and _ad.strip() else None)
+        author = _nz(a.author) or _nz(src_fm.get("author"))   # a list/blank author never counts
+        if not author and not cross_repo:   # the target's author_default only applies to its OWN notes
+            author = _nz(cfg("author_default"))
         if not author:
-            print("promote: REFUSED — no author; pass --author, give the source an author, or set a string author_default in schema.local.yaml.")
+            hint = ("cross-repo promote must set --author (the target's author_default would mis-attribute the source's author)"
+                    if cross_repo else
+                    "pass --author, give the source an author, or set a string author_default in schema.local.yaml")
+            print(f"promote: REFUSED — no author; {hint}.")
             return 2
         title = a.title or src_fm.get("title") or a.slug.replace("-", " ").title()
         target = ROOT / a.folder / f"{a.slug}.md"
@@ -261,6 +341,11 @@ def main() -> int:
             fm["owner"] = a.owner
         fm.setdefault("audience", "internal")
         fm.setdefault("review_by", review_by)
+        if cross_repo:   # these reference the SOURCE repo and do not resolve in the target
+            for _k in ("related", "sources", "translates", "project", "evidence"):
+                fm.pop(_k, None)
+            if isinstance(fm.get("resource"), str) and not fm["resource"].startswith(("http://", "https://")):
+                fm.pop("resource", None)   # a non-web resource: URI points into the source machine/repo
         ident = {"type": doctype, "title": title, "author": author, "tags": fm.get("tags")}
         action = "created new doc (status: review — submitted, not yet approved)"
 
@@ -278,6 +363,16 @@ def main() -> int:
     if target.resolve() == src_resolved:
         print("promote: REFUSED — source and target are the same file.")
         return 2
+
+    if a.ticket:
+        fm["ticket"] = a.ticket
+    if cross_repo:   # a body link that does not resolve in the target is dead / leaks a source-repo path
+        _bad = outward_links(body, target.parent)
+        if _bad:
+            print("promote: REFUSED — cross-repo: body links that do not resolve in the target (dead / source-repo paths); rewrite or remove them:")
+            for _l in _bad[:10]:
+                print(f"  - {_l}")
+            return 2
 
     content = dump(fm, body)
     target.parent.mkdir(parents=True, exist_ok=True)
