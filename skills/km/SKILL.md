@@ -60,7 +60,7 @@ Refresh the km-owned schema + validator without touching repo-specific overlays:
 ### Brains (peer knowledge bases)
 
 - Located under `brains/<name>/` (git submodules)
-- Sync: if `.git/modules/brains/<name>/FETCH_HEAD` is >15 min old, run `git submodule update --remote brains/<name>` (fail silently)
+- Sync: run `git submodule update --remote brains/<name>` when `git rev-parse --git-path modules/brains/<name>/FETCH_HEAD` is >15 min old (that resolves correctly inside a linked worktree too, where `.git` is a file). If the update aborts because the submodule has a dirty or branch-checked-out working tree, do NOT swallow it — report `brains/<name> skipped: dirty (run brain reset <name>)` so the drift stays visible instead of a brain that silently stops syncing
 
 ### Shared resources (self-describing repos)
 
@@ -73,8 +73,8 @@ Any git submodule **not** under `brains/` is a shared resource. Discover them fr
 ### `@all` sync
 
 Before searching, sync all submodules that are stale (FETCH_HEAD older than their threshold):
-1. `git submodule update --remote brains/` (fail silently)
-2. For each shared resource: check FETCH_HEAD age against its threshold, update if stale (fail silently)
+1. `git submodule update --remote brains/`; surface any `brains/<name> skipped: dirty (run brain reset <name>)` rather than failing silently
+2. For each shared resource: check FETCH_HEAD age against its threshold, update if stale (report a dirty skip, do not fail silently)
 
 Then search in order: current repo → brains → shared resources.
 
@@ -88,6 +88,7 @@ Then search in order: current repo → brains → shared resources.
 - `brain add <url> [name]` → `git submodule add <url> brains/<name>`, validate CONVENTIONS.md exists, `git config submodule.recurse true`, commit
 - `brain list` → table: name, URL, commit, last updated. Discover shared resources from `.gitmodules` and list them in a separate section
 - `brain remove <name>` → confirm, `git submodule deinit -f` + `git rm -f`, commit
+- `brain reset <name>` → repair a drifted submodule (parent shows `+` / ` m`, or it stopped syncing). (1) `git -C brains/<name> status` and SHOW it; STOP if there are dirty files — they may be unpushed work, never discard them silently. (2) on OK: `git submodule update --init --checkout --force brains/<name>` (back to the pinned commit) and `git -C brains/<name> worktree prune`. (3) delete leftover local `fix/km-*` / `docs/km-*` branches whose PR has merged. With the throwaway-clone `brain fix` below, new drift no longer happens
 
 ## Foreign-brain corrections (`brain fix @<name> ...`)
 
@@ -97,23 +98,44 @@ Trigger: user says e.g. "fix this in @<brain>" / "das in @<brain> stimmt nicht",
 
 ### Workflow
 
-Show the proposed diff and wait for explicit OK before any git write. Then, inside `brains/<name>/`:
+The fix is made in a THROWAWAY clone, never in the mounted `brains/<name>/` working tree, so that
+tree stays on its pinned commit and the parent never drifts (no stray branch, no dirty pointer).
+Show the proposed diff and wait for explicit OK before any git write. Then:
 
-1. `gh auth status` — abort if not authenticated
-2. `git fetch origin && git checkout main && git pull --ff-only`
-3. Branch `fix/km-<slug>` (or `docs/km-<slug>` for non-bug edits)
-4. Apply the edit; follow the brain's own `CONVENTIONS.md` for frontmatter/naming and the Ripple update rules (see "Ripple update" below)
-5. Commit per "Writing content" conventions
-6. `git push -u origin <branch>` — if denied, `gh repo fork --remote=false`, push to fork, PR from fork
-7. `gh pr create` — body must **paraphrase, not paste** any parent-repo source that surfaced the error
-8. Return the PR URL
+1. `gh auth status` — abort if not authenticated.
+2. `SLUG="km-<short>-$(date +%Y%m%d)"` — the date suffix avoids colliding with a leftover branch from an earlier fix.
+3. Clone the brain into a temp dir and detach, so no local branch is created and the brain's real default branch is used:
+   ```
+   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+   git clone "$(git -C brains/<name> remote get-url origin)" "$TMP"
+   git -C "$TMP" checkout --detach origin/HEAD
+   ```
+4. Apply the edit in `$TMP`; follow the brain's own `CONVENTIONS.md` for frontmatter/naming and the Ripple update rules (see "Ripple update" below). Commit per "Writing content" conventions.
+5. Push straight to a remote branch, without a local branch: `git -C "$TMP" push origin "HEAD:refs/heads/$SLUG"`. If push is denied: `gh repo fork --remote=false <owner>/<repo>`, then push by URL: `git -C "$TMP" push "https://github.com/<you>/<repo>.git" "HEAD:refs/heads/$SLUG"`.
+6. `gh pr create --head "$SLUG"` (fork path: `--head "<you>:$SLUG"`); the body must **paraphrase, not paste** any parent-repo source that surfaced the error.
+7. Return the PR URL. The trap removes the temp dir; the mounted submodule was never touched.
 
 ### Hard rules
 
 - Never push to a brain's `main`, never `--force` push
 - Never bump the parent's submodule pointer to an unmerged branch — wait for merge, then `git submodule update --remote brains/<name>` from the parent
+- Never edit the mounted `brains/<name>/` working tree; every correction runs in the throwaway clone above (that is what keeps the parent drift-free). If a mounted submodule is already drifted, repair it with `brain reset <name>`
 - Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
 - If the brain has no `CONVENTIONS.md`, ask before editing — rules may live in `README` or `CONTRIBUTING`
+
+## Consuming vs. authoring a mounted brain
+
+A `brains/<name>/` submodule is a **read-only, pinned mirror**: query it, cite it, resolve uphill
+links against it, never write in it.
+
+- **Read / cite** → the mounted submodule (pinned); a `[name@hash]` citation names a commit everyone can resolve.
+- **Occasional correction** to a foreign brain → the throwaway-clone `brain fix` flow above; the submodule is untouched.
+- **You are a PRIMARY author** of a brain (a team brain you feed regularly) → do NOT author it through a submodule. Keep a **standalone clone** of that brain and work there: `git switch -c <ticket>` for one change, or `git worktree add ../<brain>-<ticket> -b <ticket>` off that clone for two at once. Merges land in the brain's own repo; a personal brain only ever *reads* it (mounted submodule, or just point at the sibling clone).
+
+Caveat when a brain you author in **itself mounts brains**: a fresh linked worktree has EMPTY
+submodule dirs until `git submodule update --init`, and the sync-staleness path is
+`git rev-parse --git-path modules/brains/<name>/FETCH_HEAD` (in a linked worktree `.git` is a file,
+so a literal `.git/modules/...` path is wrong).
 
 ## Search strategy
 
