@@ -512,6 +512,9 @@ for rel in _target_list:
         for r in STATUS_RULES.get("superseded_requires", []):
             if r not in fm:
                 errors.append(("status-rule", rel, f"superseded requires '{r}'"))
+        for r in STATUS_RULES.get("superseded_forbids", []):
+            if r in fm:
+                warnings.append(("status-rule", rel, f"superseded should not set '{r}'"))
     if st == "obsolete":
         for r in STATUS_RULES.get("obsolete_forbids", []):
             if r in fm:

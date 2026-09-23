@@ -193,8 +193,11 @@ wait for explicit OK. Then:
    git clone "$(git -C brains/<name> remote get-url origin)" /tmp/km-contrib-<slug>
    git -C /tmp/km-contrib-<slug> checkout --detach origin/HEAD
    ```
-   To ADD to an already-open contribution, `checkout --detach origin/<BR>` instead, and in step 7 skip
-   `gh pr create` if `gh pr list --head <BR>` already shows one.
+   To ADD to or EDIT an already-open contribution (a source carrying `contribution:`), check out its
+   PR head instead; `pull/<N>/head` exists on the target even when the branch lives in a fork:
+   `git -C /tmp/km-contrib-<slug> fetch origin pull/<N>/head && git -C /tmp/km-contrib-<slug> checkout --detach FETCH_HEAD`.
+   In step 7 push back to the PR's head (`gh pr view <N> --json headRepositoryOwner,headRepository,headRefName`:
+   the target itself or the contributor's fork) and skip `gh pr create`.
 3. **Trusted gate.** Copy your OWN km-owned `scripts/validate.py`, `scripts/km_promote.py` and
    `schema.base.yaml` into the clone (the target's `schema.local.yaml` stays), so trusted code gates
    against the target's schema rather than the clone's scripts. (A `meta.schema_version` mismatch is
@@ -231,17 +234,23 @@ wait for explicit OK. Then:
    one: where CI runs `gen_index --check`, a hand-written list fails unless it matches the generator.
 7. Push and open the PR: `git -C /tmp/km-contrib-<slug> push origin "HEAD:refs/heads/<BR>"` (fork path
    as in `brain fix` if push is denied), then `gh pr create --head "<BR>"`. Return the PR URL, then
-   `rm -rf /tmp/km-contrib-<slug>`. **Leave the source in your brain until the PR merges** — do not stub
-   a not-yet-merged contribution.
+   `rm -rf /tmp/km-contrib-<slug>`.
+8. **Mark the source pending** in YOUR brain: add `contribution: "<owner>/<repo>#<N>"` to its
+   frontmatter and commit (`docs(<scope>): mark <slug> pending in <owner>/<repo>#<N>`). It is a
+   marker, not a stub: the doc stays complete and keeps its `status` until the PR is decided (see the
+   hard rule on `contribution:`).
 
 ### `contribute --finish <PR-url>` (after the PR merges)
 
-`gh pr view <PR> --json state,files` must show merged; take the merged path from `.files`. Then
-`git submodule update --remote brains/<name>` to pin the brain to the merged state, and turn the
-source in your brain into a redirect stub: keep its frontmatter but set `status: superseded` and
-`superseded_by: brains/<name>/<merged-path>` (point at the MERGED content, canonical even if a
-reviewer changed it on the branch), body a one-line pointer. Commit that in your brain (the stub plus
-the bumped submodule pointer). Before the sync `superseded_by` only warns; after, it resolves.
+`gh pr view <PR> --json state,files` shows whether it merged or was closed. Every doc in your brain
+carrying `contribution: "<owner>/<repo>#<N>"` belongs to it (`grep -rl` finds them).
+
+- **Merged:** take each merged path from `.files` (canonical, even if a reviewer renamed or changed it
+  on the branch), `git submodule update --remote brains/<name>` to pin the brain to the merged state,
+  then for each source `python3 scripts/km_promote.py stub <source> --to brains/<name>/<merged-path>`.
+  It rewrites the source into a gated `superseded` redirect stub and drops `contribution:`; after the
+  sync `superseded_by` resolves. Commit the stubs plus the bumped submodule pointer.
+- **Closed unmerged:** delete the `contribution:` line; the doc is an ordinary doc of your brain again.
 
 ### Hard rules
 
@@ -250,7 +259,8 @@ the bumped submodule pointer). Before the sync `superseded_by` only warns; after
 - Gate with YOUR km-owned `validate.py`/`km_promote.py` copied into the clone; treat the target's other scripts (`gen_index.py`) as target code (read before running; step 6 says when a hand-edited index is acceptable).
 - Run the WHOLE-REPO `validate.py` in the clone before pushing; the per-file promote gate does not catch index-incompleteness.
 - Commit ONLY the doc and the `_index.md` files it changed (`git add -- ...`, never `add -A`); never the copied scripts, `schema.base.yaml`, or a terms file.
-- `--author` is your identity; leave the source until merge, then `contribute --finish`.
+- `--author` is your identity. Mark the source at PR-open (step 8); stub it only via `contribute --finish` after merge.
+- **A doc carrying `contribution:` has an open PR:** edit it on the PR head (step 2), never in your brain, or the personal and team copies diverge. `validate.py` warns if a superseded doc still carries the marker.
 
 ## Search strategy
 
@@ -276,7 +286,7 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 - **Save:** Auto-detect type (note/concept/decision/transcript). Unclear folder → `inbox/`
 - **Decision:** Extract title, context, alternatives, consequences. Use `type: decision`
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript
-- **Update:** Preserve frontmatter, update `date` field, show diff
+- **Update:** Preserve frontmatter, update `date` field, show diff. A doc with `contribution:` is edited on its PR head instead (hard rule under "Contributing content")
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
 
 ### Ripple update (after every save/update)

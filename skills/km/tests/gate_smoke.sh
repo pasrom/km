@@ -156,5 +156,18 @@ python3 "$T/scripts/km_promote.py" "xr-inlink" "$XSRC/l.md" --folder bms --autho
 [ -f "$T/bms/xr-inlink.md" ] && ok "cross-repo: in-target link allowed" || no "cross-repo: in-target link allowed"
 rm -rf "$XSRC"
 
+# Pending-contribution marker: never carried by a promote; `stub` drops it; validate flags a leftover
+printf -- '---\ntype: note\ntitle: Pending\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\ncontribution: "org/team-brain#7"\n---\nfull body\n' > "$T/inbox/pending.md"
+python3 "$T/scripts/km_promote.py" "pending-topic" "$T/inbox/pending.md" --folder bms >/dev/null 2>&1
+{ [ -f "$T/bms/pending-topic.md" ] && ! grep -q '^contribution:' "$T/bms/pending-topic.md"; } \
+  && ok "promote never carries a contribution marker" || no "promote never carries a contribution marker"
+python3 "$T/scripts/km_promote.py" stub "$T/inbox/pending.md" --to bms/pending-topic.md >/dev/null 2>&1; strc=$?
+{ [ "$strc" = 0 ] && grep -q '^status: superseded' "$T/inbox/pending.md" && grep -q '^superseded_by: bms/pending-topic.md' "$T/inbox/pending.md" \
+  && ! grep -q '^contribution:' "$T/inbox/pending.md"; } && ok "stub: gated redirect stub, marker dropped" || no "stub: gated redirect stub, marker dropped (rc=$strc)"
+python3 "$T/scripts/km_promote.py" stub "$T/inbox/missing.md" --to bms/x.md >/dev/null 2>&1 && no "stub: a missing source fails" || ok "stub: a missing source fails"
+printf -- '---\ntype: note\ntitle: Left\ntimestamp: 2026-08-26\nauthor: X\nstatus: superseded\nsuperseded_by: bms/pending-topic.md\ntags: [t]\ncontribution: "org/team-brain#7"\n---\nx\n' > "$T/inbox/left.md"
+python3 "$T/scripts/validate.py" "$T/inbox/left.md" 2>&1 | grep -q "superseded should not set 'contribution'" \
+  && ok "validate warns on a superseded doc still carrying the marker" || no "validate warns on a superseded doc still carrying the marker"
+
 echo "smoke: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

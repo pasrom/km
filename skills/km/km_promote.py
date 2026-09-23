@@ -17,9 +17,10 @@ scratch instead of keeping a copy). Safety rules:
   * Slug collisions are a HARD STOP; a non-served target is refused; a peer-brain target is
     refused (correct a foreign brain via a PR against its own repo, never in the parent).
   * A verbatim-block is never --replace'd (change it only via supersede).
-  * The source's own frontmatter is carried forward (type/title/author/tags/...); status, approval
-    and supersede fields are dropped and re-stamped, so a source WITH frontmatter never yields a
-    double header. A new doc needs --folder and a type+author (from --flags or the source).
+  * The source's own frontmatter is carried forward (type/title/author/tags/...); the _PROVENANCE
+    fields (status, approval, supersede, a pending contribution) are dropped and re-stamped, so a
+    source WITH frontmatter never yields a double header. A new doc needs --folder and a type+author
+    (from --flags or the source).
   * author resolves --author > source frontmatter > author_default (schema.local.yaml).
   * --stub-source rewrites an IN-REPO source note into a superseded stub pointing at the promoted
     doc; the stub is built from the source's own frontmatter and gated the same way, skipped (source
@@ -33,6 +34,7 @@ scratch instead of keeping a copy). Safety rules:
     --ticket (optional, any key, need not be a Jira ticket) stamps the `ticket` field.
 
 Usage: python3 scripts/km_promote.py <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--ticket KEY] [--replace] [--stub-source]
+       python3 scripts/km_promote.py stub <src> --to <path>   # only the stub, e.g. once a contribution PR merged
 """
 import argparse
 import datetime
@@ -130,10 +132,12 @@ def run_gate(target: Path):
     return None
 
 
+_PROVENANCE = ("status", "approved_by", "approved_at", "supersedes", "superseded_by", "contribution")
+_STUB_DROPS = _PROVENANCE + ("audience", "review_by")   # a stub is never served
 _NOT_STUBBABLE = {"README.md", "CLAUDE.md", "CONVENTIONS.md", "SKILL.md", "index.md", "log.md", "_index.md"}
 
 
-def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, ident: dict, today: str) -> None:
+def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, ident: dict, today: str) -> bool:
     """After a successful promote, rewrite an IN-REPO source note into a superseded redirect stub.
     Built from the source's OWN frontmatter (so type_rules-required fields survive) with `ident` as
     the fallback for a source that had none, then GATED the same way the target is (tmp + validate +
@@ -142,22 +146,21 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
     untouched. The promote has already succeeded, so any stub problem is a warning, never an exit."""
     if not src.name.endswith(".md") or src.name in _NOT_STUBBABLE:
         print(f"stub: source {src.name} is exempt/reserved/non-md; left untouched.")
-        return
+        return False
     try:
         src_rel = str(src.resolve().relative_to(ROOT))
     except ValueError:
         print(f"stub: source is outside this repo ({src}); stub it in its own repo.")
-        return
+        return False
     if in_submodule(src_rel, prefixes):
         print(f"stub: source {src_rel} is inside a peer brain/submodule; not touched.")
-        return
+        return False
     if src_rel == target_rel:
-        return
+        return False
     if src_fm.get("status") in ("superseded", "obsolete"):
         print(f"stub: source {src_rel} is already {src_fm['status']}; not re-stubbed.")
-        return
-    stub = {k: v for k, v in src_fm.items()
-            if k not in ("status", "approved_by", "approved_at", "supersedes", "superseded_by", "audience", "review_by")}
+        return True
+    stub = {k: v for k, v in src_fm.items() if k not in _STUB_DROPS}
     stub.setdefault("type", ident.get("type"))
     stub.setdefault("title", ident.get("title"))
     stub.setdefault("author", ident.get("author"))
@@ -171,16 +174,17 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
         r = run_gate(tmp)
         if not (r and r.returncode == 0):
             tmp.unlink(missing_ok=True)
-            print("stub: SKIPPED — the stub would fail the gate; promote OK, source left untouched:")
+            print("stub: SKIPPED — the stub would fail the gate; source left untouched:")
             if r:
                 print(r.stdout)
-            return
+            return False
         tmp.replace(src)   # atomic; the source is never left half-written
     except OSError as exc:
         tmp.unlink(missing_ok=True)
-        print(f"stub: could not rewrite source ({exc.__class__.__name__}); promote OK, source left untouched.")
-        return
+        print(f"stub: could not rewrite source ({exc.__class__.__name__}); source left untouched.")
+        return False
     print(f"stub: {src_rel} -> superseded, superseded_by: {target_rel}")
+    return True
 
 
 _INLINE = re.compile(r"\]\(<?([^)>]+)>?\)")
@@ -247,7 +251,25 @@ def outward_links(body: str, target_dir: Path) -> list[str]:
     return out
 
 
+def stub_main(argv: list[str]) -> int:
+    """`stub <src> --to <path>`: rewrite an in-repo doc into a gated superseded stub pointing at
+    <path> (repo-root-relative, e.g. brains/<name>/<folder>/<slug>.md), with no promote. Used when a
+    contribution PR merged: the canonical doc now lives in the other brain."""
+    ap = argparse.ArgumentParser(prog="km_promote.py stub")
+    ap.add_argument("source")
+    ap.add_argument("--to", required=True, help="repo-root-relative path of the canonical doc")
+    a = ap.parse_args(argv)
+    src = Path(a.source)
+    if not src.is_file():
+        sys.exit(f"stub: {src} not found")
+    src_fm, _ = split_fm(src.read_text(encoding="utf-8"))
+    ok = _stub_source(src, a.to, submodule_prefixes(), src_fm or {}, {}, datetime.date.today().isoformat())
+    return 0 if ok else 1
+
+
 def main() -> int:
+    if sys.argv[1:2] == ["stub"]:
+        return stub_main(sys.argv[2:])
     ap = argparse.ArgumentParser(description="Promote a scratch note into the brain as a status: review doc.")
     ap.add_argument("slug")
     ap.add_argument("source")
@@ -329,8 +351,7 @@ def main() -> int:
         title = a.title or src_fm.get("title") or a.slug.replace("-", " ").title()
         target = ROOT / a.folder / f"{a.slug}.md"
         # carry the source's own frontmatter, dropping provenance that must not survive a promote
-        fm = {k: v for k, v in src_fm.items()
-              if k not in ("status", "approved_by", "approved_at", "superseded_by", "supersedes")}
+        fm = {k: v for k, v in src_fm.items() if k not in _PROVENANCE}
         fm["type"] = doctype
         fm["title"] = title
         fm["timestamp"] = today
