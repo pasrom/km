@@ -354,8 +354,10 @@ def _join_repo(base: str, target: str) -> str | None:
 def check_index_tree() -> None:
     """Opt-in (check_index: true): navigation lint on `_index.md` files, reported as WARNINGS
     (`_index.md` is otherwise excluded from article validation):
-      * index-missing    a folder holds CONTENT docs but has no `_index.md`
-      * index-incomplete an `_index.md` fails to link a content doc in its own folder
+      * index-missing    a folder holds CONTENT docs, or a subfolder with an `_index.md`, but has
+                         no `_index.md` of its own
+      * index-incomplete an `_index.md` fails to link a content doc in its own folder, or the
+                         `_index.md` of a direct subfolder
       * index-dead-link  an `_index.md` links a `.md` that is not a tracked repo file
     'Content docs' = real articles only (excludes `_index.md`, exempt files, and index.md/log.md
     — the same notion is_validatable() uses). The dead-link scan runs on EVERY `_index.md`,
@@ -363,8 +365,10 @@ def check_index_tree() -> None:
     FULL git-TRACKED file set (not disk), so results are clone-stable and case-exact and a link
     into a skip_prefixes folder is not dead; a relative target resolves document-relative first
     then repo-root, an absolute /path at the root only; angle brackets, a quoted title and a
-    #fragment are stripped and %-escapes decoded first. Scope is per-folder sibling completeness
-    (each subfolder owns its own `_index.md`), not cross-folder reachability. `skip_prefixes`
+    #fragment are stripped and %-escapes decoded first. Each `_index.md` covers its own folder: its
+    docs plus the `_index.md` of each direct subfolder, so every folder is reachable from the one
+    above it. The root `_index.md` is optional; where it exists it must link the top-level folders
+    that have an index. `skip_prefixes`
     folders and `index_skip_prefixes` folders are not linted (the latter is the index-only opt-out,
     leaving article validation on). Whole-repo only: skipped on per-file (pre-commit) runs."""
     res = subprocess.run(["git", "ls-files", "-z", "*.md"], cwd=ROOT, capture_output=True, text=True)
@@ -398,16 +402,24 @@ def check_index_tree() -> None:
             return resolve_slug(t), t
         return None, (t if t.endswith(".md") else "")                # unresolved slug/wiki: not a *.md dead link
 
+    def _folder(p: str) -> str:
+        return p.rsplit("/", 1)[0] if "/" in p else "."
+
     by_folder: dict[str, list[str]] = defaultdict(list)
     for p in walk:
-        by_folder[p.rsplit("/", 1)[0] if "/" in p else "."].append(p)
+        by_folder[_folder(p)].append(p)
+        if p.endswith("/_index.md"):                                # a subfolder is reached through its index
+            parent = _folder(_folder(p))
+            if parent != "." or "_index.md" in walk:                 # the root map is optional
+                by_folder[parent].append(p)
     for folder, members in sorted(by_folder.items()):
         base = "" if folder == "." else folder
-        docs = [m for m in members if is_validatable(m) and m.rsplit("/", 1)[-1] not in RESERVED_NF]
         idx = "_index.md" if folder == "." else f"{folder}/_index.md"
+        docs = [m for m in members if is_validatable(m) and m.rsplit("/", 1)[-1] not in RESERVED_NF
+                or m.endswith("/_index.md") and m != idx]
         if idx not in walk:
             if docs:
-                warnings.append(("index-missing", f"{folder}/", f"folder has {len(docs)} content doc(s) but no _index.md"))
+                warnings.append(("index-missing", f"{folder}/", f"folder has {len(docs)} doc(s) or subfolder index(es) but no _index.md"))
             continue
         idx_path = ROOT / idx
         if not idx_path.is_file():                 # tracked but absent from the worktree (staged deletion)

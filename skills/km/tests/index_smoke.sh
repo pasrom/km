@@ -5,6 +5,8 @@
 #   existence (not disk); E9 dedupe dead links; scheme guard; footnote defs not links.
 # Fable 5.1: skip_prefixes must not poison existence; worktree-absent tracked _index must not crash;
 #   absolute path root-only; path-form wiki links; refdef angle-bracket target; quote-in-title.
+# Cross-folder: a subfolder's _index.md must be linked from its parent's, a folder holding only a
+#   subfolder index still needs its own, and the root _index.md is optional.
 # Run:  bash skills/km/tests/index_smoke.sh
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +14,8 @@ KM="$(dirname "$HERE")"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/scripts" "$T/topics" "$T/orphan" "$T/docsonly" "$T/hub/sub" "$T/space" "$T/refs" \
-         "$T/vendor" "$T/del" "$T/abs" "$T/wk" "$T/r3" "$T/t4" "$T/pe" "$T/aaa" "$T/coll"
+         "$T/vendor" "$T/del" "$T/abs" "$T/wk" "$T/r3" "$T/t4" "$T/pe" "$T/aaa" "$T/coll" \
+         "$T/nest/child" "$T/gap/deep"
 cp "$KM/validate.py" "$T/scripts/validate.py"
 cp "$KM/schema.base.yaml" "$T/schema.base.yaml"
 printf 'meta: {profile: idx}\nskip_prefixes: [vendor/]\ncheck_index: true\n' > "$T/schema.local.yaml"
@@ -51,6 +54,11 @@ doc "$T/pe/a b.md"; idx "$T/pe/_index.md" '# Pe\n- [P](a%20b.md)'
 # aaa/ + coll/: a bare [[slug]] must credit the folder-local file, not an alphabetically-earlier peer
 doc "$T/aaa/y.md"; idx "$T/aaa/_index.md" '# Aaa\n- [Y](y.md)'
 doc "$T/coll/y.md"; idx "$T/coll/_index.md" '# Coll\n- [[y]]'
+# nest/: the parent index links its doc but not the subfolder's index -> index-incomplete on the parent
+doc "$T/nest/n.md"; idx "$T/nest/_index.md" '# Nest\n- [N](n.md)'
+doc "$T/nest/child/c.md"; idx "$T/nest/child/_index.md" '# Child\n- [C](c.md)'
+# gap/: no index of its own, only a subfolder with one -> index-missing, or gap/deep/ is unreachable
+doc "$T/gap/deep/d.md"; idx "$T/gap/deep/_index.md" '# Deep\n- [D](d.md)'
 
 ( cd "$T" && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -q -m i )
 printf '# on disk, not tracked\n' > "$T/refs/untracked.md"   # present on disk, absent from git set
@@ -83,6 +91,17 @@ has "does not link r3/my doc.md" && no "refdef angle-bracket spaced target resol
 has "does not link t4/a.md" && no "quote-in-title is stripped" || ok "quote-in-title is stripped"                                        # Fable 5.1 E4
 has "does not link pe/a b.md" && no "percent-encoded target resolves" || ok "percent-encoded target resolves"                            # percent-decode
 has "does not link coll/y.md" && no "bare wiki slug prefers folder-local over alpha-first peer" || ok "bare wiki slug prefers folder-local over alpha-first peer"  # slug collision
+has "nest/_index.md - does not link nest/child/_index.md" && ok "parent index must link a subfolder index" || no "parent index must link a subfolder index"
+has "gap/ - folder has 1 doc" && ok "folder holding only a subfolder index needs its own" || no "folder holding only a subfolder index needs its own"
+has "\./ - folder" && no "no root _index.md: top-level folders not required" || ok "no root _index.md: top-level folders not required"
+
+# a root _index.md, once present, must link the top-level folders that have an index
+# (aaa/ sorts first: the report prints only the first few entries per category)
+idx "$T/_index.md" '# Map\n- [Topics](topics/_index.md)'
+( cd "$T" && git add _index.md && git -c user.name=t -c user.email=t@t commit -q -m root )
+out="$(cd "$T" && python3 scripts/validate.py 2>&1)"
+has "_index.md - does not link aaa/_index.md" && ok "root _index.md must link top-level indexes" || no "root _index.md must link top-level indexes"
+has "does not link topics/_index.md" && no "root link to a top-level index counts" || ok "root link to a top-level index counts"
 
 # Fable B3: a per-file (pre-commit) invocation must NOT run the whole-repo index scan
 outf="$(cd "$T" && python3 scripts/validate.py topics/a.md 2>&1)"

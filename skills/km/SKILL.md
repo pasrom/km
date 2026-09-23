@@ -359,13 +359,15 @@ full run); link-form coverage is inline/reference/wiki/HTML/angle-bracket (not e
 ## Index completeness (opt-in)
 
 Set `check_index: true` at the top of `schema.local.yaml` to have `validate.py` lint each
-folder's `_index.md` deterministically (WARNINGS, non-fatal): every folder with **content docs**
-must have an `_index.md` (`index-missing`), each `_index.md` must link every content doc in its
-own folder (`index-incomplete`), and no `_index.md` may link a missing file (`index-dead-link`,
+folder's `_index.md` deterministically (WARNINGS, non-fatal): every folder with **content docs**,
+or with a subfolder that has an `_index.md`, must have an `_index.md` (`index-missing`), each
+`_index.md` must link every content doc in its own folder and the `_index.md` of each direct
+subfolder (`index-incomplete`), and no `_index.md` may link a missing file (`index-dead-link`,
 scanned on every `_index.md`, including navigation hubs with no direct docs). "Content docs"
 excludes `_index.md`, exempt files (README/CLAUDE/CONVENTIONS/SKILL), and reserved files
-(index.md/log.md) — the same notion `is_validatable()` uses. Scope is per-folder sibling
-completeness (each subfolder owns its own index), not cross-folder reachability. Link targets
+(index.md/log.md) — the same notion `is_validatable()` uses. Linking each subfolder's index
+makes every folder reachable from the one above it; the root `_index.md` is optional, and where it
+exists it must link the top-level folders that have an index. Link targets
 resolve against the git-tracked file set (clone-stable, case-exact; a link into a `skip_prefixes`
 folder is therefore not dead) — document-relative first, then repo-root. To leave a folder out of
 the index lint *without* dropping it from article validation, list it under `index_skip_prefixes`
@@ -374,8 +376,7 @@ in `schema.local.yaml` (e.g. generated or vendored trees). Whole-repo only: skip
 machine-enforces the `/km lint` "`_index` doesn't link all docs" rule; `_index.md` files stay
 excluded from article-schema validation.
 Known limitations (by design): a dead `[[wiki]]` slug is not reported as `index-dead-link`
-(flagging bare-word targets would risk false positives); completeness is per-folder only (a
-subfolder's `_index.md` is not required to be reachable from its parent's); and unusual inline-link
+(flagging bare-word targets would risk false positives), and unusual inline-link
 syntaxes (a parenthetical title, a query string, an angle-bracketed path combined with a title)
 may be misparsed by the shared markdown-link scanner.
 
