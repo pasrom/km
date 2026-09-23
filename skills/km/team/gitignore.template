@@ -1,0 +1,6 @@
+.gate-terms.txt
+*.promote-tmp.md
+*.stub-tmp.md
+.DS_Store
+dist/
+__pycache__/

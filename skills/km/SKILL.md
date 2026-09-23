@@ -40,14 +40,45 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 12. Write a minimal `schema.local.yaml` at the repo root for repo-specific `skip_prefixes` / `exempt_files` (start with just a header comment; lists here EXTEND the base), and copy `.pre-commit-config.template.yaml` → `.pre-commit-config.yaml`
 13. Commit: `chore: initialize knowledge base conventions`
 
+## Team brain init (`/km init --team`)
+
+A **team brain** is a shared, served knowledge base: one maintainer merges, the team reads the repo,
+everyone else contributes by fork PR or promotes from a personal brain. On top of a personal brain
+it adds CI (validation, a generated `_index.md` Documents list, a served bundle, weekly staleness
+demotion), domain folders instead of `inbox/`, and the single-writer rules. `team/km_team.py` next
+to this SKILL.md does the rendering and copying, so the file list and placeholders live in one place.
+
+1. Ask for: the brain's name (e.g. `QA-Brain`), a one-line description of the team (e.g. `the QA
+   team`), the maintainer's initials, and the top-level folders with a one-line purpose each
+   (suggest `process/`, `projects/`, `reference/` plus the team's own domains). Optionally one or
+   two placement rules that decide which folder a doc goes to; without them each folder's purpose
+   becomes its rule.
+2. In the empty repo (or an empty clone of a fresh remote):
+   `python3 <this dir>/team/km_team.py init . --name <name> --team "<desc>" --initials <XX>
+   --folder process="<purpose>" --folder ... [--rule "<rule>" ...]` (plain `python3`, no packages
+   needed). It refuses to run if any file it would write already exists, such as a README the host
+   created with the repo: delete that first.
+3. `git add -A`, then `uv run scripts/gen_index.py` (fallback `python3`, as for every script here;
+   it reads tracked files only, so add first, and it fills the root and folder lists), `git add -A`
+   and `uv run scripts/validate.py`: expect **0 errors / 0 warnings**.
+4. Commit: `chore: initialize <name> (team served knowledge base)`.
+5. Tell the user what km does not do: create the repo (private), push `main`, give the team **read**
+   access and the maintainer write, and ask members to add the brain to their personal brain with
+   `/km brain add <url>`. Branch protection on a private repo needs a paid GitHub plan; without it
+   the single-writer rule is held by the permission model alone. Contributions arrive as fork PRs,
+   and GitHub does not run Actions on fork PRs of a private repo until "Run workflows from fork pull
+   requests" is enabled (repository or organization settings, Actions): without it those PRs get
+   no CI.
+
 ## Upgrade (`/km upgrade`)
 
 Refresh the km-owned schema + validator without touching repo-specific overlays:
 
-1. Copy `schema.base.yaml`, `validate.py` and `km_promote.py` from this SKILL.md's directory over the repo's `schema.base.yaml`, `scripts/validate.py` and `scripts/km_promote.py`
-2. Leave `schema.local.yaml` untouched (repo-owned)
-3. Report `meta.schema_version` before → after, then run `uv run scripts/validate.py` (fallback `python3`) to confirm the repo still passes with **0 errors**
-4. Commit: `chore(km): upgrade schema/validator to <version>`
+1. **Personal brain:** copy `schema.base.yaml`, `validate.py` and `km_promote.py` from this SKILL.md's directory over the repo's `schema.base.yaml`, `scripts/validate.py` and `scripts/km_promote.py`
+2. **Team brain** (`team_brain: true` in `schema.local.yaml`): instead run `uv run <this dir>/team/km_team.py upgrade .` (fallback `python3`). It refreshes every km-owned file, those three included, adds a missing team script, and leaves a workflow the repo deleted deleted. Show `git diff` of what it changed before committing; a local edit to one of these files is overwritten, so point it out and ask where it should go (usually upstream into km)
+3. Leave `schema.local.yaml`, `CONVENTIONS.md`, `CLAUDE.md`, `README.md` and every `_index.md` untouched (repo-owned)
+4. Report `meta.schema_version` before → after, then run `uv run scripts/validate.py` (fallback `python3`) to confirm the repo still passes with **0 errors**; on a team brain also run `uv run scripts/gen_index.py --check` (a newer generator may list more, e.g. subfolder indexes: run it without `--check` and commit the result)
+5. Commit: `chore(km): upgrade schema/validator to <version>`
 
 ## `@` prefix — brains and shared resources
 
@@ -181,20 +212,23 @@ wait for explicit OK. Then:
    To UPDATE a doc already `accepted` on the target, add `--replace` (the PR then shows the approval
    drop, which IS the review signal). A doc already in `review` on the target cannot be re-promoted;
    edit it in the clone as in `brain fix`.
-6. Track the doc so `gen_index` sees it, regenerate the index, run the whole-repo gate, then commit
-   ONLY the doc and its index:
+6. Track the doc so `gen_index` sees it, regenerate the indexes, run the whole-repo gate, then commit
+   ONLY the doc and the `_index.md` files that changed. If `<target-folder>` is new, first write its
+   `_index.md` by hand (frontmatter with a `description:`, an empty `## Documents` heading) and track it
+   too: a team brain's generator refuses a folder with docs but no index, and the parent folder's list
+   gains a link to the new one.
    ```
-   git -C /tmp/km-contrib-<slug> add -- <target-folder>/<slug>.md   # track it FIRST: gen_index / check_index read git ls-files, so an untracked doc is invisible
-   [ -f /tmp/km-contrib-<slug>/scripts/gen_index.py ] \
-       && python3 /tmp/km-contrib-<slug>/scripts/gen_index.py \
-       || echo "no gen_index: add the doc to its folder's _index.md by hand"
-   git -C /tmp/km-contrib-<slug> add -- <target-folder>/_index.md
+   git -C /tmp/km-contrib-<slug> add -- <target-folder>/<slug>.md   # track it FIRST (and a new folder's _index.md): gen_index / check_index read git ls-files
+   if [ -f /tmp/km-contrib-<slug>/scripts/gen_index.py ]; then python3 /tmp/km-contrib-<slug>/scripts/gen_index.py
+   else echo "no gen_index: add the doc to its folder's _index.md by hand"; fi
+   git -C /tmp/km-contrib-<slug> add -u -- '*_index.md'   # every index the generator rewrote, parents included
    python3 /tmp/km-contrib-<slug>/scripts/validate.py    # WHOLE-REPO gate; the per-file promote gate never sees index-incomplete. Fix any error.
-   git -C /tmp/km-contrib-<slug> diff --cached --name-only   # MUST list ONLY the doc + its _index; the copied scripts/schema (and a terms file) stay UNSTAGED
+   git -C /tmp/km-contrib-<slug> diff --cached --name-only   # MUST list ONLY the doc + _index.md files; the copied scripts/schema (and a terms file) stay UNSTAGED
    git -C /tmp/km-contrib-<slug> commit -m "docs(<scope>): <what>"
    ```
    Never `git add -A`: the copied scripts, `schema.base.yaml` and any terms file must NOT be committed.
-   `gen_index.py` is TARGET code — read it before running (or hand-edit the index instead).
+   `gen_index.py` is TARGET code — read it before running. Hand-edit an index only in a brain without
+   one: where CI runs `gen_index --check`, a hand-written list fails unless it matches the generator.
 7. Push and open the PR: `git -C /tmp/km-contrib-<slug> push origin "HEAD:refs/heads/<BR>"` (fork path
    as in `brain fix` if push is denied), then `gh pr create --head "<BR>"`. Return the PR URL, then
    `rm -rf /tmp/km-contrib-<slug>`. **Leave the source in your brain until the PR merges** — do not stub
@@ -213,9 +247,9 @@ the bumped submodule pointer). Before the sync `superseded_by` only warns; after
 
 - Prerequisite: the target is mounted (`brain add` first); the source is a doc in YOUR brain, never one under `brains/`.
 - Each step is a fresh shell: a FIXED working dir, no `mktemp`+trap; `rm -rf` it at the end.
-- Gate with YOUR km-owned `validate.py`/`km_promote.py` copied into the clone; treat the target's other scripts (`gen_index.py`) as target code (read before running, or hand-edit the index).
+- Gate with YOUR km-owned `validate.py`/`km_promote.py` copied into the clone; treat the target's other scripts (`gen_index.py`) as target code (read before running; step 6 says when a hand-edited index is acceptable).
 - Run the WHOLE-REPO `validate.py` in the clone before pushing; the per-file promote gate does not catch index-incompleteness.
-- Commit ONLY the doc and its `_index.md` (`git add -- ...`, never `add -A`); never the copied scripts, `schema.base.yaml`, or a terms file.
+- Commit ONLY the doc and the `_index.md` files it changed (`git add -- ...`, never `add -A`); never the copied scripts, `schema.base.yaml`, or a terms file.
 - `--author` is your identity; leave the source until merge, then `contribute --finish`.
 
 ## Search strategy

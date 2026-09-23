@@ -1,0 +1,40 @@
+# km-owned (team brains): copied in by `/km init --team`, refreshed by `/km upgrade`.
+# Add repo-specific jobs in a workflow file of your own; this one is overwritten on upgrade.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so source-pin (path.md@hash) checks can see blobs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+      - name: validate frontmatter + gate + index completeness
+        run: python scripts/validate.py
+      - name: _index Documents list up to date
+        run: python scripts/gen_index.py --check
+      - name: build served bundle (main only — a PR build is not "served")
+        if: github.event_name == 'push'
+        run: python scripts/build_served.py
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: served-bundle
+          path: dist/served/
+          if-no-files-found: warn

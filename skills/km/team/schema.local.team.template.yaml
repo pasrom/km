@@ -1,0 +1,32 @@
+# schema.local.yaml: repo-specific overlay for the <BRAIN> (team served knowledge base).
+# Merged OVER schema.base.yaml by validate.py. Lists here EXTEND the base lists; dict keys
+# (meta, fields, type_rules) are shallow-merged. Owned by this repo; /km upgrade never touches it.
+
+meta:
+  profile: "<profile>"
+
+# Marks a team brain: /km upgrade then also refreshes the km-owned team scripts and workflows.
+team_brain: true
+
+# Promote fills `author` from this when neither a flag nor the source note names one (must be a string).
+author_default: "<MAINTAINER>"
+
+# Deterministic navigation lint: every folder with content docs or a subfolder index must have a
+# complete, live _index.md.
+check_index: true
+
+# Folders left OUT of the index lint but still valid link targets (generated / vendored trees).
+# index_skip_prefixes: []
+
+# Opt-in advisory gate (a metadata lint, not an enforcement boundary): secrets in any doc, forbidden
+# terms / external emails in customer-facing docs, a served doc linking to an unfinished one, and
+# stale served docs. A gitignored .gate-terms.txt (customer codes / names) can be added later.
+gate:
+  enabled: true
+  served_status: accepted
+  customer_audience: customer
+
+# Repo-only fields (shallow-merged over the base schema).
+fields:
+  ticket:                 # provenance to the work item this doc came from
+    required: false

@@ -1,0 +1,53 @@
+# km-owned (team brains): copied in by `/km init --team`, refreshed by `/km upgrade`.
+# Add repo-specific jobs in a workflow file of your own; this one is overwritten on upgrade.
+name: staleness
+
+# Weekly: demote accepted docs whose review_by has lapsed back to review, so stale knowledge
+# drops out of the served set automatically. Also runnable on demand.
+on:
+  schedule:
+    - cron: '0 6 * * 1'          # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  demote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+      - name: demote stale accepted docs
+        run: python scripts/demote_stale.py --apply
+      # A doc demote_stale could not rewrite fails that step; still commit the others.
+      - name: commit demotions if any
+        if: ${{ !cancelled() }}
+        run: |
+          if ! git diff --quiet; then
+            git config user.name "brain-ci"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "chore(ci): demote stale accepted docs to review (review_by lapsed)"
+            git push
+          else
+            echo "nothing to demote"
+          fi
+      # A push made with GITHUB_TOKEN starts no other workflow, so ci.yml does not rebuild the
+      # served bundle after a demotion: rebuild it here, or the demoted doc stays served.
+      - name: rebuild served bundle
+        if: ${{ !cancelled() }}
+        run: python scripts/build_served.py
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: served-bundle
+          path: dist/served/
+          if-no-files-found: warn
+      # A demoted doc can leave accepted docs linking to it (a bergab error), and this push starts no
+      # CI run: validate here, so a red scheduled run tells the maintainer before the next PR fails.
+      - name: validate after demotion
+        if: ${{ !cancelled() }}
+        run: python scripts/validate.py
