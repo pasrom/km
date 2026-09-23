@@ -16,7 +16,8 @@ promoted here.
 
 ## How to Contribute
 
-Knowledge management via the `/km` skill (requires [dotclaude](https://github.com/pasrom/dotclaude)).
+Knowledge management via the `/km` skill ([km](https://github.com/pasrom/km); install the plugin
+once with `/plugin marketplace add pasrom/km` and `/plugin install km@km`).
 
 - **Promote a finished note:** `python3 scripts/km_promote.py <slug> <source> --folder <dir> [--type T] [--stub-source]`
 - **Contribute without write access:** `/km contribute @<name>` (throwaway clone + fork PR)
