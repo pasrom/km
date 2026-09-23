@@ -1,0 +1,15 @@
+{
+  "name": "km",
+  "owner": {
+    "name": "Roman Passler"
+  },
+  "description": "Marketplace for the km knowledge-management plugin.",
+  "plugins": [
+    {
+      "name": "km",
+      "source": "./",
+      "description": "Knowledge management for markdown knowledge bases, including shared team brains with CI.",
+      "category": "knowledge-management"
+    }
+  ]
+}

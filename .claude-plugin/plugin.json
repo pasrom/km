@@ -1,0 +1,10 @@
+{
+  "name": "km",
+  "version": "1.0.0",
+  "description": "Knowledge management for markdown knowledge bases: answer from it with sources, save notes, decisions and transcripts with validated frontmatter, lint, mount peer brains, contribute to a team brain by PR, and set up a shared team brain with CI (/km init --team).",
+  "author": {
+    "name": "Roman Passler"
+  },
+  "repository": "https://github.com/pasrom/km",
+  "license": "MIT"
+}
