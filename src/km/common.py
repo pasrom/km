@@ -1,12 +1,7 @@
-"""Shared helpers for the team-brain scripts (gen_index, demote_stale, build_served): the merged
-schema, frontmatter parsing, the tracked-file list and what counts as an article.
-
-km-owned (team brains): copied in by `/km init --team`, refreshed by `/km upgrade`; do not edit a
-brain's copy, change it in km.
-
-The schema is loaded and merged the way validate.py does it (base, or the legacy schema.yaml,
-overlaid by schema.local.yaml; lists extend, dicts shallow-merge), and a broken file stops the run
-the same way, so the scripts never act on a different configuration than the validator checks.
+"""What every km command shares: the brain's root, the merged schema (km's own base overlaid by the
+brain's schema.local.yaml; lists extend, dicts shallow-merge), frontmatter parsing, the tracked-file
+list and what counts as an article. One loader for all commands, so none of them acts on a different
+configuration than the validator checks; a broken schema file stops the run.
 """
 from __future__ import annotations
 
@@ -17,19 +12,20 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent
+from km.paths import BASE_SCHEMA, repo_root
+
+ROOT = repo_root()
 
 
-def _load(name: str) -> dict | None:
-    p = ROOT / name
+def _load(p: Path) -> dict | None:
     if not p.is_file():
         return None
     try:
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
-        sys.exit(f"{name}: invalid YAML: {exc}")
+        sys.exit(f"{p.name}: invalid YAML: {exc}")
     if not isinstance(data, dict):
-        sys.exit(f"{name}: must be a mapping")
+        sys.exit(f"{p.name}: must be a mapping")
     return data
 
 
@@ -46,18 +42,18 @@ def _merge(base: dict, local: dict | None) -> dict:
     return out
 
 
-_base = _load("schema.base.yaml") or _load("schema.yaml")
-if _base is None:
-    sys.exit("no schema.base.yaml (or schema.yaml) at repo root")
-SCHEMA = _merge(_base, _load("schema.local.yaml"))
+# The brain's overlay. A brain from before the overlay existed has only a legacy schema.yaml (km's
+# schema plus its own additions); it overlays the base the same way until `km upgrade` renames it.
+OVERLAY = ROOT / ("schema.local.yaml" if (ROOT / "schema.local.yaml").is_file() or not (ROOT / "schema.yaml").is_file()
+                  else "schema.yaml")
+SCHEMA = _merge(_load(BASE_SCHEMA) or {}, _load(OVERLAY))
 
 EXEMPT = set(SCHEMA.get("exempt_files") or [])
 RESERVED = set(SCHEMA.get("reserved_no_frontmatter") or [])
 SKIP = tuple(SCHEMA.get("skip_prefixes") or [])
 INDEX_SKIP = tuple(SCHEMA.get("index_skip_prefixes") or [])
-_gate = SCHEMA.get("gate") or {}
-if not isinstance(_gate, dict):
-    sys.exit("schema.local.yaml: gate must be a mapping")
+_gate = SCHEMA.get("gate")
+_gate = _gate if isinstance(_gate, dict) else {}   # a malformed gate is reported by `km validate`
 SERVED_STATUS = _gate.get("served_status", "accepted")
 CUSTOMER_AUDIENCE = _gate.get("customer_audience", "customer")
 

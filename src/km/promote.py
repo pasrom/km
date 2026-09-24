@@ -1,11 +1,6 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["pyyaml"]
-# ///
 """km promote — safe: gate before placing, never destroy content silently.
 
-Vendored next to validate.py at `scripts/km_promote.py`. Moves a note into the brain as a
+Part of the km package, run as `km promote`. Moves a note into the brain as a
 `status: review` doc, dedups by topic slug, and prints a pointer (paste back into personal
 scratch instead of keeping a copy). Safety rules:
   * The slug must be a single path segment; the target is containment-checked (inside the repo,
@@ -33,9 +28,11 @@ scratch instead of keeping a copy). Safety rules:
     link / a leaked source path; code fences excluded). --replace keeps the existing doc's author.
     --ticket (optional, any key, need not be a Jira ticket) stamps the `ticket` field.
 
-Usage: python3 scripts/km_promote.py <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--ticket KEY] [--replace] [--stub-source]
-       python3 scripts/km_promote.py stub <src> --to <path>   # only the stub, e.g. once a contribution PR merged
+Usage: km promote [--root DIR] <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--ticket KEY] [--replace] [--stub-source]
+       km promote [--root DIR] stub <src> --to <path>   # only the stub, e.g. once a contribution PR merged
 """
+from __future__ import annotations
+
 import argparse
 import datetime
 import re
@@ -45,8 +42,7 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent
-VP = ROOT / "scripts" / "validate.py"
+from km.common import ROOT, SCHEMA
 
 
 def submodule_prefixes() -> set[str]:
@@ -92,44 +88,15 @@ def dump(fm: dict, body: str) -> str:
 
 
 def type_enum() -> set[str] | None:
-    """Allowed `type` values from the merged schema, or None if unreadable (the gate still backstops)."""
-    vals: set[str] = set()
-    for name in ("schema.base.yaml", "schema.local.yaml"):
-        p = ROOT / name
-        if not p.is_file():
-            continue
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
-            continue
-        enum = ((data.get("fields") or {}).get("type") or {}).get("enum")
-        if isinstance(enum, list):
-            vals.update(str(v) for v in enum)
-    return vals or None
-
-
-def cfg(key: str):
-    """A top-level key from the merged schema (schema.local overrides schema.base), or None."""
-    for name in ("schema.local.yaml", "schema.base.yaml"):
-        p = ROOT / name
-        if not p.is_file():
-            continue
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
-            continue
-        if isinstance(data, dict) and key in data:
-            return data[key]
-    return None
+    """Allowed `type` values from the merged schema, or None (the gate still backstops)."""
+    enum = ((SCHEMA.get("fields") or {}).get("type") or {}).get("enum")
+    return {str(v) for v in enum} if isinstance(enum, list) else None
 
 
 def run_gate(target: Path):
-    for cmd in (["uv", "run", str(VP), str(target)], [sys.executable, str(VP), str(target)]):
-        try:
-            return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
-        except FileNotFoundError:
-            continue
-    return None
+    """`km validate` on one file, in a child process: the validator runs its checks at import."""
+    return subprocess.run([sys.executable, "-m", "km", "validate", "--root", str(ROOT), str(target)],
+                          cwd=ROOT, capture_output=True, text=True)
 
 
 _PROVENANCE = ("status", "approved_by", "approved_at", "supersedes", "superseded_by", "contribution")
@@ -172,11 +139,10 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
     try:
         tmp.write_text(dump(stub, f"Moved to the served brain. See [{target_rel}]({target_rel})."), encoding="utf-8")
         r = run_gate(tmp)
-        if not (r and r.returncode == 0):
+        if r.returncode != 0:
             tmp.unlink(missing_ok=True)
             print("stub: SKIPPED — the stub would fail the gate; source left untouched:")
-            if r:
-                print(r.stdout)
+            print(r.stdout)
             return False
         tmp.replace(src)   # atomic; the source is never left half-written
     except OSError as exc:
@@ -255,7 +221,7 @@ def stub_main(argv: list[str]) -> int:
     """`stub <src> --to <path>`: rewrite an in-repo doc into a gated superseded stub pointing at
     <path> (repo-root-relative, e.g. brains/<name>/<folder>/<slug>.md), with no promote. Used when a
     contribution PR merged: the canonical doc now lives in the other brain."""
-    ap = argparse.ArgumentParser(prog="km_promote.py stub")
+    ap = argparse.ArgumentParser(prog="km promote stub")
     ap.add_argument("source")
     ap.add_argument("--to", required=True, help="repo-root-relative path of the canonical doc")
     a = ap.parse_args(argv)
@@ -341,7 +307,7 @@ def main() -> int:
             return 2
         author = _nz(a.author) or _nz(src_fm.get("author"))   # a list/blank author never counts
         if not author and not cross_repo:   # the target's author_default only applies to its OWN notes
-            author = _nz(cfg("author_default"))
+            author = _nz(SCHEMA.get("author_default"))
         if not author:
             hint = ("cross-repo promote must set --author (the target's author_default would mis-attribute the source's author)"
                     if cross_repo else
@@ -400,11 +366,10 @@ def main() -> int:
     tmp = target.parent / (target.stem + ".promote-tmp.md")
     tmp.write_text(content, encoding="utf-8")
     r = run_gate(tmp)
-    if not (r and r.returncode == 0):
+    if r.returncode != 0:
         tmp.unlink(missing_ok=True)
         print("promote: REFUSED — candidate fails the gate, nothing written:")
-        if r:
-            print(r.stdout)
+        print(r.stdout)
         return 1
     tmp.replace(target)  # atomic; never leaves a truncated target on interruption
 

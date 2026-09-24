@@ -1,5 +1,5 @@
-# Written by `km init --team`; owned by this repo. Actions are pinned by commit, with the version as a
-# comment, so a moved tag cannot change what runs; Dependabot proposes updates, `km upgrade` moves km.
+# km-owned (team brains): copied in by `/km init --team`, refreshed by `/km upgrade`.
+# Add repo-specific jobs in a workflow file of your own; this one is overwritten on upgrade.
 name: staleness
 
 # Weekly: demote accepted docs whose review_by has lapsed back to review, so stale knowledge
@@ -16,11 +16,14 @@ jobs:
   demote:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: pasrom/km@<KM_SHA> # <KM_VERSION>, installs the km CLI at that commit
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
       - name: demote stale accepted docs
-        run: km demote --apply
-      # A doc `km demote` could not rewrite fails that step; still commit the others.
+        run: python scripts/demote_stale.py --apply
+      # A doc demote_stale could not rewrite fails that step; still commit the others.
       - name: commit demotions if any
         if: ${{ !cancelled() }}
         run: |
@@ -36,8 +39,8 @@ jobs:
       # served bundle after a demotion: rebuild it here, or the demoted doc stays served.
       - name: rebuild served bundle
         if: ${{ !cancelled() }}
-        run: km serve
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        run: python scripts/build_served.py
+      - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
           name: served-bundle
@@ -47,4 +50,4 @@ jobs:
       # CI run: validate here, so a red scheduled run tells the maintainer before the next PR fails.
       - name: validate after demotion
         if: ${{ !cancelled() }}
-        run: km validate
+        run: python scripts/validate.py

@@ -1,0 +1,12 @@
+# .pre-commit-config.yaml — copied verbatim by `/km init`.
+# Validates ONLY staged .md against schema.base.yaml + schema.local.yaml, so legacy
+# frontmatter debt never blocks an unrelated commit. Install once: `pre-commit install`.
+repos:
+  - repo: local
+    hooks:
+      - id: km-validate
+        name: km frontmatter validate
+        entry: uv run scripts/validate.py
+        language: system
+        files: '\.md$'
+        pass_filenames: true

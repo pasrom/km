@@ -1,17 +1,13 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["pyyaml"]
-# ///
 """Validate knowledge-base frontmatter against the km schema — a strict OKF v0.1 profile.
 
-km-owned engine. Vendored into each brain at `scripts/validate.py` and refreshed via
-`/km upgrade`. Loads `schema.base.yaml` (canonical) merged with an optional repo-local
-`schema.local.yaml` overlay (skip_prefixes / exempt_files / repo-only fields). Falls back
-to a single legacy `schema.yaml` for un-migrated repos.
+Part of the km package. Loads km's own `schema.base.yaml` (canonical) merged with the brain's
+optional `schema.local.yaml` overlay (skip_prefixes / exempt_files / repo-only fields). A
+`schema.base.yaml` left in the brain from the copy-in days is ignored with a warning; a legacy
+`schema.yaml` serves as the overlay while there is no schema.local.yaml.
 
 Two modes: whole repo (git ls-files, TRACKED .md only) or per-file args (pre-commit).
 Exit code 0 if no errors, 1 otherwise. Warnings never fail the build.
-Run:  uv run scripts/validate.py
+Run:  km validate [--root DIR] [FILE ...]
 
 --- km GATE (opt-in, ADVISORY — a metadata lint, not an enforcement boundary) ---
 When `schema.local.yaml` sets `gate.enabled: true`, extra checks run, keyed per concern:
@@ -43,44 +39,20 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent
+from km.common import EXEMPT, OVERLAY, ROOT, SCHEMA
+from km.pins import movable_refs
+from km.common import RESERVED as RESERVED_NF
+from km.common import SKIP as SKIP_PREFIXES
 
-
-def _load(name: str):
-    p = ROOT / name
-    return yaml.safe_load(p.read_text()) if p.is_file() else None
-
-
-def _merge(base: dict, local: dict | None) -> dict:
-    """Overlay local onto base: extend lists, shallow-merge dicts, override scalars."""
-    out = dict(base)
-    for k, v in (local or {}).items():
-        cur = out.get(k)
-        if isinstance(v, list) and isinstance(cur, list):
-            out[k] = cur + v
-        elif isinstance(v, dict) and isinstance(cur, dict):
-            merged = dict(cur)
-            merged.update(v)
-            out[k] = merged
-        else:
-            out[k] = v
-    return out
-
-
-BASE = _load("schema.base.yaml")
-if BASE is None:
-    BASE = _load("schema.yaml")          # legacy single-file fallback
-if BASE is None:
-    sys.exit("no schema.base.yaml (or schema.yaml) at repo root")
-SCHEMA = _merge(BASE, _load("schema.local.yaml"))
+_repo_notices = [(n, f"{n} is ignored: km uses its own base schema (run `km upgrade`)")
+                 for n in ("schema.base.yaml", "schema.yaml") if (ROOT / n).is_file() and ROOT / n != OVERLAY]
+if OVERLAY.name == "schema.yaml":
+    _repo_notices.append(("schema.yaml", "schema.yaml is read as the local overlay; `km upgrade` renames it to schema.local.yaml"))
 
 FIELDS = SCHEMA["fields"]
 TYPE_RULES = SCHEMA.get("type_rules", {})
 SOFT_RULES = SCHEMA.get("type_rules_soft", {})
 STATUS_RULES = SCHEMA.get("status_rules", {})
-EXEMPT = set(SCHEMA.get("exempt_files", []))
-RESERVED_NF = set(SCHEMA.get("reserved_no_frontmatter", []))
-SKIP_PREFIXES = tuple(SCHEMA.get("skip_prefixes", []))
 
 # --- km gate config (opt-in) with fail-fast validation ---
 _GATE_KEYS = {
@@ -170,6 +142,8 @@ errors: list[tuple[str, str, str]] = []    # (category, path, detail)
 warnings: list[tuple[str, str, str]] = []
 for _n in _gate_notices:
     warnings.append(("gate-config", "schema.local.yaml", _n))
+for _f, _n in _repo_notices:
+    warnings.append(("km", _f, _n))
 
 
 def is_validatable(p: str) -> bool:
@@ -573,6 +547,10 @@ def report(title: str, items: list[tuple[str, str, str]]) -> None:
 
 if CHECK_INDEX and not _args():   # whole-repo lint only; skip on per-file (pre-commit) runs
     check_index_tree()
+if not _args():                  # code the brain runs from a movable ref instead of a commit (see km.pins)
+    for _f, _what in movable_refs(ROOT):
+        warnings.append(("movable-ref", _f, f"runs {_what}, a ref that can be moved; pin it by commit "
+                                            f"(`km upgrade` does it for km)"))
 
 report("ERRORS", errors)
 report("WARNINGS", warnings)

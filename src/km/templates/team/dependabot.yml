@@ -1,0 +1,8 @@
+# Written by `km init --team`: proposes a pull request when a newer km (the `pasrom/km@` ref in the
+# workflows) or another action is released.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

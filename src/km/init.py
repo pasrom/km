@@ -1,74 +1,69 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["pyyaml"]
-# ///
-"""Create a team brain, or refresh the km-owned team files in one. Runs from the km skill directory
-against a target repo; it is not copied into brains.
+"""Create a brain from km's templates. km itself is not copied in: the brain pins a km release by
+its commit (see km.pins) and runs `km` from there. The release is this km's own, or --pin VERSION.
 
-  init <repo> --name NAME --team DESC --initials XX --folder DIR=PURPOSE [--folder ...]
+  km init DIR --initials XX [--folder DIR=PURPOSE ...]
+      A personal brain: CONVENTIONS.md, CLAUDE.md (kept if present), inbox/, schema.local.yaml and
+      the pre-commit hook. Refuses a repo that already has a CONVENTIONS.md.
+
+  km init DIR --team --name NAME --desc TEXT --initials XX --folder DIR=PURPOSE [--folder ...]
               [--rule TEXT ...] [--profile SLUG]
-      Render the team templates into <repo> and copy the km-owned files. Refuses to run if any
-      file it would write already exists. Files only: git add, the first gen_index run and the
-      commit are left to the caller.
+      A team brain: also the root and folder indexes, README, .gitignore, the two workflows and a
+      Dependabot config. Refuses to run if any file it would write already exists.
 
-  upgrade <repo>
-      For a repo whose schema.local.yaml sets `team_brain: true`: refresh every km-owned file (the
-      base schema and scripts too), adding a missing script since they import each other; a
-      workflow the repo deleted stays deleted and is reported. Prints what changed.
-
-Run:  python3 <km>/team/km_team.py init|upgrade <repo> ...
+Both render and check everything before writing anything, and refuse a release whose commit
+cannot be looked up (not released yet, or no network). Files only: git add, the first
+`km gen-index` and the commit are left to the caller.
 """
 from __future__ import annotations
 
 import argparse
 import datetime
-import filecmp
 import re
-import shutil
 import sys
 from pathlib import Path
 
-TEAM = Path(__file__).resolve().parent
-KM = TEAM.parent
-TEMPLATES = {                         # template in team/ -> path in the brain (repo-owned after init)
-    "CONVENTIONS.team.template.md": "CONVENTIONS.md",
-    "CLAUDE.team.template.md": "CLAUDE.md",
-    "README.team.template.md": "README.md",
-    "schema.local.team.template.yaml": "schema.local.yaml",
-    "_index.root.template.md": "_index.md",
-    "gitignore.template": ".gitignore",
+from km import KM_REF
+from km.paths import TEMPLATES
+from km.pins import resolve
+
+PERSONAL = {                          # template -> path in the brain (repo-owned after init)
+    "CONVENTIONS.template.md": "CONVENTIONS.md",
+    "CLAUDE.template.md": "CLAUDE.md",
+    "schema.local.template.yaml": "schema.local.yaml",
+    "_index.inbox.template.md": "inbox/_index.md",
+    "pre-commit-config.template.yaml": ".pre-commit-config.yaml",
 }
-BASE = {                              # km-owned files every brain has (source in km/ -> brain path)
-    "schema.base.yaml": "schema.base.yaml",
-    "validate.py": "scripts/validate.py",
-    "km_promote.py": "scripts/km_promote.py",
+TEAM = {
+    "team/CONVENTIONS.team.template.md": "CONVENTIONS.md",
+    "team/CLAUDE.team.template.md": "CLAUDE.md",
+    "team/README.team.template.md": "README.md",
+    "team/schema.local.team.template.yaml": "schema.local.yaml",
+    "team/_index.root.template.md": "_index.md",
+    "team/gitignore.template": ".gitignore",
+    "team/ci.yml": ".github/workflows/ci.yml",
+    "team/staleness.yml": ".github/workflows/staleness.yml",
+    "team/dependabot.yml": ".github/dependabot.yml",
+    "pre-commit-config.template.yaml": ".pre-commit-config.yaml",
 }
 PLACEHOLDERS = ("<BRAIN>", "<TEAM>", "<MAINTAINER>", "<profile>", "<date>", "<FOLDER_ROWS>",
-                "<PLACEMENT_RULES>", "<folder>", "<purpose>")
+                "<PLACEMENT_RULES>", "<folder>", "<purpose>", "<KM_SHA>", "<KM_VERSION>")
 
 
-def owned() -> list[tuple[Path, str, bool]]:
-    """Every km-owned file of a team brain: (source, brain path, add it on upgrade when missing).
-    Scripts import each other, so a missing one is added; a workflow the team deleted stays deleted."""
-    return ([(KM / s, d, True) for s, d in BASE.items()]
-            + [(p, f"scripts/{p.name}", True) for p in sorted((TEAM / "scripts").glob("*.py"))]
-            + [(p, f".github/workflows/{p.name}", False) for p in sorted((TEAM / "workflows").glob("*.yml"))])
+def pin_values(version: str) -> dict[str, str]:
+    """The placeholders for the km release a brain pins: its version and the commit it tags."""
+    sha = resolve(version)
+    if not sha:
+        sys.exit(f"km {version} has no release commit to pin (not released yet, or the km repository cannot "
+                 f"be reached): pass --pin <released version>")
+    return {"<KM_SHA>": sha, "<KM_VERSION>": version}
 
 
-def _fill(text: str, values: dict[str, str]) -> str:
+def template(name: str, values: dict[str, str]) -> str:
+    """A template from km's templates/ with `values` filled in."""
+    text = (TEMPLATES / name).read_text(encoding="utf-8")
     for k, v in values.items():
         text = text.replace(k, v)
     return text
-
-
-def _write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def _copy(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src, dst)
 
 
 def _plain(label: str, value: str) -> str:
@@ -79,87 +74,65 @@ def _plain(label: str, value: str) -> str:
     return value
 
 
-def init(a: argparse.Namespace) -> int:
-    repo = Path(a.repo)
-    folders: list[tuple[str, str]] = []
-    for spec in a.folder:
+def _folders(specs: list[str]) -> list[tuple[str, str]]:
+    folders = []
+    for spec in specs:
         name, sep, purpose = spec.partition("=")
         name = name.strip().strip("/")
         if not sep or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
             sys.exit(f"--folder {spec!r}: expected DIR=PURPOSE with DIR a top-level kebab-case folder name")
         folders.append((name, _plain("--folder purpose", purpose)))
-    targets = [*TEMPLATES.values(), *(f"{n}/_index.md" for n, _ in folders), ".pre-commit-config.yaml",
-               *(d for _, d, _ in owned())]
-    existing = [t for t in targets if (repo / t).exists()]
-    if existing:
-        sys.exit(f"{repo} already has {', '.join(existing)}: refusing to overwrite (start from an empty repo)")
+    return folders
+
+
+def render(a: argparse.Namespace) -> dict[str, str]:
+    """Every file init writes, keyed by its path in the brain."""
+    folders = _folders(a.folder or [])
+    values = {"<MAINTAINER>": _plain("--initials", a.initials), "<date>": datetime.date.today().isoformat(),
+              "<FOLDER_ROWS>": "\n".join(f"| `{n}/` | {p} |" for n, p in folders), **pin_values(a.pin)}
+    if not a.team:
+        return {dst: template(tpl, values) for tpl, dst in PERSONAL.items()}
+    if not (a.name and a.desc and folders):
+        sys.exit("km init --team needs --name, --desc and at least one --folder")
     rules = a.rule or [f"{p}: `{n}/`" for n, p in folders]
-    values = {
-        "<BRAIN>": _plain("--name", a.name), "<TEAM>": _plain("--team", a.team),
-        "<MAINTAINER>": _plain("--initials", a.initials),
-        "<profile>": a.profile or a.name.lower(), "<date>": datetime.date.today().isoformat(),
-        "<FOLDER_ROWS>": "\n".join(f"| `{n}/` | {p} |" for n, p in folders),
+    values |= {
+        "<BRAIN>": _plain("--name", a.name), "<TEAM>": _plain("--desc", a.desc),
+        "<profile>": a.profile or a.name.lower(),
         "<PLACEMENT_RULES>": "\n".join(f"- {r}" for r in rules),
     }
-    rendered = {dst: _fill((TEAM / tpl).read_text(encoding="utf-8"), values) for tpl, dst in TEMPLATES.items()}
-    folder_tpl = (TEAM / "_index.folder.template.md").read_text(encoding="utf-8")
+    out = {dst: template(tpl, values) for tpl, dst in TEAM.items()}
     for n, p in folders:
-        rendered[f"{n}/_index.md"] = _fill(folder_tpl, {**values, "<folder>": n, "<purpose>": p})
-    left = sorted({f"{dst}: {ph}" for dst, text in rendered.items() for ph in PLACEHOLDERS if ph in text})
-    if left:                          # check everything before writing anything
-        sys.exit(f"placeholder(s) left after rendering: {', '.join(left)}")
-    for dst, text in rendered.items():
-        _write(repo / dst, text)
-    _copy(KM / ".pre-commit-config.template.yaml", repo / ".pre-commit-config.yaml")
-    for src, dst, _ in owned():
-        _copy(src, repo / dst)
-    print(f"km_team: initialized {a.name} in {repo} ({len(folders)} folders)")
-    return 0
-
-
-def upgrade(a: argparse.Namespace) -> int:
-    import yaml                       # only the upgrade needs it, so init runs on a bare python3
-    repo = Path(a.repo)
-    local = repo / "schema.local.yaml"
-    cfg = yaml.safe_load(local.read_text(encoding="utf-8")) if local.is_file() else None
-    if not isinstance(cfg, dict) or cfg.get("team_brain") is not True:
-        sys.exit(f"{local}: no `team_brain: true`, not a team brain")
-    changed, added, skipped = [], [], []
-    for src, dst, add_missing in owned():
-        target = repo / dst
-        if target.exists():
-            if filecmp.cmp(src, target, shallow=False):
-                continue
-            changed.append(dst)
-        elif add_missing:
-            added.append(dst)
-        else:
-            skipped.append(dst)
-            continue
-        _copy(src, target)
-    for label, items in (("updated", changed), ("added", added), ("not present, left out", skipped)):
-        for i in items:
-            print(f"km_team: {label}: {i}")
-    if not (changed or added):
-        print("km_team: team files up to date")
-    return 0
+        out[f"{n}/_index.md"] = template("team/_index.folder.template.md", {**values, "<folder>": n, "<purpose>": p})
+    return out
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Create a team brain, or refresh its km-owned team files.")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    i = sub.add_parser("init")
-    i.add_argument("repo")
-    i.add_argument("--name", required=True)
-    i.add_argument("--team", required=True)
-    i.add_argument("--initials", required=True)
-    i.add_argument("--folder", action="append", required=True, metavar="DIR=PURPOSE")
-    i.add_argument("--rule", action="append", metavar="TEXT")
-    i.add_argument("--profile")
-    u = sub.add_parser("upgrade")
-    u.add_argument("repo")
+    ap = argparse.ArgumentParser(prog="km init", description="Create a brain from km's templates.")
+    ap.add_argument("repo")
+    ap.add_argument("--team", action="store_true", help="a shared team brain (CI, served bundle, one writer)")
+    ap.add_argument("--initials", required=True, help="the owner's or maintainer's initials")
+    ap.add_argument("--folder", action="append", metavar="DIR=PURPOSE")
+    ap.add_argument("--name", help="team brain: its name, e.g. QA-Brain")
+    ap.add_argument("--desc", help="team brain: one line on whose brain it is, e.g. 'the QA team'")
+    ap.add_argument("--rule", action="append", metavar="TEXT", help="team brain: a placement rule")
+    ap.add_argument("--profile", help="team brain: meta.profile slug (default: the lowercased name)")
+    ap.add_argument("--pin", metavar="VERSION", default=KM_REF, help="the km release to pin (default: this km, %(default)s)")
     a = ap.parse_args()
-    return init(a) if a.cmd == "init" else upgrade(a)
+    repo = Path(a.repo)
+    rendered = render(a)
+    if not a.team and (repo / "CLAUDE.md").exists():
+        del rendered["CLAUDE.md"]                 # a personal brain keeps a CLAUDE.md it already has
+    existing = [p for p in rendered if (repo / p).exists()]
+    if existing:
+        sys.exit(f"{repo} already has {', '.join(existing)}: refusing to overwrite (start from an empty repo)")
+    left = sorted({f"{dst}: {ph}" for dst, text in rendered.items() for ph in PLACEHOLDERS if ph in text})
+    if left:                              # check everything before writing anything
+        sys.exit(f"placeholder(s) left after rendering: {', '.join(left)}")
+    for dst, text in rendered.items():
+        (repo / dst).parent.mkdir(parents=True, exist_ok=True)
+        (repo / dst).write_text(text, encoding="utf-8")
+    print(f"km init: {'team' if a.team else 'personal'} brain in {repo}, pinned to km {a.pin}")
+    return 0
 
 
 if __name__ == "__main__":

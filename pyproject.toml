@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools==84.0.0"]   # exact: the build runs in every brain's hook install
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "km"
+dynamic = ["version"]
+description = "Knowledge management for markdown knowledge bases: validator, index generator and team-brain tooling"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["pyyaml==6.0.3"]   # exact, so a new release on PyPI cannot slip into a brain's CI or hook
+
+[project.urls]
+Repository = "https://github.com/pasrom/km"
+
+[project.scripts]
+km = "km.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "km.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+km = ["schema.base.yaml", "templates/*", "templates/team/*"]
+
+[tool.pyright]
+extraPaths = ["src"]

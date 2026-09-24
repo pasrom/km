@@ -1,6 +1,6 @@
 # schema.base.yaml — CANONICAL frontmatter schema for /km knowledge bases.
 # A strict PROFILE of Open Knowledge Format (OKF) v0.1 plus a governance layer.
-# Owned by km (https://github.com/pasrom/km); vendored into each brain and refreshed via `/km upgrade`.
+# Owned by km (https://github.com/pasrom/km) and shipped in its package; brains pin a km version.
 # Repo-specific scope (skip_prefixes / exempt_files / extra fields) lives in
 # schema.local.yaml, which validate.py merges OVER this file at runtime.
 # OKF base fields are wire-compatible; governance fields are OKF-tolerated extensions.
@@ -66,7 +66,7 @@ fields:
     required: false
     format: path_at_hash
   contribution:           # pending-contribution marker: "<owner>/<repo>#<N>", an OPEN PR carries this doc
-    required: false       # into another brain; edit it there. Dropped by `km_promote.py stub` on merge,
+    required: false       # into another brain; edit it there. Dropped by `km promote stub` on merge,
                           # deleted by hand when the PR is closed unmerged.
 
   # --- Governance hardening (round 2 — adversarial review findings) ---

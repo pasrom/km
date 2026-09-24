@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Runs km from this plugin's own copy, so the skill always uses the km version you installed.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"   # -P: follow a symlinked skill install
+src="$here/../../../src"
+export PYTHONPATH="$src${PYTHONPATH:+:$PYTHONPATH}"
+if command -v uv >/dev/null 2>&1; then
+  exec uv run --quiet --no-project --python '>=3.11' --with pyyaml==6.0.3 python -m km "$@"
+fi
+if ! python3 -c 'import sys, yaml; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+  echo "km needs uv, or python3 3.11+ with PyYAML" >&2
+  exit 1
+fi
+exec python3 -m km "$@"

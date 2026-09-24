@@ -1,0 +1,7 @@
+- id: km-validate
+  name: km validate
+  description: Check frontmatter, links and the gate on the staged markdown files.
+  entry: km validate
+  language: python
+  files: '\.md$'
+  pass_filenames: true
