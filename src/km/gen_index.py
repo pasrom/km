@@ -79,7 +79,7 @@ def main() -> int:
         if new != cur:
             changed.append(idx)
             if not check:
-                (ROOT / idx).write_text(new, encoding="utf-8")
+                (ROOT / idx).write_text(new, encoding="utf-8", newline="\n")
 
     if check and changed:
         print("km gen-index: out of date, run `km gen-index`:")

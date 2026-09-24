@@ -49,7 +49,7 @@ def main() -> int:
             continue
         stale.append(rel)
         new_fm = re.sub(r"(?m)^approved_(?:by|at):.*\n", "", new_fm)
-        (ROOT / rel).write_text(new_fm + body, encoding="utf-8")
+        (ROOT / rel).write_text(new_fm + body, encoding="utf-8", newline="\n")
 
     if stale:
         print(f"km demote: {'demoted' if apply else 'would demote'} {len(stale)} doc(s) past review_by:")

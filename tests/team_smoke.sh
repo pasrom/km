@@ -342,6 +342,31 @@ tpl = pins(glob.glob(f"{repo}/src/km/templates/team/*.yml"))
 sys.exit(0 if all(name in own and shas == own[name] for name, shas in tpl.items()) else 1)
 PY
 
+# --- non-ASCII file names on a system whose encoding is not UTF-8 (Windows, cp1252) ---
+U="$F/umlaut"; mkdir -p "$U/notes"; git -C "$U" init -q; echo "# conv" > "$U/CONVENTIONS.md"
+printf 'check_index: true\n' > "$U/schema.local.yaml"
+printf -- '---\ntype: reference\ntitle: "Notes"\ntimestamp: 2026-01-01\nauthor: X\nstatus: draft\ntags: [t]\n---\n\n## Documents\n' > "$U/notes/_index.md"
+printf -- '---\ntype: note\ntitle: "Künstler"\ntimestamp: 2026-01-01\nauthor: X\nstatus: draft\ntags: [t]\n---\nx\n' > "$U/notes/künstler.md"
+printf -- '---\ntitle: "no type"\n---\nx\n' > "$U/notes/őrült.md"      # an error to report, with a character cp1252 lacks
+git -C "$U" add -A
+out_has(){ LC_ALL=C grep -aq "$1" <<< "$out"; }   # $out is in the non-UTF-8 encoding: match bytes
+envs="$(non_utf8_envs)"; [ -n "$envs" ] || echo "  skip: no Windows-like encoding here (Linux); the windows CI job covers it"
+while IFS= read -r e; do
+  [ -n "$e" ] || continue
+  out="$(with_env "$e" km validate --root "$U" 2>&1)"
+  { ! out_has Traceback && out_has "required field 'type' absent" && out_has "^ERRORS: 5$"; } \
+    && ok "[$e] validate finds and reports non-ASCII file names" || no "[$e] validate with non-ASCII names ($out)"
+  out="$(with_env "$e" km gen-index --root "$U" 2>&1)"
+  { ! out_has Traceback && grep -q "(künstler.md)" "$U/notes/_index.md"; } \
+    && ok "[$e] gen-index lists a non-ASCII file name" || no "[$e] gen-index with non-ASCII names ($out)"
+  git -C "$U" checkout -q -- notes/_index.md
+done <<< "$envs"
+
+# --- a tracked doc deleted but not yet staged does not crash validate ---
+printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-01-01\nauthor: X\nstatus: draft\ntags: [t]\n---\nx\n' > "$U/notes/gone.md"
+git -C "$U" add -A; git -C "$U" -c user.name=t -c user.email=t@t commit -qm gone; rm "$U/notes/gone.md"
+out="$(km validate --root "$U" 2>&1)"; ! echo "$out" | grep -q Traceback && ok "validate skips a tracked doc deleted on disk" || no "validate with a deleted tracked doc ($out)"
+
 # --- km's dependencies are pinned to the same exact versions everywhere ---
 v="$(grep -oE 'pyyaml==[0-9.]+' "$REPO/pyproject.toml")"
 { [ -n "$v" ] && grep -q "$v" "$REPO/action.yml" && grep -q "$v" "$REPO/skills/km/bin/km" && grep -q '"setuptools==' "$REPO/pyproject.toml"; } \
