@@ -7,5 +7,3 @@
 - **How to contribute:** [CLAUDE.md](CLAUDE.md), one writer, others via fork PR or promote from a
   personal brain.
 - **Layout:** the top-level folders are listed in [_index.md](_index.md).
-
-Personal, in-progress notes live in each person's own brain; only accepted knowledge lands here.
