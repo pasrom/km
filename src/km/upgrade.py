@@ -15,6 +15,8 @@
     still runs stays until that workflow is switched to the km command;
   - a legacy schema.yaml becomes schema.local.yaml, the overlay it already acts as;
   - a team brain gets the Dependabot config, and the obsolete `team_brain:` line goes.
+- A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
+  own file sets no line ending gets a note.
 
 A workflow the brain wrote itself only gets its pin moved. Prints what changed; review `git diff`
 before committing.
@@ -28,7 +30,7 @@ import shutil
 import sys
 
 from km import KM_REF
-from km.init import pin_values, template
+from km.init import ensure_lf, pin_values, template
 from km.paths import repo_root, write_text
 from km.pins import hook_rev, movable_refs, read_pins, resolve, set_pins, version_key, workflow_files
 
@@ -132,6 +134,8 @@ def main() -> int:
         dependabot.parent.mkdir(parents=True, exist_ok=True)
         write_text(dependabot, template("team/dependabot.yml", {}))
         done.append("added .github/dependabot.yml")
+    if note := ensure_lf(root):
+        done.append(note)
 
     if values and (not current or stray):
         sha = values["<KM_SHA>"]

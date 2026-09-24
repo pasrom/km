@@ -58,7 +58,7 @@ without installing: `uvx --from git+https://github.com/pasrom/km@<commit> km val
 ## What a brain gets
 
 Brains carry no km code. `km init` writes `CONVENTIONS.md`, `CLAUDE.md`, `schema.local.yaml`,
-`inbox/` and a pre-commit hook pinned to a km version. `km init --team` adds domain folders with
+`inbox/`, a `.gitattributes` that keeps text files LF, and a pre-commit hook pinned to a km version. `km init --team` adds domain folders with
 generated indexes, a README, and CI that installs km through this repository's GitHub Action:
 
 ```yaml

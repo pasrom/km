@@ -2,8 +2,9 @@
 its commit (see km.pins) and runs `km` from there. The release is this km's own, or --pin VERSION.
 
   km init DIR --initials XX [--folder DIR=PURPOSE ...]
-      A personal brain: CONVENTIONS.md, CLAUDE.md (kept if present), inbox/, schema.local.yaml and
-      the pre-commit hook. Refuses a repo that already has a CONVENTIONS.md.
+      A personal brain: CONVENTIONS.md, CLAUDE.md (kept if present), inbox/, schema.local.yaml,
+      the pre-commit hook and a .gitattributes for LF (kept if present). Refuses a repo that already
+      has a CONVENTIONS.md.
 
   km init DIR --team --name NAME --desc TEXT --initials XX --folder DIR=PURPOSE [--folder ...]
               [--rule TEXT ...] [--profile SLUG]
@@ -23,7 +24,7 @@ import sys
 from pathlib import Path
 
 from km import KM_REF
-from km.paths import TEMPLATES, write_text
+from km.paths import TEMPLATES, git, write_text
 from km.pins import resolve
 
 PERSONAL = {                          # template -> path in the brain (repo-owned after init)
@@ -64,6 +65,21 @@ def template(name: str, values: dict[str, str]) -> str:
     for k, v in values.items():
         text = text.replace(k, v)
     return text
+
+
+def ensure_lf(repo: Path) -> str | None:
+    """Have git keep the brain's text files LF on every platform: km's .gitattributes where there is
+    none. One the brain has stays as it is; when git says it sets no line ending, a note says so.
+    Returns that note, or None."""
+    path = repo / ".gitattributes"
+    if not path.exists():
+        write_text(path, template("gitattributes.template", {}))
+        return ("added .gitattributes: text files in LF on every platform "
+                "(`git add --renormalize .` if the repo already holds CRLF files)")
+    res = git("check-attr", "eol", "--", "any.md", cwd=repo)
+    if res.returncode == 0 and res.stdout.strip().endswith(": unspecified"):
+        return "kept .gitattributes, which sets no line ending: add `* text=auto eol=lf` for LF on every platform"
+    return None
 
 
 def _plain(label: str, value: str) -> str:
@@ -132,6 +148,8 @@ def main() -> int:
         (repo / dst).parent.mkdir(parents=True, exist_ok=True)
         write_text(repo / dst, text)
     print(f"km init: {'team' if a.team else 'personal'} brain in {repo}, pinned to km {a.pin}")
+    if note := ensure_lf(repo):
+        print(f"km init: {note}")
     return 0
 
 
