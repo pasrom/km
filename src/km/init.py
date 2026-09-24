@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from km import KM_REF
-from km.paths import TEMPLATES
+from km.paths import TEMPLATES, write_text
 from km.pins import resolve
 
 PERSONAL = {                          # template -> path in the brain (repo-owned after init)
@@ -130,7 +130,7 @@ def main() -> int:
         sys.exit(f"placeholder(s) left after rendering: {', '.join(left)}")
     for dst, text in rendered.items():
         (repo / dst).parent.mkdir(parents=True, exist_ok=True)
-        (repo / dst).write_text(text, encoding="utf-8")
+        write_text(repo / dst, text)
     print(f"km init: {'team' if a.team else 'personal'} brain in {repo}, pinned to km {a.pin}")
     return 0
 

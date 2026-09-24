@@ -117,6 +117,7 @@ out="$(kt gen-index)"; rc=$?
 { [ "$rc" = 0 ] && ! echo "$out" | grep -q Traceback && ! grep -q "gone.md" "$T/process/_index.md"; } \
   && ok "a deleted tracked doc drops out of the list, no crash" || no "a deleted tracked doc crashes gen-index ($out)"
 out="$(kt serve)"; echo "$out" | grep -q Traceback && no "serve survives a deleted tracked doc" || ok "serve survives a deleted tracked doc"
+out="$(kt validate)"; echo "$out" | grep -q Traceback && no "validate survives a deleted tracked doc" || ok "validate survives a deleted tracked doc"
 G add -A; G commit -q -m gone2 >/dev/null
 
 # --- serve ---
@@ -341,6 +342,34 @@ own = pins([f"{repo}/action.yml", *glob.glob(f"{repo}/.github/workflows/*.yml")]
 tpl = pins(glob.glob(f"{repo}/src/km/templates/team/*.yml"))
 sys.exit(0 if all(name in own and shas == own[name] for name, shas in tpl.items()) else 1)
 PY
+
+# --- non-ASCII file names on a system whose encoding is not UTF-8 (Windows, cp1252) ---
+tested=
+for e in "LC_ALL=C PYTHONCOERCECLOCALE=0" "LC_ALL=en_US.ISO8859-1"; do
+  windows_like "$e" || continue; tested=1
+  out="$(with_env "$e" bash "$REPO/tests/encoding_smoke.sh" 2>&1)" && ok "[$e] encoding_smoke.sh" || no "[$e] encoding_smoke.sh:
+$out"
+done
+[ -n "$tested" ] || echo "  skip: no Windows-like encoding here (Linux); the windows CI job runs encoding_smoke.sh"
+
+# On Linux a non-UTF-8 locale changes the file-name encoding too: each name git lists must still
+# open its file (the smoke CI job generates this locale)
+L="$F/latin1"; mkdir -p "$L/notes"; git -C "$L" init -q; echo "# conv" > "$L/CONVENTIONS.md"
+printf -- '---\ntitle: "no type"\n---\nx\n' > "$L/notes/künstler.md"; git -C "$L" add -A
+e="LC_ALL=en_US.ISO-8859-1"
+if with_env "$e" "$PY" -c 'import sys; sys.exit(sys.getfilesystemencoding() == "utf-8")' 2>/dev/null; then
+  out="$(with_env "$e" km validate --root "$L" 2>&1)"
+  { ! out_has Traceback && out_has "required field 'type' absent"; } \
+    && ok "[$e] a non-ASCII name is validated where file names are not UTF-8" || no "[$e] non-UTF-8 file names ($out)"
+else echo "  skip: no locale here whose file names are not UTF-8 (the smoke CI job has one)"; fi
+
+# git's messages follow the locale: a Latin-1 one outside a repo must give km's error, not a traceback
+N="$F/norepo"; mkdir -p "$N"
+if [ -n "$(cd "$N" && LC_ALL=fr_FR.ISO8859-1 git rev-parse 2>&1 | LC_ALL=C tr -d '\0-\177')" ]; then
+  out="$(with_env LC_ALL=fr_FR.ISO8859-1 km validate --root "$N" 2>&1)"
+  { ! out_has Traceback && out_has "git ls-files failed"; } \
+    && ok "a git error in a Latin-1 locale is reported, not a crash" || no "git error in a Latin-1 locale ($out)"
+else echo "  skip: git prints no non-ASCII error in a Latin-1 locale here"; fi
 
 # --- km's dependencies are pinned to the same exact versions everywhere ---
 v="$(grep -oE 'pyyaml==[0-9.]+' "$REPO/pyproject.toml")"

@@ -91,7 +91,8 @@ tests/                 smoke tests
 ## Development
 
 The smoke tests need Python 3.11+, PyYAML and git: `bash tests/gate_smoke.sh`, `index_smoke.sh`,
-`team_smoke.sh`. CI runs all three plus the GitHub Action on every pull request. A release bumps
+`team_smoke.sh`. CI runs all three plus the GitHub Action on every pull request, and
+`encoding_smoke.sh` on Windows (team_smoke runs it on macOS under non-UTF-8 locales). A release bumps
 `__version__` in `src/km/__init__.py`, `version` in `.claude-plugin/plugin.json` and the version in
 this README together; merging that to main is the release, CI tags `vX.Y.Z` once main is green.
 

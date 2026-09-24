@@ -29,7 +29,7 @@ import sys
 
 from km import KM_REF
 from km.init import pin_values, template
-from km.paths import repo_root
+from km.paths import repo_root, write_text
 from km.pins import hook_rev, movable_refs, read_pins, resolve, set_pins, version_key, workflow_files
 
 COPIED = {                            # a file km copied in -> text only km's copy of it carries
@@ -92,7 +92,7 @@ def main() -> int:
             continue
         text = p.read_text(encoding="utf-8")
         if rel in rewrites:
-            p.write_text(template(tpl, values), encoding="utf-8")
+            write_text(p, template(tpl, values))
             done.append(f"rewrote {rel} (it was km's own, unchanged) to install km")
             team |= rel.startswith(".github/")
         elif rel == ".pre-commit-config.yaml" and "scripts/validate.py" in text:
@@ -125,12 +125,12 @@ def main() -> int:
     if local.is_file():
         text = local.read_text(encoding="utf-8")
         if (new := MARKER.sub("", text)) != text:
-            local.write_text(new, encoding="utf-8")
+            write_text(local, new)
             done.append("dropped team_brain from schema.local.yaml (no longer used)")
     dependabot = root / ".github/dependabot.yml"
     if team and not dependabot.exists():
         dependabot.parent.mkdir(parents=True, exist_ok=True)
-        dependabot.write_text(template("team/dependabot.yml", {}), encoding="utf-8")
+        write_text(dependabot, template("team/dependabot.yml", {}))
         done.append("added .github/dependabot.yml")
 
     if values and (not current or stray):

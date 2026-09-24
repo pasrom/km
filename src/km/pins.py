@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from km.paths import git, write_text
 
 KM_REPO = "https://github.com/pasrom/km"
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -113,7 +114,7 @@ def set_pins(root: Path, sha: str, version: str) -> list[str]:
             else:
                 new = PIN.sub(lambda m: m.group(1) + uses_ref(sha, version), text)
             if new != text:
-                p.write_text(new, encoding="utf-8")
+                write_text(p, new)
                 changed.append(str(p.relative_to(root)))
     return changed
 
@@ -132,7 +133,7 @@ def resolve(version: str) -> str | None:
     """The commit a km release tag points at; None when the tag does not exist or the repository
     cannot be reached."""
     tag = f"refs/tags/{version}"
-    out = subprocess.run(["git", "ls-remote", repo_url(), tag, tag + "^{}"], capture_output=True, text=True).stdout
+    out = git("ls-remote", repo_url(), tag, tag + "^{}").stdout
     refs = {name: sha for sha, _, name in (line.partition("\t") for line in out.splitlines())}
     return refs.get(tag + "^{}") or refs.get(tag)   # an annotated tag: the commit it points at
 

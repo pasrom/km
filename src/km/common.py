@@ -5,14 +5,14 @@ configuration than the validator checks; a broken schema file stops the run.
 """
 from __future__ import annotations
 
+import functools
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 
-from km.paths import BASE_SCHEMA, repo_root
+from km.paths import BASE_SCHEMA, git, repo_root
 
 ROOT = repo_root()
 
@@ -80,11 +80,18 @@ def read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
 
 
-def tracked_md() -> list[str]:
-    res = subprocess.run(["git", "ls-files", "-z", "*.md"], cwd=ROOT, capture_output=True, text=True)
+@functools.cache
+def _ls_md() -> tuple[str, ...]:
+    res = git("ls-files", "-z", "*.md", cwd=ROOT)
     if res.returncode != 0:
-        sys.exit(f"git ls-files failed: {res.stderr.strip()}")
-    return [p for p in res.stdout.split("\x00") if p and (ROOT / p).is_file()]   # a deletion not yet staged is gone
+        sys.exit(f"git ls-files failed (not a git repo?): {res.stderr.strip()}")
+    return tuple(p for p in res.stdout.split("\x00") if p)
+
+
+def tracked_md(existing: bool = True) -> list[str]:
+    """The tracked .md files, listed by git once per run; with existing=False also those deleted but
+    not yet staged."""
+    return [p for p in _ls_md() if not existing or (ROOT / p).is_file()]
 
 
 def is_article(rel: str) -> bool:

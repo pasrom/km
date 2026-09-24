@@ -17,15 +17,14 @@ import sys
 from pathlib import Path
 
 from km.common import CUSTOMER_AUDIENCE, ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
+from km.paths import write_text
 
 OUT = ROOT / "dist" / "served"
 ALLOWED_AUDIENCE = {"internal", CUSTOMER_AUDIENCE}
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
-    with path.open("w", encoding="utf-8") as fh:
-        for r in records:
-            fh.write(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n")
+    write_text(path, "".join(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n" for r in records))
 
 
 def main() -> int:
@@ -63,7 +62,7 @@ def main() -> int:
         "counts": {"internal": len(accepted), "customer": len(customer)},
         "skipped_bad_audience": skipped_bad_audience,
     }
-    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_text(OUT / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     print(f"served: internal={len(accepted)} customer={len(customer)} "
           f"(bad-audience skipped {skipped_bad_audience}) -> {OUT.relative_to(ROOT)}")
     return 0
