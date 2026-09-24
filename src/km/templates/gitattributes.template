@@ -1,0 +1,3 @@
+# Text files are stored and checked out with LF on every platform, whatever git's line-ending
+# settings (Git for Windows converts to CRLF by default). km writes LF too.
+* text=auto eol=lf

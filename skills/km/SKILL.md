@@ -37,8 +37,8 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 1. Ask for the user's author initials (e.g. `ABC`) and, optionally, domain folders with a one-line
    purpose each (without any, `inbox/` alone).
 2. `km init . --initials <XX> [--folder <dir>="<purpose>" ...]`: writes `CONVENTIONS.md`,
-   `CLAUDE.md` (kept if one exists), `inbox/_index.md`, a minimal `schema.local.yaml` and the
-   pre-commit hook pinned to this km's release commit (`--pin <version>` for another release; a km that
+   `CLAUDE.md` (kept if one exists), `inbox/_index.md`, a minimal `schema.local.yaml`, a
+   `.gitattributes` that keeps text files LF (kept if one exists) and the pre-commit hook pinned to this km's release commit (`--pin <version>` for another release; a km that
    is not released yet cannot be pinned). It refuses a repo that already has a `CONVENTIONS.md`.
 3. Commit: `chore: initialize knowledge base conventions`
 
@@ -57,7 +57,7 @@ demotion), domain folders instead of `inbox/`, and the single-writer rules.
 2. In the empty repo (or an empty clone of a fresh remote):
    `km init . --team --name <name> --desc "<desc>" --initials <XX> --folder process="<purpose>"
    --folder ... [--rule "<rule>" ...]`. It writes the docs, indexes, `schema.local.yaml`, the ci and
-   staleness workflows, the pre-commit hook and a Dependabot config, all pinned by commit to this km's
+   staleness workflows, the pre-commit hook, a Dependabot config and a `.gitattributes` for LF, all pinned by commit to this km's
    release (or `--pin <version>`), and
    refuses to run if any file it would write already exists, such as a README the host created with
    the repo: delete that first.

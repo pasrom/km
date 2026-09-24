@@ -26,6 +26,7 @@ ph="$(kmpy -c 'import km.init as i; print("\\|".join(i.PLACEHOLDERS))')"
 grep -rln "$ph" "$T" --include='*.md' --include='*.yaml' >/dev/null && no "no placeholder left after init" || ok "no placeholder left after init"
 grep -q '^| `projects/` | Time-bound work' "$T/CONVENTIONS.md" && ok "folder table rendered" || no "folder table rendered"
 [ ! -e "$T/scripts" ] && [ ! -e "$T/schema.base.yaml" ] && ok "no km code is copied into the brain" || no "no km code is copied into the brain"
+grep -qx "\* text=auto eol=lf" "$T/.gitattributes" && ok "init writes a .gitattributes: LF on every platform" || no "init writes a .gitattributes: LF on every platform"
 { grep -q "uses: $PINW" "$T/.github/workflows/ci.yml" && grep -q "uses: $PINW" "$T/.github/workflows/staleness.yml" \
   && grep -q "$PINH" "$T/.pre-commit-config.yaml" && [ -f "$T/.github/dependabot.yml" ]; } \
   && ok "workflows and hook pin km $KM_REF by its commit, Dependabot watches them" || no "workflows and hook pin km by commit"
@@ -157,10 +158,16 @@ PY
 P="$F/personal"; km init "$P" --initials PP --folder notes="Loose notes" >/dev/null
 git -C "$P" init -q && git -C "$P" add -A
 { grep -q '^| `notes/` | Loose notes |$' "$P/CONVENTIONS.md" && [ -f "$P/inbox/_index.md" ] && grep -q "$PINH" "$P/.pre-commit-config.yaml" \
-  && [ ! -e "$P/.github" ]; } && ok "personal init: conventions, inbox, pinned hook, no CI" || no "personal init: conventions, inbox, pinned hook, no CI"
+  && [ ! -e "$P/.github" ] && grep -q "eol=lf" "$P/.gitattributes"; } && ok "personal init: conventions, inbox, pinned hook, .gitattributes, no CI" || no "personal init: conventions, inbox, pinned hook, .gitattributes, no CI"
 out="$(km validate --root "$P" 2>&1)"; echo "$out" | grep -q "ERRORS: 0" && ok "personal brain validates clean" || no "personal brain validates clean ($out)"
-mkdir -p "$F/p2" && echo "# mine" > "$F/p2/CLAUDE.md"
-km init "$F/p2" --initials PP >/dev/null && grep -qx "# mine" "$F/p2/CLAUDE.md" && ok "personal init keeps an existing CLAUDE.md" || no "personal init keeps an existing CLAUDE.md"
+mkdir -p "$F/p2" && git -C "$F/p2" init -q && echo "# mine" > "$F/p2/CLAUDE.md" && printf '\xef\xbb\xbf*.bin binary\n' > "$F/p2/.gitattributes"
+out="$(km init "$F/p2" --initials PP 2>&1)"
+{ grep -qx "# mine" "$F/p2/CLAUDE.md" && [ "$(cat "$F/p2/.gitattributes")" = $'\xef\xbb\xbf*.bin binary' ] && out_has "sets no line ending"; } \
+  && ok "personal init keeps an existing CLAUDE.md and .gitattributes, and notes a missing line ending" || no "personal init keeps an existing CLAUDE.md and .gitattributes ($out)"
+mkdir -p "$F/p3" && git -C "$F/p3" init -q && echo "  * text eol=crlf" > "$F/p3/.gitattributes"
+out="$(km init "$F/p3" --initials PP 2>&1)"
+{ [ "$(cat "$F/p3/.gitattributes")" = "  * text eol=crlf" ] && ! out_has "gitattributes"; } \
+  && ok "a .gitattributes that sets its own line ending: no note (git decides)" || no "own line ending ($out)"
 
 # --- upgrade: a brain from the copy-in days moves to the package ---
 O="$F/old"; mkdir -p "$O/scripts" "$O/.github/workflows"
@@ -186,6 +193,8 @@ out="$(km upgrade --root "$O" 2>&1)"
   && ok "upgrade rewrites the local hook to the pasrom/km hook" || no "upgrade rewrites the hook ($out)"
 { ! grep -q "team_brain" "$O/schema.local.yaml" && grep -q "check_index: true" "$O/schema.local.yaml"; } \
   && ok "upgrade drops only the old team_brain marker" || no "upgrade drops the marker ($(cat "$O/schema.local.yaml"))"
+{ grep -q "eol=lf" "$O/.gitattributes" && out_has "added .gitattributes"; } \
+  && ok "upgrade adds a .gitattributes to a brain without one" || no "upgrade adds .gitattributes ($out)"
 out="$(km upgrade --root "$O" 2>&1)"; echo "$out" | grep -q "already on km $KM_REF" && ok "a second upgrade changes nothing" || no "a second upgrade changes nothing ($out)"
 repin "$KM_SHA" "$KM_REF" "$V09_SHA" v0.9.0 "$O/.github/workflows/ci.yml" "$O/.pre-commit-config.yaml"
 out="$(km upgrade --root "$O" 2>&1)"
@@ -201,6 +210,7 @@ echo "print('mine')" > "$M/scripts/validate.py"
 printf '"""Regenerate the '"'"'## Documents'"'"' list in every folder\n"""\n' > "$M/scripts/gen_index.py"
 printf '"""Build the SERVED bundle\n"""\n' > "$M/scripts/build_served.py"
 printf 'type_rules: {}\nteam_brain: true\n' > "$M/schema.local.yaml"
+git -C "$M" init -q; echo "*.md text" > "$M/.gitattributes"
 printf 'jobs:\n  own:\n    steps:\n      - run: python scripts/own.py\n' > "$M/.github/workflows/ci.yml"
 printf 'jobs:\n  lint:\n    steps:\n      - run: python3 scripts/gen_index.py --check\n' > "$M/.github/workflows/lint.yml"
 printf 'repos:\n  - repo: local\n    hooks:\n      - id: km-validate\n        entry: uv run scripts/validate.py\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v4.0.0\n    hooks:\n      - id: trailing-whitespace\n' > "$M/.pre-commit-config.yaml"
@@ -210,6 +220,8 @@ out="$(km upgrade --root "$M" 2>&1)"
 grep -q "python scripts/own.py" "$M/.github/workflows/ci.yml" && ok "a brain's own ci.yml is not replaced" || no "a brain's own ci.yml is not replaced"
 { [ -f "$M/scripts/gen_index.py" ] && echo "$out" | grep -q "kept scripts/gen_index.py: .github/workflows/lint.yml still runs it"; } \
   && ok "a km copy a remaining workflow still runs is kept and reported" || no "script still run is kept ($out)"
+{ [ "$(cat "$M/.gitattributes")" = "*.md text" ] && out_has "kept .gitattributes, which sets no line ending"; } \
+  && ok "upgrade keeps a brain's own .gitattributes and notes a missing line ending" || no "upgrade and a brain's own .gitattributes ($out)"
 [ -f "$M/.github/dependabot.yml" ] && ok "a team brain (team_brain marker) gets Dependabot even with its own workflows" || no "team brain via marker gets Dependabot ($out)"
 { grep -q "trailing-whitespace" "$M/.pre-commit-config.yaml" && echo "$out" | grep -q "differs from km's old hook"; } \
   && ok "a pre-commit config with other hooks is left for a hand edit" || no "pre-commit with other hooks ($out)"
