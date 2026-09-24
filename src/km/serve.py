@@ -23,7 +23,7 @@ ALLOWED_AUDIENCE = {"internal", CUSTOMER_AUDIENCE}
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
-    with path.open("w", encoding="utf-8", newline="\n") as fh:
+    with path.open("w", encoding="utf-8") as fh:
         for r in records:
             fh.write(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n")
 
@@ -63,7 +63,7 @@ def main() -> int:
         "counts": {"internal": len(accepted), "customer": len(customer)},
         "skipped_bad_audience": skipped_bad_audience,
     }
-    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
+    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"served: internal={len(accepted)} customer={len(customer)} "
           f"(bad-audience skipped {skipped_bad_audience}) -> {OUT.relative_to(ROOT)}")
     return 0

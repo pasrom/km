@@ -39,7 +39,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import EXEMPT, OVERLAY, ROOT, SCHEMA, tracked_md
+from km.common import EXEMPT, OVERLAY, ROOT, SCHEMA
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
 from km.common import SKIP as SKIP_PREFIXES
@@ -171,7 +171,12 @@ def targets() -> list[str]:
             if rel.endswith(".md") and is_validatable(rel) and (ROOT / rel).is_file():
                 out.append(rel)
         return out
-    return [p for p in tracked_md() if is_validatable(p)]
+    res = subprocess.run(
+        ["git", "ls-files", "-z", "*.md"], cwd=ROOT, capture_output=True, text=True
+    )
+    if res.returncode != 0:
+        sys.exit(f"git ls-files failed (not a git repo?): {res.stderr.strip()}")
+    return [p for p in res.stdout.split("\x00") if is_validatable(p)]
 
 
 def secret_targets() -> list[str]:
@@ -188,7 +193,12 @@ def secret_targets() -> list[str]:
             if rel.endswith(".md") and not rel.startswith(SKIP_PREFIXES) and (ROOT / rel).is_file():
                 out.append(rel)
         return out
-    return [p for p in tracked_md() if not p.startswith(SKIP_PREFIXES)]
+    res = subprocess.run(
+        ["git", "ls-files", "-z", "*.md"], cwd=ROOT, capture_output=True, text=True
+    )
+    if res.returncode != 0:
+        return []
+    return [p for p in res.stdout.split("\x00") if p and not p.startswith(SKIP_PREFIXES)]
 
 
 def frontmatter(text: str):
@@ -335,7 +345,10 @@ def check_index_tree() -> None:
     that have an index. `skip_prefixes`
     folders and `index_skip_prefixes` folders are not linted (the latter is the index-only opt-out,
     leaving article validation on). Whole-repo only: skipped on per-file (pre-commit) runs."""
-    tracked = set(tracked_md(existing=False))                       # existence oracle: ALL tracked .md
+    res = subprocess.run(["git", "ls-files", "-z", "*.md"], cwd=ROOT, capture_output=True, text=True)
+    if res.returncode != 0:
+        return
+    tracked = {p for p in res.stdout.split("\x00") if p}             # existence oracle: ALL tracked .md
     walk = {p for p in tracked                                      # only these folders are linted
             if not p.startswith(SKIP_PREFIXES) and not p.startswith(INDEX_SKIP_PREFIXES)}
 

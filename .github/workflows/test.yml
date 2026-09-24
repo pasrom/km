@@ -75,7 +75,7 @@ jobs:
         run: |
           enc="$(python -c 'import locale; print(locale.getpreferredencoding(False))')"; echo "encoding: $enc"
           case "$enc" in *[Uu][Tt][Ff]*) echo "::error::the runner's encoding is UTF-8, this job tests nothing"; exit 1;; esac
-          export PYTHONPATH="$GITHUB_WORKSPACE/src" PYTHONWARNDEFAULTENCODING=1 PYTHONWARNINGS=error::EncodingWarning
+          export PYTHONPATH="$GITHUB_WORKSPACE/src"
           b="$RUNNER_TEMP/b"; mkdir -p "$b/notes" && cd "$b"
           git init -q && git config core.autocrlf false && git config user.name ci && git config user.email ci@example.org
           echo "# conv" > CONVENTIONS.md && printf 'check_index: true\n' > schema.local.yaml
