@@ -4,12 +4,12 @@ This file defines the rules every AI assistant must follow when working with thi
 
 ## Frontmatter Schema
 
-The machine-readable schema is [`schema.base.yaml`](schema.base.yaml) — a strict profile of the
-[Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf),
-owned by `/km` and refreshed via `/km upgrade`. Repo-specific scope lives in
+The machine-readable schema is [km's base schema](https://github.com/pasrom/km/blob/<KM_SHA>/src/km/schema.base.yaml) (km <KM_VERSION>), a strict profile of the
+[Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
+that versions with km (`/km upgrade` moves the pin). Repo-specific scope lives in
 [`schema.local.yaml`](schema.local.yaml), merged over the base at runtime. Both are enforced by
-[`scripts/validate.py`](scripts/validate.py) (run manually, in CI, or via the pre-commit hook).
-The block below is the human summary; `schema.base.yaml` + `schema.local.yaml` are authoritative.
+`km validate` (run manually, in CI, or via the pre-commit hook). The block below is the human
+summary; the base schema and `schema.local.yaml` are authoritative.
 
 Every markdown file (except CLAUDE.md, README.md, CONVENTIONS.md, and SKILL.md files) must have YAML frontmatter:
 
@@ -70,6 +70,7 @@ Obsolete/superseded documents are **never deleted** — they remain for historic
 | Folder | Purpose |
 |--------|---------|
 | `inbox/` | Unsorted content — temporary landing zone |
+<FOLDER_ROWS>
 
 <!-- Add domain-specific folders here, e.g.:
 | `concepts/` | Core domain knowledge |

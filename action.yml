@@ -1,0 +1,30 @@
+name: km
+description: Install the km CLI (validate, gen-index, demote, serve, promote) at this action's version.
+branding:
+  icon: book-open
+  color: blue
+inputs:
+  python-version:
+    description: Python km runs on (installed for km only; the job's own python is left as it is)
+    default: '3.11'
+runs:
+  using: composite
+  steps:
+    - id: py
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        update-environment: false
+    - name: install km
+      shell: bash
+      run: |
+        # km is pure Python: run it from the action's checkout, with only its dependency (pyproject's
+        # `dependencies`, same exact version) in a venv of its own; no wheel to build on every job.
+        venv="$RUNNER_TEMP/km-venv"
+        "${{ steps.py.outputs.python-path }}" -m venv "$venv"
+        "$venv/bin/python" -m pip install --quiet --disable-pip-version-check "pyyaml==6.0.3"
+        mkdir -p "$RUNNER_TEMP/km-bin"
+        printf '#!/usr/bin/env bash\nPYTHONPATH="%s/src" exec "%s/bin/python" -m km "$@"\n' \
+          "${{ github.action_path }}" "$venv" > "$RUNNER_TEMP/km-bin/km"
+        chmod +x "$RUNNER_TEMP/km-bin/km"
+        echo "$RUNNER_TEMP/km-bin" >> "$GITHUB_PATH"

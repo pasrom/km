@@ -1,0 +1,3 @@
+# schema.local.yaml: repo-specific overlay, merged OVER km's base schema by `km validate`. Lists here
+# EXTEND the base lists (e.g. skip_prefixes, exempt_files); dict keys are shallow-merged. Owned by
+# this repo; `km upgrade` leaves it alone.

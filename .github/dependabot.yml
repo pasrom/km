@@ -1,0 +1,9 @@
+# Keeps the commit-pinned actions in this repository's workflows and in action.yml current. The
+# templates brains get are not watched: a test fails until they pin the same commits, so a
+# Dependabot update here has to be carried into src/km/templates/team/*.yml by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

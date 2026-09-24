@@ -12,13 +12,66 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
-      - run: pip install pyyaml
-      - name: git identity for the test repos
-        run: git config --global user.name ci && git config --global user.email ci@example.org
-      - run: bash skills/km/tests/gate_smoke.sh
-      - run: bash skills/km/tests/index_smoke.sh
-      - run: bash skills/km/tests/team_smoke.sh
+      - run: pip install pyyaml==6.0.3
+      - name: the package installs with its templates
+        run: |
+          python -m venv /tmp/wheel && /tmp/wheel/bin/pip install --quiet . && /tmp/wheel/bin/km --version
+          # km init pins a release by its commit: stand this checkout in for a released km
+          git tag "v$(/tmp/wheel/bin/km --version)"
+          KM_REPO_URL="file://$GITHUB_WORKSPACE" /tmp/wheel/bin/km init /tmp/wheel-brain --team --name W --desc w --initials WW --folder d=D
+      - run: bash tests/gate_smoke.sh
+      - run: bash tests/index_smoke.sh
+      - run: bash tests/team_smoke.sh
+
+  # The composite action a brain's CI uses: install km from this checkout, then build and check a
+  # team brain with the installed `km` command.
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: ./
+      - name: the job's own python is untouched
+        run: python --version | grep -q "3\.12" && ! python -c "import km" 2>/dev/null
+      - name: a fresh team brain is clean
+        run: |
+          km --version
+          git tag "v$(km --version)"             # km init pins a release by its commit
+          export KM_REPO_URL="file://$GITHUB_WORKSPACE"
+          km init "$RUNNER_TEMP/b" --team --name CI-Brain --desc "the CI team" --initials CI --folder docs="Docs"
+          cd "$RUNNER_TEMP/b"
+          git init -q && git add -A
+          km gen-index && git add -A
+          km gen-index --check
+          km validate
+          km serve
+      # the steps a team brain's ci.yml runs, including uploading the served bundle
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: served-bundle
+          path: ${{ runner.temp }}/b/dist/served/
+          if-no-files-found: error
+
+  # Merging a version bump is the release: once main is green, tag v<__version__> if that tag is new.
+  # Brains pin these tags, and `km init` writes the tag of the km that runs it.
+  release:
+    if: github.event_name == 'push'
+    needs: [smoke, action]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: tag the version if it is new
+        run: |
+          v="v$(PYTHONPATH=src python3 -c 'import km; print(km.__version__)')"
+          if git rev-parse -q --verify "refs/tags/$v" >/dev/null; then echo "$v is already tagged"; exit 0; fi
+          git tag "$v" && git push origin "$v" && echo "tagged $v"

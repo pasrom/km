@@ -1,13 +1,6 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["pyyaml"]
-# ///
 """Regenerate the '## Documents' list in every folder's _index.md from the docs in that folder,
 plus a link to the _index.md of each direct subfolder, so a new subfolder is reachable from its
 parent without anyone remembering to add it.
-
-km-owned (team brains): copied in by `/km init --team`, refreshed by `/km upgrade`; do not edit a
-brain's copy, change it in km.
 
 Everything above the '## Documents' heading (frontmatter + hand-written intro) is preserved; only
 the list below it is rewritten deterministically, so parallel PRs never conflict on _index.md and
@@ -16,7 +9,7 @@ the list can never drift from the folder. `--check` exits non-zero if any _index
 no _index.md of its own fails the run in both modes: that index is written by hand, then filled by
 this script.
 
-Run:  python3 scripts/gen_index.py [--check]
+Run:  km gen-index [--root DIR] [--check]
 """
 from __future__ import annotations
 
@@ -25,7 +18,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from team_common import INDEX_SKIP, ROOT, SKIP, folder_of, frontmatter, is_article, read, tracked_md
+from km.common import INDEX_SKIP, ROOT, SKIP, folder_of, frontmatter, is_article, read, tracked_md
 
 _MARK = re.compile(r"(?m)^## Documents[ \t]*$")
 _NEXT_H2 = re.compile(r"(?m)^## ")
@@ -89,15 +82,15 @@ def main() -> int:
                 (ROOT / idx).write_text(new, encoding="utf-8")
 
     if check and changed:
-        print("gen_index: out of date, run `python3 scripts/gen_index.py`:")
+        print("km gen-index: out of date, run `km gen-index`:")
         for c in changed:
             print(f"  - {c}")
     elif changed:
-        print(f"gen_index: updated {len(changed)}: {', '.join(changed)}")
+        print(f"km gen-index: updated {len(changed)}: {', '.join(changed)}")
     else:
-        print("gen_index: up to date")
+        print("km gen-index: up to date")
     if unindexed:
-        print("gen_index: these folders have docs or a subfolder index to list but no _index.md; "
+        print("km gen-index: these folders have docs or a subfolder index to list but no _index.md; "
               "write one by hand (frontmatter, intro, an empty '## Documents' heading):")
         for u in unindexed:
             print(f"  - {u}")

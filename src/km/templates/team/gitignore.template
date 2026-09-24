@@ -3,4 +3,3 @@
 *.stub-tmp.md
 .DS_Store
 dist/
-__pycache__/

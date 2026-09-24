@@ -1,7 +1,3 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["pyyaml"]
-# ///
 """Build the SERVED bundle: the filtered, machine-readable feed AI/RAG tools read (people read the
 repo itself).
 
@@ -10,10 +6,7 @@ audience (CONVENTIONS.md). Writes per-audience JSONL bundles + a manifest under 
 (gitignored; CI uploads it as an artifact). Blame-free (no author/commit history), permission-aware (customer bundle excludes
 internal docs), git-free to consume.
 
-km-owned (team brains): copied in by `/km init --team`, refreshed by `/km upgrade`; do not edit a
-brain's copy, change it in km.
-
-Run:  python3 scripts/build_served.py
+Run:  km serve [--root DIR]
 """
 from __future__ import annotations
 
@@ -23,7 +16,7 @@ import re
 import sys
 from pathlib import Path
 
-from team_common import CUSTOMER_AUDIENCE, ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
+from km.common import CUSTOMER_AUDIENCE, ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
 
 OUT = ROOT / "dist" / "served"
 ALLOWED_AUDIENCE = {"internal", CUSTOMER_AUDIENCE}
