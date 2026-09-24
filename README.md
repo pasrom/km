@@ -1,7 +1,7 @@
 # km
 
-Knowledge management for markdown knowledge bases ("brains"), as a Claude Code skill plus the
-scripts and CI that keep a brain consistent.
+Knowledge management for markdown knowledge bases ("brains"): a Claude Code skill, and the `km`
+command and GitHub Action that keep a brain consistent.
 
 - Answer a question from the brain, with sources.
 - Save a note, decision or meeting transcript with validated frontmatter, in the right folder.
@@ -30,7 +30,7 @@ As a Claude Code plugin:
 /km update sensor-fusion: add calibration      # modify a document
 /km brain add https://github.com/org/team-brain.git   # mount another brain
 /km @all Zephyr RTOS                           # search all mounted brains
-/km upgrade                                    # refresh the km-owned files in a brain
+/km upgrade                                    # move the brain to the installed km version
 /km help                                       # all commands
 ```
 
@@ -38,28 +38,62 @@ As a Claude Code plugin:
 brain keeps its own access permissions, brains update when queried (if older than 15 minutes), and
 every answer cites `[brain@commit]`.
 
+## The km command
+
+```
+km validate [FILE ...]      frontmatter, links, the gate, index completeness
+km gen-index [--check]      regenerate every '## Documents' list in _index.md
+km demote [--apply]         demote served docs past their review date
+km serve                    build the per-audience bundle under dist/served/
+km promote ...              move a note into the brain as a review doc
+km init DIR [--team ...]    create a brain from the templates
+km upgrade                  move a brain's km pins to this version
+```
+
+Every command takes `--root DIR`; the default is the git work tree around the current directory.
+Install a release by its commit (`git ls-remote https://github.com/pasrom/km refs/tags/v1.0.0` shows
+it), not by the tag: `pip install git+https://github.com/pasrom/km@<commit>  # v1.0.0`, or run it
+without installing: `uvx --from git+https://github.com/pasrom/km@<commit> km validate  # v1.0.0`.
+
 ## What a brain gets
 
-`/km init` writes `CONVENTIONS.md`, `CLAUDE.md`, `schema.base.yaml` and `schema.local.yaml`, and
-copies `scripts/validate.py` (frontmatter and index lint) and `scripts/km_promote.py` (move a note
-into the served set). `/km init --team` adds `scripts/gen_index.py`, `demote_stale.py`,
-`build_served.py`, two GitHub workflows and domain folders. Files marked km-owned are refreshed by
-`/km upgrade`; change them here, not in a brain.
+Brains carry no km code. `km init` writes `CONVENTIONS.md`, `CLAUDE.md`, `schema.local.yaml`,
+`inbox/` and a pre-commit hook pinned to a km version. `km init --team` adds domain folders with
+generated indexes, a README, and CI that installs km through this repository's GitHub Action:
+
+```yaml
+- uses: pasrom/km@<commit> # v1.0.0, installs the km CLI at that commit
+- run: km validate
+- run: km gen-index --check
+```
+
+The pre-commit hook works the same way (`repo: https://github.com/pasrom/km`,
+`rev: <commit>  # frozen: v1.0.0`, `id: km-validate`). Every pin names a release by its commit, so a
+tag moved later cannot change what a brain runs; the version rides along as a comment, and
+`km upgrade` checks that the commit is that release's. km's own dependencies are pinned to exact
+versions. `km init` and `km upgrade` look a release's commit up by its tag once, so a release tag here
+must never be moved or deleted; a repository ruleset on `v*` makes sure of it. Dependabot
+and `pre-commit autoupdate --freeze` propose newer versions; `/km upgrade` moves the pins and turns
+a brain from the copy-in days into one that pins km.
 
 ## Layout
 
 ```
 .claude-plugin/        plugin and marketplace manifests
-skills/km/SKILL.md     the skill
-skills/km/*.py         validate.py, km_promote.py (copied into every brain)
-skills/km/team/        team-brain templates, scripts, workflows and km_team.py (init/upgrade)
-skills/km/tests/       smoke tests: bash skills/km/tests/<name>.sh
+action.yml             GitHub Action: installs km at the action's version
+.pre-commit-hooks.yaml pre-commit hook km-validate
+src/km/                the package: cli, validate, gen_index, demote, serve, promote, init, upgrade
+src/km/templates/      what `km init` writes
+skills/km/SKILL.md     the skill; skills/km/bin/km runs the package from the installed plugin
+tests/                 smoke tests
 ```
 
 ## Development
 
-The smoke tests need Python 3.11+, PyYAML and git: `bash skills/km/tests/gate_smoke.sh`,
-`index_smoke.sh`, `team_smoke.sh`. CI runs all three on every pull request.
+The smoke tests need Python 3.11+, PyYAML and git: `bash tests/gate_smoke.sh`, `index_smoke.sh`,
+`team_smoke.sh`. CI runs all three plus the GitHub Action on every pull request. A release bumps
+`__version__` in `src/km/__init__.py`, `version` in `.claude-plugin/plugin.json` and the version in
+this README together; merging that to main is the release, CI tags `vX.Y.Z` once main is green.
 
 km started inside [dotclaude](https://github.com/pasrom/dotclaude) and was moved here with its
 history.
