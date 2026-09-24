@@ -25,7 +25,8 @@ jobs:
           KM_REPO_URL="file://$GITHUB_WORKSPACE" /tmp/wheel/bin/km init /tmp/wheel-brain --team --name W --desc w --initials WW --folder d=D
       - run: bash tests/gate_smoke.sh
       - run: bash tests/index_smoke.sh
-      - run: bash tests/team_smoke.sh
+      - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
+        run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
 
   # The composite action a brain's CI uses: install km from this checkout, then build and check a
   # team brain with the installed `km` command.
@@ -58,11 +59,33 @@ jobs:
           path: ${{ runner.temp }}/b/dist/served/
           if-no-files-found: error
 
+  # Windows: its default encoding is a code page (cp1252), not UTF-8, and text files are written with
+  # CRLF. A file name with an umlaut must still be found, and km must write the LF the repo holds
+  # (tests/encoding_smoke.sh).
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
+      - name: non-ASCII file names and LF writes
+        env:
+          PYTHON: python
+        run: |
+          source tests/lib.sh
+          windows_like "" || { echo "::error::the runner's encoding is UTF-8, this job tests nothing"; exit 1; }
+          with_env "" bash tests/encoding_smoke.sh    # as checked: UTF-8 mode off
+
   # Merging a version bump is the release: once main is green, tag v<__version__> if that tag is new.
   # Brains pin these tags, and `km init` writes the tag of the km that runs it.
   release:
     if: github.event_name == 'push'
-    needs: [smoke, action]
+    needs: [smoke, action, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -13,6 +13,7 @@ import re
 import sys
 
 from km.common import ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
+from km.paths import write_text
 
 TODAY = datetime.date.today()
 
@@ -49,7 +50,7 @@ def main() -> int:
             continue
         stale.append(rel)
         new_fm = re.sub(r"(?m)^approved_(?:by|at):.*\n", "", new_fm)
-        (ROOT / rel).write_text(new_fm + body, encoding="utf-8")
+        write_text(ROOT / rel, new_fm + body)
 
     if stale:
         print(f"km demote: {'demoted' if apply else 'would demote'} {len(stale)} doc(s) past review_by:")

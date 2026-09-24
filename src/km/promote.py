@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import re
 import subprocess
 import sys
@@ -43,6 +44,7 @@ from pathlib import Path
 import yaml
 
 from km.common import ROOT, SCHEMA
+from km.paths import write_text
 
 
 def submodule_prefixes() -> set[str]:
@@ -96,7 +98,8 @@ def type_enum() -> set[str] | None:
 def run_gate(target: Path):
     """`km validate` on one file, in a child process: the validator runs its checks at import."""
     return subprocess.run([sys.executable, "-m", "km", "validate", "--root", str(ROOT), str(target)],
-                          cwd=ROOT, capture_output=True, text=True)
+                          cwd=ROOT, capture_output=True, encoding="utf-8", errors="replace",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})   # the child writes UTF-8 too
 
 
 _PROVENANCE = ("status", "approved_by", "approved_at", "supersedes", "superseded_by", "contribution")
@@ -137,7 +140,7 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
     stub["superseded_by"] = target_rel
     tmp = src.parent / (src.stem + ".stub-tmp.md")
     try:
-        tmp.write_text(dump(stub, f"Moved to the served brain. See [{target_rel}]({target_rel})."), encoding="utf-8")
+        write_text(tmp, dump(stub, f"Moved to the served brain. See [{target_rel}]({target_rel})."))
         r = run_gate(tmp)
         if r.returncode != 0:
             tmp.unlink(missing_ok=True)
@@ -364,7 +367,7 @@ def main() -> int:
     content = dump(fm, body)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.parent / (target.stem + ".promote-tmp.md")
-    tmp.write_text(content, encoding="utf-8")
+    write_text(tmp, content)
     r = run_gate(tmp)
     if r.returncode != 0:
         tmp.unlink(missing_ok=True)

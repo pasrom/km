@@ -19,6 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from km.common import INDEX_SKIP, ROOT, SKIP, folder_of, frontmatter, is_article, read, tracked_md
+from km.paths import write_text
 
 _MARK = re.compile(r"(?m)^## Documents[ \t]*$")
 _NEXT_H2 = re.compile(r"(?m)^## ")
@@ -79,7 +80,7 @@ def main() -> int:
         if new != cur:
             changed.append(idx)
             if not check:
-                (ROOT / idx).write_text(new, encoding="utf-8")
+                write_text(ROOT / idx, new)
 
     if check and changed:
         print("km gen-index: out of date, run `km gen-index`:")
