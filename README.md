@@ -51,9 +51,9 @@ km upgrade                  move a brain's km pins to this version
 ```
 
 Every command takes `--root DIR`; the default is the git work tree around the current directory.
-Install a release by its commit (`git ls-remote https://github.com/pasrom/km refs/tags/v1.0.1` shows
-it), not by the tag: `pip install git+https://github.com/pasrom/km@<commit>  # v1.0.1`, or run it
-without installing: `uvx --from git+https://github.com/pasrom/km@<commit> km validate  # v1.0.1`.
+Install a release by its commit (`git ls-remote https://github.com/pasrom/km refs/tags/v1.0.2` shows
+it), not by the tag: `pip install git+https://github.com/pasrom/km@<commit>  # v1.0.2`, or run it
+without installing: `uvx --from git+https://github.com/pasrom/km@<commit> km validate  # v1.0.2`.
 
 ## What a brain gets
 
@@ -62,13 +62,13 @@ Brains carry no km code. `km init` writes `CONVENTIONS.md`, `CLAUDE.md`, `schema
 generated indexes, a README, and CI that installs km through this repository's GitHub Action:
 
 ```yaml
-- uses: pasrom/km@<commit> # v1.0.1, installs the km CLI at that commit
+- uses: pasrom/km@<commit> # v1.0.2, installs the km CLI at that commit
 - run: km validate
 - run: km gen-index --check
 ```
 
 The pre-commit hook works the same way (`repo: https://github.com/pasrom/km`,
-`rev: <commit>  # frozen: v1.0.1`, `id: km-validate`). Every pin names a release by its commit, so a
+`rev: <commit>  # frozen: v1.0.2`, `id: km-validate`). Every pin names a release by its commit, so a
 tag moved later cannot change what a brain runs; the version rides along as a comment, and
 `km upgrade` checks that the commit is that release's. km's own dependencies are pinned to exact
 versions. `km init` and `km upgrade` look a release's commit up by its tag once, so a release tag here
