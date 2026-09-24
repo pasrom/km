@@ -87,9 +87,6 @@ def run_pinned(root: Path, cmd: str, rest: list[str]) -> int | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    for stream in (sys.stdout, sys.stderr):   # a non-UTF-8 console or pipe (Windows) must not crash on a file name
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(errors="backslashreplace")
     root, args = take_root(list(sys.argv[1:] if argv is None else argv))
     if root is not None and not Path(root).is_dir():
         print(f"km: --root {root}: no such directory", file=sys.stderr)

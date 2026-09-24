@@ -130,7 +130,7 @@ def main() -> int:
         sys.exit(f"placeholder(s) left after rendering: {', '.join(left)}")
     for dst, text in rendered.items():
         (repo / dst).parent.mkdir(parents=True, exist_ok=True)
-        (repo / dst).write_text(text, encoding="utf-8", newline="\n")
+        (repo / dst).write_text(text, encoding="utf-8")
     print(f"km init: {'team' if a.team else 'personal'} brain in {repo}, pinned to km {a.pin}")
     return 0
 
