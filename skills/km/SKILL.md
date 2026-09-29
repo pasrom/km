@@ -297,7 +297,7 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 
 After writing the main file, update related pages before committing:
 
-1. **Cross-reference:** Find up to 5 related files (ranked by: shared `project:` > shared tags > same folder). Add the new file's repo-root-relative path to their `related:` frontmatter (create the field if absent). Only add genuinely useful links
+1. **Cross-reference:** Find up to 5 related files (ranked by: shared `project:` > shared tags > same folder). Add the new file's repo-root-relative path to their `related:` frontmatter (create the field if absent). Only add genuinely useful links. When the brain sets `gate.project_prefix`, never add a path under a project folder to a doc outside that folder, nor rank by a `project:` code there: the gate reports a project code outside its own folder, frontmatter included. Project notes link up to neutral docs, not the other way
 2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist — do not create new `_index.md`)
 3. **Confirm:** List all proposed ripple updates and wait for user approval before committing
 
@@ -377,7 +377,8 @@ Checks, keyed per concern (so an internal `accepted` doc may legitimately name a
   `term_scan_prefixes` term-scans every doc under those folders too, and with `project_prefix` a
   project code (a tracked subfolder name) outside its own folder is an error; files directly in
   the project folder, such as its `_index.md`, may list every code. Both run over any
-  tracked doc, `_index.md` and README included, and the code check needs no terms file, so it
+  tracked doc, `_index.md` and README included, frontmatter too (a `project:` value or a
+  `related:` path naming a project folder counts), and the code check needs no terms file, so it
   also runs in CI where that file is absent.
 - **bergab** (ERROR) — a served doc links to an unfinished (`draft`/`review`) doc; a link to
   `superseded`/`obsolete` is a WARNING. Reuses the `status`/`audience` frontmatter, no new fields.
