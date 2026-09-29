@@ -365,12 +365,20 @@ gate:
   forbidden_terms_file: .gate-terms.txt   # gitignored: keep real customer names out of the repo
   email_allowlist: [your-domain.com]
   # forbidden_terms: [ACME]        # or inline (test/demo only)
+  # term_scan_prefixes: [bms, products]   # also term-scan these folders' docs, whatever their audience
+  # project_prefix: projects/      # its subfolder names are project codes; flag them outside their folder
+  # project_code_pattern: 'p[0-9]+' # only subfolders fully matching this count as codes
 ```
 
 Checks, keyed per concern (so an internal `accepted` doc may legitimately name a customer):
 - **secret** (ERROR) — AWS/GitHub keys, private-key headers in ANY tracked doc (incl. exempt/reserved
   files like README/_index; excl. skip_prefixes) — a key needs no frontmatter.
 - **leak** (ERROR) — forbidden terms + external emails only in an `audience: customer` doc.
+  `term_scan_prefixes` term-scans every doc under those folders too, and with `project_prefix` a
+  project code (a tracked subfolder name) outside its own folder is an error; files directly in
+  the project folder, such as its `_index.md`, may list every code. Both run over any
+  tracked doc, `_index.md` and README included, and the code check needs no terms file, so it
+  also runs in CI where that file is absent.
 - **bergab** (ERROR) — a served doc links to an unfinished (`draft`/`review`) doc; a link to
   `superseded`/`obsolete` is a WARNING. Reuses the `status`/`audience` frontmatter, no new fields.
 - **freshness** (WARNING) — a served doc past its `review_by`.

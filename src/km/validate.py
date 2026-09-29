@@ -13,7 +13,9 @@ Run:  km validate [--root DIR] [FILE ...]
 When `schema.local.yaml` sets `gate.enabled: true`, extra checks run, keyed per concern:
   * secret   (ERROR)   AWS/GitHub keys, private-key headers in ANY tracked doc (incl. exempt/reserved,
                        excl. skip_prefixes) — a key needs no frontmatter
-  * leak     (ERROR)   forbidden terms + external emails in a CUSTOMER-facing doc (audience==customer)
+  * leak     (ERROR)   forbidden terms + external emails in a CUSTOMER-facing doc (audience==customer);
+                       forbidden terms also in any doc under `term_scan_prefixes`; and, with
+                       `project_prefix`, a project folder's name in any doc outside that folder
   * bergab   (ERROR)   a served doc (status==served_status) links to an unfinished (draft/review) doc;
                        a link to superseded/obsolete is a WARNING
   * freshness(WARNING) a served doc whose `review_by` is in the past is stale
@@ -23,7 +25,10 @@ fails). `forbidden_terms` may live inline or in a gitignored `forbidden_terms_fi
 missing file is a WARNING, not silent. Malformed OR unknown gate config fails fast with a clear message.
 Gate off/absent = plain behaviour, unchanged. Config keys (optional): enabled, served_status
 (default 'accepted'), customer_audience (default 'customer'), forbidden_terms (list),
-forbidden_terms_file (path), email_allowlist (list). Editable-metadata advisory check: catches honest
+forbidden_terms_file (path), email_allowlist (list), term_scan_prefixes (list), project_prefix (str),
+project_code_pattern (regex). The path-scoped term scan and the project codes run in the text pre-pass
+with the secrets, so they also see exempt and _index files; project codes are the tracked subfolders
+of project_prefix (fully matching project_code_pattern, if set). Editable-metadata advisory check: catches honest
 mistakes before commit, does NOT stop a determined author (that is the publish/release step's job).
 """
 from __future__ import annotations
@@ -58,6 +63,7 @@ STATUS_RULES = SCHEMA.get("status_rules", {})
 _GATE_KEYS = {
     "enabled", "served_status", "customer_audience",
     "forbidden_terms", "forbidden_terms_file", "email_allowlist",
+    "term_scan_prefixes", "project_prefix", "project_code_pattern",
 }
 _gate_raw = SCHEMA.get("gate")
 _gate_cfg_errors: list[str] = []
@@ -74,10 +80,16 @@ if _gate_raw is not None:
                 _gate_cfg_errors.append(f"unknown gate key {_k!r} (allowed: {', '.join(sorted(_GATE_KEYS))})")
         if "enabled" in GATE and not isinstance(GATE["enabled"], bool):
             _gate_cfg_errors.append("gate.enabled must be true/false")
-        for _k in ("served_status", "customer_audience", "forbidden_terms_file"):
+        for _k in ("served_status", "customer_audience", "forbidden_terms_file", "project_prefix",
+                   "project_code_pattern"):
             if _k in GATE and not isinstance(GATE[_k], str):
                 _gate_cfg_errors.append(f"gate.{_k} must be a string")
-        for _k in ("forbidden_terms", "email_allowlist"):
+        if isinstance(GATE.get("project_code_pattern"), str):
+            try:
+                re.compile(GATE["project_code_pattern"])
+            except re.error as exc:
+                _gate_cfg_errors.append(f"gate.project_code_pattern is not a valid regex: {exc}")
+        for _k in ("forbidden_terms", "email_allowlist", "term_scan_prefixes"):
             if _k in GATE and not (isinstance(GATE[_k], list) and all(isinstance(x, str) for x in GATE[_k])):
                 _gate_cfg_errors.append(f"gate.{_k} must be a list of strings (a missing '-' makes it a string)")
         GATE_ON = bool(GATE.get("enabled"))
@@ -120,6 +132,29 @@ def _load_terms() -> list[str]:
 
 
 FORBIDDEN_TERMS = _load_terms()
+
+
+def _folder(s: str) -> str:
+    """'bms' and 'bms/' both become 'bms/', so they match 'bms/...' and never 'bmsx/...'."""
+    s = s.strip("/")
+    return s + "/" if s else ""
+
+
+TERM_SCAN_PREFIXES = tuple(f for f in map(_folder, GATE.get("term_scan_prefixes") or []) if f)
+PROJECT_PREFIX = _folder(GATE.get("project_prefix") or "")
+
+
+def _load_project_codes() -> list[str]:
+    """Tracked subfolders of project_prefix, so a local-only folder never changes the result."""
+    if not (GATE_ON and PROJECT_PREFIX):
+        return []
+    pat = re.compile(GATE.get("project_code_pattern") or ".*")
+    subs = {p[len(PROJECT_PREFIX):].split("/", 1)[0] for p in tracked_md()
+            if p.startswith(PROJECT_PREFIX) and "/" in p[len(PROJECT_PREFIX):]}
+    return sorted(c for c in subs if pat.fullmatch(c))
+
+
+PROJECT_CODES = _load_project_codes()
 SECRET_PATTERNS = {
     "aws-key": re.compile(r"AKIA[0-9A-Z]{16}"),
     "aws-secret": re.compile(r"(?i)aws[_-]?secret[_-]?access[_-]?key\s*[:=]\s*['\"]?[A-Za-z0-9/+]{40}"),
@@ -164,7 +199,7 @@ def targets() -> list[str]:
         out = []
         for a in given:
             try:
-                rel = str(Path(a).resolve().relative_to(ROOT))
+                rel = Path(a).resolve().relative_to(ROOT).as_posix()
             except ValueError:
                 print(f"skip (outside repo): {a}", file=sys.stderr)
                 continue
@@ -182,7 +217,7 @@ def secret_targets() -> list[str]:
         out = []
         for a in given:
             try:
-                rel = str(Path(a).resolve().relative_to(ROOT))
+                rel = Path(a).resolve().relative_to(ROOT).as_posix()
             except ValueError:
                 continue
             if rel.endswith(".md") and not rel.startswith(SKIP_PREFIXES) and (ROOT / rel).is_file():
@@ -270,6 +305,15 @@ def _norm(s: str) -> str:
     s = unicodedata.normalize("NFKC", s)
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Cf")   # strip all Unicode format chars
     return s.translate(HYPHENS)
+
+
+def _squash(s: str) -> str:
+    """Already-normalised text as the term scans compare it: emphasis stripped, lower case."""
+    return s.replace("*", "").replace("_", "").lower()
+
+
+def _fold(s: str) -> str:
+    return _squash(_norm(s))
 
 
 def _strip_code(s: str) -> str:
@@ -395,13 +439,41 @@ def check_index_tree() -> None:
             warnings.append(("index-incomplete", idx, f"does not link {_d}"))
 
 
-# --- secret pre-pass: a key/token must never be committed to ANY tracked doc ---
+TERM_NEEDLES = [(t, n) for t in FORBIDDEN_TERMS if (n := _fold(t))]
+def _code_text(normed: str) -> str:
+    """Like _squash, but '_' separates words: a code in `acme01_log.md` must still stand alone."""
+    return normed.replace("*", "").replace("_", " ").lower()
+
+
+CODE_NEEDLES = [(c, n, re.compile(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])"))
+                for c in PROJECT_CODES if (n := _code_text(_norm(c)).strip())]
+
+
+def _term_errors(rel: str, scan: str) -> list[tuple[str, str, str]]:
+    return [("gate-leak:term", rel, f"forbidden term {_redact(t)}") for t, n in TERM_NEEDLES if n in scan]
+
+
+# --- text pre-pass over ANY tracked doc (frontmatter or not): secrets, and the path-keyed leak
+# scans (terms under term_scan_prefixes, project codes outside their own folder) ---
 if GATE_ON:
     for _sf in secret_targets():
         _stext = _norm((ROOT / _sf).read_text(encoding="utf-8-sig", errors="replace"))
         for _snm, _spat in SECRET_PATTERNS.items():
             for _smm in _spat.finditer(_stext):
                 errors.append((f"gate-secret:{_snm}", _sf, f"match {_redact(_smm.group(0))}"))
+        _scoped = _sf.startswith(TERM_SCAN_PREFIXES)
+        if not (_scoped or CODE_NEEDLES):
+            continue
+        if _scoped:
+            errors += _term_errors(_sf, _squash(_stext))
+        _rest = _sf[len(PROJECT_PREFIX):] if PROJECT_PREFIX and _sf.startswith(PROJECT_PREFIX) else None
+        if _rest is not None and "/" not in _rest:
+            continue                              # a hub file such as projects/_index.md lists every code
+        _own = _rest.split("/", 1)[0] if _rest else None
+        _scan = _code_text(_stext)
+        for _c, _n, _rx in CODE_NEEDLES:
+            if _c != _own and _n in _scan and _rx.search(_scan):   # substring first: the regex is slow
+                errors.append(("gate-leak:code", _sf, f"project code {_redact(_c)} outside its own folder"))
 
 _target_list = targets()
 for rel in _target_list:
@@ -485,12 +557,10 @@ for rel in _target_list:
         served = fm.get("status") == SERVED_STATUS
         customer = fm.get("audience") == CUSTOMER_AUDIENCE
         if customer:
-            scan = _norm(text).replace("*", "").replace("_", "").lower()
-            for _term in FORBIDDEN_TERMS:
-                needle = _norm(_term).replace("*", "").replace("_", "").lower()
-                if needle and needle in scan:
-                    errors.append(("gate-leak:term", rel, f"forbidden term {_redact(_term)}"))
-            for _mm in EMAIL.finditer(_norm(text)):
+            normed = _norm(text)
+            if not rel.startswith(TERM_SCAN_PREFIXES):   # else the pre-pass already scanned it
+                errors += _term_errors(rel, _squash(normed))
+            for _mm in EMAIL.finditer(normed):
                 if _mm.group(0).rsplit("@", 1)[-1].lower() not in EMAIL_ALLOWLIST:
                     errors.append(("gate-leak:email", rel, f"external email {_redact(_mm.group(0))}"))
         if served:

@@ -22,6 +22,9 @@ gate:
   enabled: true
   served_status: accepted
   customer_audience: customer
+  # term_scan_prefixes: []        # folders whose docs are term-scanned whatever their audience
+  # project_prefix: projects/     # subfolder names are project codes, flagged outside their folder
+  # project_code_pattern: 'p[0-9]+'   # only matching subfolder names count as codes
 
 # Repo-only fields (shallow-merged over the base schema).
 fields:
