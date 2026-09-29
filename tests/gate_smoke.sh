@@ -162,4 +162,59 @@ printf -- '---\ntype: note\ntitle: Left\ntimestamp: 2026-08-26\nauthor: X\nstatu
 km validate --root "$T" "$T/inbox/left.md" 2>&1 | grep -q "superseded should not set 'contribution'" \
   && ok "validate warns on a superseded doc still carrying the marker" || no "validate warns on a superseded doc still carrying the marker"
 
+# Term scope: term_scan_prefixes scans a folder's docs whatever their audience; others stay as before
+gate(){ printf 'meta: {profile: smoke}\ngate:\n  enabled: true\n%b' "$1" > "$T/schema.local.yaml"; }
+errs(){ km validate --root "$T" "$@" 2>&1; }
+gate '  forbidden_terms_file: .gate-terms.txt\n  term_scan_prefixes: [bms]\n'
+mkdir -p "$T/bmsx"
+acc "$T/bms/ts1.md" internal "Kunde PROJECT-BLUEBIRD intern"
+V "$T/bms/ts1.md" && no "term_scan_prefixes: internal doc in a scanned folder blocked" || ok "term_scan_prefixes: internal doc in a scanned folder blocked"
+acc "$T/topics/ts2.md" internal "Kunde PROJECT-BLUEBIRD intern"
+V "$T/topics/ts2.md" && ok "term_scan_prefixes: an unscanned folder still passes" || no "term_scan_prefixes: an unscanned folder still passes"
+acc "$T/bmsx/ts3.md" internal "Kunde PROJECT-BLUEBIRD intern"
+V "$T/bmsx/ts3.md" && ok "term_scan_prefixes: 'bms' does not match 'bmsx/'" || no "term_scan_prefixes: 'bms' does not match 'bmsx/'"
+printf '# bms\nKunde PROJECT-BLUEBIRD\n' > "$T/bms/README.md"
+V "$T/bms/README.md" && no "term_scan_prefixes: an exempt file in the folder is scanned too" || ok "term_scan_prefixes: an exempt file in the folder is scanned too"
+acc "$T/bms/ts4.md" customer "Kunde PROJECT-BLUEBIRD extern"
+[ "$(errs "$T/bms/ts4.md" | grep -c 'forbidden term')" = 1 ] && ok "term_scan_prefixes: a customer doc there is reported once" || no "term_scan_prefixes: a customer doc there is reported once"
+rm -f "$T/bms/README.md"
+
+# Project codes: tracked subfolder names under project_prefix must not appear outside their folder
+git -C "$T" init -q
+mkdir -p "$T/projects/acme01" "$T/projects/zeta02" "$T/projects/cra" "$T/projects/ghost09"
+acc "$T/projects/acme01/pc2.md" internal "acme01 status note"
+acc "$T/projects/zeta02/pc3.md" internal "same fault as acme01"
+acc "$T/projects/cra/pc6.md" internal "cra reading notes"
+printf -- '---\ndescription: projects\n---\n# projects\n\n## Documents\n\n- [acme01](acme01/_index.md)\n' > "$T/projects/_index.md"
+git -C "$T" add projects                     # ghost09 has no tracked file: not a code
+gate '  project_prefix: projects/\n'
+acc "$T/bms/pc1.md" internal "found on the ACME01 bench"
+V "$T/bms/pc1.md" && no "project_prefix: a code in a neutral doc blocked" || ok "project_prefix: a code in a neutral doc blocked"
+V "$T/projects/acme01/pc2.md" && ok "project_prefix: a code in its own folder passes" || no "project_prefix: a code in its own folder passes"
+V "$T/projects/zeta02/pc3.md" && no "project_prefix: another project's code blocked" || ok "project_prefix: another project's code blocked"
+V "$T/projects/_index.md" && ok "project_prefix: the hub index listing every code passes" || no "project_prefix: the hub index listing every code passes"
+printf -- '---\ndescription: b\n---\n# bms\nsee acme01\n' > "$T/bms/_index.md"
+V "$T/bms/_index.md" && no "project_prefix: a code in another folder's _index.md blocked" || ok "project_prefix: a code in another folder's _index.md blocked"
+rm -f "$T/bms/_index.md"
+acc "$T/bms/pc7.md" internal "see [log](ACME01_bench_log.md)"
+V "$T/bms/pc7.md" && no "project_prefix: a code joined by '_' in a file name blocked" || ok "project_prefix: a code joined by '_' in a file name blocked"
+acc "$T/bms/pc8.md" internal "run log_acme01 again"
+V "$T/bms/pc8.md" && no "project_prefix: a code after '_' blocked" || ok "project_prefix: a code after '_' blocked"
+acc "$T/bms/pc4.md" internal "part acme012 and xacme01 and ghost09 are not codes"
+V "$T/bms/pc4.md" && ok "project_prefix: whole tracked codes only" || no "project_prefix: whole tracked codes only"
+errs "$T/bms/pc1.md" | grep -q "acme01" && no "project_prefix: the code is redacted in the report" || ok "project_prefix: the code is redacted in the report"
+acc "$T/bms/pc5.md" internal "relevant under the CRA"
+V "$T/bms/pc5.md" && no "project_prefix: without a pattern every subfolder is a code" || ok "project_prefix: without a pattern every subfolder is a code"
+gate '  project_prefix: projects/\n  project_code_pattern: "[a-z]+[0-9]+"\n'
+V "$T/bms/pc5.md" && ok "project_code_pattern: a topic folder is not a code" || no "project_code_pattern: a topic folder is not a code"
+V "$T/bms/pc1.md" && no "project_code_pattern: a matching code is still blocked" || ok "project_code_pattern: a matching code is still blocked"
+gate '  project_prefix: projects/\n  project_code_pattern: "[a-z+"\n'
+errs "$T/bms/pc1.md" | grep -q "project_code_pattern is not a valid regex" && ok "project_code_pattern: a bad regex fails fast" || no "project_code_pattern: a bad regex fails fast"
+gate '  project_prefix: [projects]\n'
+errs "$T/bms/pc1.md" | grep -q "gate.project_prefix must be a string" && ok "project_prefix: a non-string fails fast" || no "project_prefix: a non-string fails fast"
+gate '  term_scan_prefixes: bms\n'
+errs "$T/bms/pc1.md" | grep -q "gate.term_scan_prefixes must be a list" && ok "term_scan_prefixes: a non-list fails fast" || no "term_scan_prefixes: a non-list fails fast"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
+rm -rf "$T/projects" "$T/bmsx" "$T/topics/ts2.md" "$T/.git"
+
 summary smoke || exit 1
