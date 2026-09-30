@@ -57,6 +57,40 @@ _gate = _gate if isinstance(_gate, dict) else {}   # a malformed gate is reporte
 SERVED_STATUS = _gate.get("served_status", "accepted")
 CUSTOMER_AUDIENCE = _gate.get("customer_audience", "customer")
 
+# Approval: a doc may be signed off by an AI review alone only when it says `approval: ai`; a
+# customer-facing doc or verbatim-block always needs a person. An AI approver is written
+# `approved_by: "ai:<model>"`. Metadata, not authentication: it catches slips, not a determined author.
+APPROVAL_FIELDS = ("approved_by", "approved_at")
+
+
+def is_ai_approver(who) -> bool:
+    return str(who or "").strip().lower().startswith("ai:")
+
+
+def human_only(fm: dict) -> bool:
+    return fm.get("audience") == CUSTOMER_AUDIENCE or fm.get("type") == "verbatim-block"
+
+
+def approval_problem(fm: dict, approver=None) -> str | None:
+    """Why `approver` (default: the doc's approved_by) may not sign this doc off, or None."""
+    if fm.get("approval") == "ai" and human_only(fm):
+        return "'approval: ai' is not allowed on a customer-facing doc or verbatim-block"
+    if is_ai_approver(fm.get("approved_by") if approver is None else approver) and fm.get("approval") != "ai":
+        return ("a customer-facing doc or verbatim-block needs a human approver" if human_only(fm)
+                else "an AI approver needs 'approval: ai'")
+    return None
+
+
+def set_fm_line(raw: str, key: str, value: str) -> str:
+    """Set `key: value` in a raw '---' frontmatter block in place: replace the line, or add it last."""
+    line = f"{key}: {value}"
+    new, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda _m: line, raw, count=1)
+    if n:
+        return new
+    end = raw.rstrip("\n").rfind("\n---")
+    return raw[:end] + "\n" + line + raw[end:]
+
+
 _FM = re.compile(r"^(---\n(.*?)\n---\n?)(.*)$", re.S)
 
 

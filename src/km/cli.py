@@ -29,6 +29,7 @@ COMMANDS = {
     "demote": ("km.demote", "demote served docs past review_by (--apply to write)"),
     "serve": ("km.serve", "build the served bundle under dist/served/"),
     "promote": ("km.promote", "move a note into the brain as a review doc, or `promote stub`"),
+    "approve": ("km.approve", "sign review docs off as accepted (--by WHO)"),
     "init": ("km.init", "create a brain: `init DIR --initials XX`, `--team ...` for a team brain"),
     "upgrade": ("km.upgrade", "move a brain's km pins to this version; drop km files copied in earlier"),
 }

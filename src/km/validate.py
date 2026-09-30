@@ -43,8 +43,8 @@ from pathlib import Path
 
 import yaml
 
-from km.common import EXEMPT, OVERLAY, ROOT, SCHEMA, tracked_md
-from km.paths import git
+from km.common import EXEMPT, OVERLAY, ROOT, SCHEMA, approval_problem, tracked_md
+from km.paths import BASE_SCHEMA, git
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
 from km.common import SKIP as SKIP_PREFIXES
@@ -57,7 +57,27 @@ if OVERLAY.name == "schema.yaml":
 FIELDS = SCHEMA["fields"]
 TYPE_RULES = SCHEMA.get("type_rules", {})
 SOFT_RULES = SCHEMA.get("type_rules_soft", {})
-STATUS_RULES = SCHEMA.get("status_rules", {})
+def _status_rules(raw) -> dict[tuple[str, str], list]:
+    """status_rules keys are `<status>_<requires|recommends|forbids>`; a key the brain adds must also
+    name a status the schema knows. Anything else fails fast, so a typo never switches a rule off.
+    km's own keys are exempt from the status check: a brain may rename its statuses."""
+    known = set((FIELDS.get("status") or {}).get("enum") or [])
+    own = set((yaml.safe_load(BASE_SCHEMA.read_text(encoding="utf-8")) or {}).get("status_rules") or {})
+    out, bad = {}, []
+    for key, fields in (raw or {}).items():
+        st, _, kind = str(key).rpartition("_")
+        if (not st or (known and key not in own and st not in known)
+                or kind not in ("requires", "recommends", "forbids") or not isinstance(fields, list)):
+            bad.append(str(key))
+        else:
+            out[(st, kind)] = fields
+    if bad:
+        sys.exit(f"schema: status_rules key(s) {', '.join(bad)} must be <status>_<requires|recommends|forbids>: "
+                 f"[fields], with a status from the schema")
+    return out
+
+
+STATUS_RULES = _status_rules(SCHEMA.get("status_rules"))
 
 # --- km gate config (opt-in) with fail-fast validation ---
 _GATE_KEYS = {
@@ -536,21 +556,20 @@ for rel in _target_list:
             warnings.append((f"soft:{t}", rel, f"type '{t}' should have '{rec}'"))
 
     st = fm.get("status")
-    if st == "superseded":
-        for r in STATUS_RULES.get("superseded_requires", []):
-            if r not in fm:
-                errors.append(("status-rule", rel, f"superseded requires '{r}'"))
-        for r in STATUS_RULES.get("superseded_forbids", []):
-            if r in fm:
-                warnings.append(("status-rule", rel, f"superseded should not set '{r}'"))
-    if st == "obsolete":
-        for r in STATUS_RULES.get("obsolete_forbids", []):
-            if r in fm:
-                warnings.append(("status-rule", rel, f"obsolete should not set '{r}'"))
-    if st == "accepted":
-        for r in STATUS_RULES.get("accepted_recommends", []):
-            if r not in fm:
-                warnings.append(("status-soft", rel, f"accepted should record '{r}'"))
+    for (_st, _kind), _fields in STATUS_RULES.items():
+        if _st != st:
+            continue
+        for r in _fields:
+            if _kind == "requires" and r not in fm:
+                errors.append(("status-rule", rel, f"{st} requires '{r}'"))
+            elif _kind == "forbids" and r in fm:
+                warnings.append(("status-rule", rel, f"{st} should not set '{r}'"))
+            elif _kind == "recommends" and r not in fm:
+                warnings.append(("status-soft", rel, f"{st} should record '{r}'"))
+    # an ai: approver counts only on a signed-off doc; a contradicting `approval` always does
+    _why = approval_problem(fm, None if st == SERVED_STATUS else "")
+    if _why:
+        errors.append(("approval", rel, _why))
 
     # --- km GATE (opt-in, advisory) — leak / bergab / freshness (secrets are a separate pass) ---
     if GATE_ON:

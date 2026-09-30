@@ -56,6 +56,9 @@ language: <en|de>                                    # required on served docs
 description: "One-sentence summary."
 owner: <initials>                                    # responsible for keeping it true (staleness)
 review_by: 2027-01-15                                # required once accepted
+approval: <human|ai>                                 # who may sign off; unset = human (see Status lifecycle)
+approved_by: <initials | "ai:<model>">               # set by `km approve`, with approved_at
+reviewed_by: ["<reviewer or model> <date> (PR #N)"]  # pre-reviews, not an approval
 ticket: ABC-123                                      # provenance to the work item this doc came from
 resource: "https://…"                               # URI of an external asset (datasheet/repo/tracker)
 project: <name>
@@ -90,6 +93,9 @@ draft → review → accepted → superseded | obsolete
 ```
 
 - `accepted` = reviewed, current, in the served set. Requires `owner` + `review_by`.
+- Sign-off is `km approve <doc> --by <initials>`. With `approval: ai` an AI review alone may sign
+  off (`--by ai:<model>`); without it a person must. Customer-facing docs and verbatim-blocks always
+  need a person.
 - CI **demotes** an `accepted` doc back to `review` when its `review_by` lapses, so it drops out of
   the served set automatically. Staleness is prevented, not just warned. An accepted doc that links
   to a demoted one then fails the gate; the weekly run turns red so the maintainer re-reviews either.
