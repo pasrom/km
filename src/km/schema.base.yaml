@@ -75,6 +75,12 @@ fields:
   approved_at:            # when sign-off happened (audit-grade record inside the repo)
     required: false
     format: iso8601
+  approval:               # who may sign off: ai or human (default); rules in km.common.approval_problem
+    required: false
+    enum: [ai, human]
+  reviewed_by:            # pre-reviews the doc went through (reviewer or model, date, PR); not an approval
+    required: false
+    type: list
   audience:               # replaces the fragile free-form `customer-facing` tag
     required: false
     enum: [internal, customer]
@@ -109,6 +115,7 @@ status_rules:
   superseded_forbids: [contribution]   # a stubbed doc no longer has a pending contribution
   obsolete_forbids: [superseded_by]
   accepted_recommends: [approved_by, approved_at]   # soft rollout; flip to *_requires once backfilled
+  # accepted_requires: [owner, review_by]           # a brain may make fields mandatory for accepted
 
 # Universal defaults — brains EXTEND these in schema.local.yaml (lists are concatenated).
 exempt_files: [CLAUDE.md, README.md, CONVENTIONS.md, SKILL.md]

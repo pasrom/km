@@ -219,4 +219,96 @@ errs "$T/bms/pc1.md" | grep -q "gate.term_scan_prefixes must be a list" && ok "t
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 rm -rf "$T/projects" "$T/bmsx" "$T/topics/ts2.md" "$T/.git"
 
+# AI approval: an ai: approver needs approval: ai; customer docs and verbatim-blocks need a human
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
+mkdir -p "$T/ap"
+doc(){ # doc FILE STATUS "extra frontmatter lines"; TYPE=, AUD= override, RB= (empty) drops review_by
+  local rb="${RB-2027-01-01}"
+  printf -- '---\ntype: %s\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: %s\naudience: %s\nlanguage: en\ntags: [t]\nowner: X\n%b%b---\nbody\n' \
+    "${TYPE:-concept}" "$2" "${AUD:-internal}" "${rb:+review_by: $rb\n}" "${3:-}" > "$1"; }
+doc "$T/ap/a1.md" accepted 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/a1.md" && no "approval: an ai: approver without approval: ai fails" || ok "approval: an ai: approver without approval: ai fails"
+doc "$T/ap/a2.md" accepted 'approval: ai\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/a2.md" && ok "approval: ai lets an ai: approver sign off" || no "approval: ai lets an ai: approver sign off"
+AUD=customer doc "$T/ap/a3.md" accepted 'approval: ai\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/a3.md" && no "approval: a customer doc never takes an ai: approver" || ok "approval: a customer doc never takes an ai: approver"
+AUD=customer doc "$T/ap/a4.md" review 'approval: ai\n'
+V "$T/ap/a4.md" && no "approval: 'approval: ai' on a customer doc is an error" || ok "approval: 'approval: ai' on a customer doc is an error"
+TYPE=verbatim-block doc "$T/ap/a5.md" review 'approval: ai\n'
+V "$T/ap/a5.md" && no "approval: 'approval: ai' on a verbatim-block is an error" || ok "approval: 'approval: ai' on a verbatim-block is an error"
+doc "$T/ap/a6.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
+V "$T/ap/a6.md" && ok "approval: a human approver passes at the default level" || no "approval: a human approver passes at the default level"
+doc "$T/ap/a7.md" review 'approval: maybe\n'
+V "$T/ap/a7.md" && no "approval: an unknown level fails the enum" || ok "approval: an unknown level fails the enum"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [review_by]\n' >> "$T/schema.local.yaml"
+RB= doc "$T/ap/a8.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
+V "$T/ap/a8.md" && no "accepted_requires: a missing field fails" || ok "accepted_requires: a missing field fails"
+V "$T/ap/a6.md" && ok "accepted_requires: a doc with the field passes" || no "accepted_requires: a doc with the field passes"
+printf 'meta: {profile: smoke}\ngate:\n  enabled: true\n  served_status: published\nfields:\n  status:\n    enum: [draft, review, published, superseded, obsolete]\n' > "$T/schema.local.yaml"
+doc "$T/ap/a9.md" published 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+km validate --root "$T" "$T/ap/a9.md" 2>&1 | grep -q "an AI approver needs" && ok "approval: the rule follows a renamed served status" || no "approval: the rule follows a renamed served status"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  acepted_require: [owner]\n' >> "$T/schema.local.yaml"
+km validate --root "$T" "$T/ap/a6.md" 2>&1 | grep -q "must be <status>_<requires|recommends|forbids>" && ok "status_rules: a malformed key fails fast" || no "status_rules: a malformed key fails fast"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  acepted_requires: [owner]\n' >> "$T/schema.local.yaml"
+km validate --root "$T" "$T/ap/a6.md" 2>&1 | grep -q "with a status from the schema" && ok "status_rules: a misspelled status fails fast" || no "status_rules: a misspelled status fails fast"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [review_by]\n' >> "$T/schema.local.yaml"
+
+# km approve: sets status/approved_by/approved_at, refuses what the rule forbids, restores on a failed gate
+doc "$T/ap/p1.md" review 'approval: ai\n'
+km approve --root "$T" "$T/ap/p1.md" --by ai:model-x --at 2026-09-30 >/dev/null 2>&1
+{ grep -q '^status: accepted$' "$T/ap/p1.md" && grep -q '^approved_by: "ai:model-x"$' "$T/ap/p1.md" && grep -q '^approved_at: 2026-09-30$' "$T/ap/p1.md" && V "$T/ap/p1.md"; } \
+  && ok "approve: an ai doc is signed off by ai:" || no "approve: an ai doc is signed off by ai:"
+doc "$T/ap/p2.md" review ''; cp "$T/ap/p2.md" "$T/p2.bak"
+out="$(km approve --root "$T" "$T/ap/p2.md" --by ai:model-x 2>&1)"
+out_has "needs 'approval: ai'" && ! out_has "km validate fails" && cmp -s "$T/ap/p2.md" "$T/p2.bak" \
+  && ok "approve: ai: refused before writing at the default level" || no "approve: ai: refused before writing at the default level"
+AUD=customer doc "$T/ap/p3.md" review ''
+km approve --root "$T" "$T/ap/p3.md" --by ai:model-x 2>&1 | grep -q "needs a human approver" \
+  && ok "approve: ai: refused on a customer doc" || no "approve: ai: refused on a customer doc"
+km approve --root "$T" "$T/ap/p2.md" --by RPA >/dev/null 2>&1 && grep -q '^approved_by: "RPA"$' "$T/ap/p2.md" \
+  && ok "approve: a human signs off a default doc" || no "approve: a human signs off a default doc"
+doc "$T/ap/p4.md" draft ''
+km approve --root "$T" "$T/ap/p4.md" --by RPA 2>&1 | grep -q "only a review doc" && grep -q '^status: draft$' "$T/ap/p4.md" \
+  && ok "approve: a draft is refused" || no "approve: a draft is refused"
+RB= doc "$T/ap/p5.md" review ''; cp "$T/ap/p5.md" "$T/p5.bak"
+km approve --root "$T" "$T/ap/p5.md" --by RPA 2>&1 | grep -q "km validate fails" && cmp -s "$T/ap/p5.md" "$T/p5.bak" \
+  && ok "approve: a doc failing the gate after the change is restored" || no "approve: a doc failing the gate after the change is restored"
+km approve --root "$T" "$T/ap/p2.md" --by RPA --at 30.09.2026 >/dev/null 2>&1; [ $? -eq 2 ] && ok "approve: a bad --at is refused" || no "approve: a bad --at is refused"
+RB=2020-01-01 doc "$T/ap/p6.md" review ''
+km approve --root "$T" "$T/ap/p6.md" --by RPA --at 2026-09-30 2>&1 | grep -q "review_by 2020-01-01 has passed" && grep -q '^status: review$' "$T/ap/p6.md" \
+  && ok "approve: a past review_by is refused" || no "approve: a past review_by is refused"
+km approve --root "$T" "$T/ap/p6.md" --by RPA --at 2026-09-30 --review-by 2027-06-30 >/dev/null 2>&1 && grep -q '^review_by: 2027-06-30$' "$T/ap/p6.md" && grep -q '^status: accepted$' "$T/ap/p6.md" \
+  && ok "approve: --review-by renews the date" || no "approve: --review-by renews the date"
+RB=2026-06-01 doc "$T/ap/p8.md" review ''
+km approve --root "$T" "$T/ap/p8.md" --by RPA --at 2026-01-01 2>&1 | grep -q "has passed" && grep -q '^status: review$' "$T/ap/p8.md" \
+  && ok "approve: a backdated --at does not get round a past review_by" || no "approve: a backdated --at does not get round a past review_by"
+km approve --root "$T" "$T/ap/p8.md" --by RPA --review-by 2020-01-01 >/dev/null 2>&1; [ $? -eq 2 ] && grep -q '^status: review$' "$T/ap/p8.md" \
+  && ok "approve: a past --review-by is refused" || no "approve: a past --review-by is refused"
+RB=soon doc "$T/ap/p10.md" review ''
+km approve --root "$T" "$T/ap/p10.md" --by RPA 2>&1 | grep -q "is not a YYYY-MM-DD date" && grep -q '^status: review$' "$T/ap/p10.md" \
+  && ok "approve: an unreadable review_by is refused" || no "approve: an unreadable review_by is refused"
+doc "$T/ap/p9.md" review ''; python3 -c "import sys;p=sys.argv[1];b=open(p,'rb').read();open(p,'wb').write(b.replace(b'\n',b'\r\n'))" "$T/ap/p9.md"
+km approve --root "$T" "$T/ap/p9.md" --by RPA >/dev/null 2>&1 && grep -q '^status: accepted' "$T/ap/p9.md" \
+  && ok "approve: a CRLF doc is approved" || no "approve: a CRLF doc is approved"
+RB= doc "$T/ap/p7.md" review ''; { printf '\357\273\277'; cat "$T/ap/p7.md"; } > "$T/p7.tmp" && mv "$T/p7.tmp" "$T/ap/p7.md"; cp "$T/ap/p7.md" "$T/p7.bak"
+km approve --root "$T" "$T/ap/p7.md" --by RPA 2>&1 | grep -q "km validate fails" && cmp -s "$T/ap/p7.md" "$T/p7.bak" \
+  && ok "approve: a refused doc keeps its bytes, BOM included" || no "approve: a refused doc keeps its bytes, BOM included"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
+
+# promote drops reviewed_by (new doc and --replace); a cross-repo promote also drops approval
+printf -- '---\ntype: note\ntitle: R\ntimestamp: 2026-09-30\nauthor: X\nstatus: draft\ntags: [t]\napproval: ai\nreviewed_by: ["model-x 2026-09-30 (PR #1)"]\n---\nbody\n' > "$T/inbox/rv.md"
+km promote --root "$T" rv-topic "$T/inbox/rv.md" --folder ap >/dev/null 2>&1
+{ [ -f "$T/ap/rv-topic.md" ] && ! grep -q '^reviewed_by:' "$T/ap/rv-topic.md" && grep -q '^approval: ai' "$T/ap/rv-topic.md"; } \
+  && ok "promote: drops reviewed_by, keeps approval in the same brain" || no "promote: drops reviewed_by, keeps approval in the same brain"
+doc "$T/ap/rp.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\nreviewed_by: ["model-x 2026-09-29 (PR #1)"]\n'
+printf -- '---\ntype: concept\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: draft\ntags: [t]\n---\nnew text\n' > "$T/inbox/rp.md"
+km promote --root "$T" rp "$T/inbox/rp.md" --replace >/dev/null 2>&1
+{ grep -q '^status: review' "$T/ap/rp.md" && ! grep -q '^reviewed_by:' "$T/ap/rp.md"; } \
+  && ok "promote --replace: drops reviewed_by with the approval" || no "promote --replace: drops reviewed_by with the approval"
+X="$(mktemp -d)"; printf -- '---\ntype: note\ntitle: C\ntimestamp: 2026-09-30\nauthor: X\nstatus: draft\ntags: [t]\napproval: ai\n---\nbody\n' > "$X/cr.md"
+km promote --root "$T" cr-topic "$X/cr.md" --folder ap --author X >/dev/null 2>&1
+{ [ -f "$T/ap/cr-topic.md" ] && ! grep -q '^approval:' "$T/ap/cr-topic.md"; } \
+  && ok "promote cross-repo: the target decides the approval level" || no "promote cross-repo: the target decides the approval level"
+rm -rf "$X" "$T/ap" "$T/p2.bak" "$T/p5.bak" "$T/p7.bak"
+
 summary smoke || exit 1

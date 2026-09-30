@@ -46,6 +46,7 @@ km gen-index [--check]      regenerate every '## Documents' list in _index.md
 km demote [--apply]         demote served docs past their review date
 km serve                    build the per-audience bundle under dist/served/
 km promote ...              move a note into the brain as a review doc
+km approve DOC... --by WHO  sign review docs off; ai:<model> only where the doc says approval: ai
 km init DIR [--team ...]    create a brain from the templates
 km upgrade                  move a brain's km pins to this version
 ```

@@ -8,7 +8,7 @@ scratch instead of keeping a copy). Safety rules:
   * The candidate is gated in a temp file inside the repo, then atomically renamed onto the
     target on PASS; a failing promote writes nothing and never clobbers.
   * An existing served doc is NOT overwritten without --replace, and --replace INVALIDATES the
-    approval (status -> review, approved_* dropped, timestamp bumped).
+    approval (status -> review, approved_* and reviewed_by dropped, timestamp bumped).
   * Slug collisions are a HARD STOP; a non-served target is refused; a peer-brain target is
     refused (correct a foreign brain via a PR against its own repo, never in the parent).
   * A verbatim-block is never --replace'd (change it only via supersede).
@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import ROOT, SCHEMA
+from km.common import APPROVAL_FIELDS, ROOT, SCHEMA
 from km.paths import write_text
 
 
@@ -102,7 +102,8 @@ def run_gate(target: Path):
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})   # the child writes UTF-8 too
 
 
-_PROVENANCE = ("status", "approved_by", "approved_at", "supersedes", "superseded_by", "contribution")
+_REVIEW = (*APPROVAL_FIELDS, "reviewed_by")   # sign-off and pre-reviews: they hold for the text they saw
+_PROVENANCE = ("status", *_REVIEW, "supersedes", "superseded_by", "contribution")
 _STUB_DROPS = _PROVENANCE + ("audience", "review_by")   # a stub is never served
 _NOT_STUBBABLE = {"README.md", "CLAUDE.md", "CONVENTIONS.md", "SKILL.md", "index.md", "log.md", "_index.md"}
 
@@ -289,8 +290,8 @@ def main() -> int:
             return 2
         fm = ex_fm
         fm["status"] = "review"
-        fm.pop("approved_by", None)
-        fm.pop("approved_at", None)
+        for _k in _REVIEW:   # a review of the old text no longer holds
+            fm.pop(_k, None)
         fm["timestamp"] = today
         target = existing
         ident = {"type": src_fm.get("type"), "title": src_fm.get("title"),
@@ -331,8 +332,9 @@ def main() -> int:
             fm["owner"] = a.owner
         fm.setdefault("audience", "internal")
         fm.setdefault("review_by", review_by)
-        if cross_repo:   # these reference the SOURCE repo and do not resolve in the target
-            for _k in ("related", "sources", "translates", "project", "evidence"):
+        if cross_repo:   # these reference the SOURCE repo and do not resolve in the target; and the
+            # target decides for itself whether an AI review may approve the doc (unset = human)
+            for _k in ("related", "sources", "translates", "project", "evidence", "approval"):
                 fm.pop(_k, None)
             if isinstance(fm.get("resource"), str) and not fm["resource"].startswith(("http://", "https://")):
                 fm.pop("resource", None)   # a non-web resource: URI points into the source machine/repo

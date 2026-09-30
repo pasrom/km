@@ -286,7 +286,7 @@ Do not offer for simple lookups or single-source answers.
 
 All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. Always confirm before writing. Commit with `docs(<scope>): <description>`.
 
-- **Status:** New documents always start as `status: draft`. Never set `status: accepted` without explicit user confirmation — always ask first.
+- **Status:** New documents always start as `status: draft`. Never set `status: accepted` without explicit user confirmation — always ask first. Sign a doc off with `km approve <doc> --by <initials>` (see "Approval" below), not by editing `status` by hand.
 - **Save:** Auto-detect type (note/concept/decision/transcript). Unclear folder → `inbox/`
 - **Decision:** Extract title, context, alternatives, consequences. Use `type: decision`
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript
@@ -412,6 +412,22 @@ promoted doc (a source in another repo is left untouched), so the knowledge live
 Known limitations (advisory scope, follow-ups): whole-repo mode sees TRACKED files only;
 per-file mode does not check reverse edges (a target flipping to `draft` is caught only in a
 full run); link-form coverage is inline/reference/wiki/HTML/angle-bracket (not exhaustive).
+
+## Approval (`km approve`)
+
+`km approve <doc>... --by WHO [--at YYYY-MM-DD] [--review-by YYYY-MM-DD]` moves a `status: review`
+doc to `accepted` and records `approved_by` / `approved_at`, then gates it with `km validate` and
+restores it byte for byte if that fails. A doc whose `review_by` has passed (typically one CI
+demoted) is refused until `--review-by` sets a new date.
+
+- **Levels:** `approval: human` (the default when unset) needs a person; `approval: ai` lets an AI
+  review alone sign off, written `--by ai:<model>`. `audience: customer` docs and `verbatim-block`s
+  always need a person. `km validate` enforces it on signed-off docs (metadata, not authentication).
+- **Pre-reviews:** `reviewed_by` (a list) records them, e.g. a PR bot's model, date and PR; it is not
+  an approval. `promote` and `--replace` drop it with the approval; a cross-repo promote also drops
+  `approval`, so the target brain decides its own level.
+- **Required fields:** `status_rules` keys are `<status>_<requires|recommends|forbids>`, e.g.
+  `accepted_requires: [owner, review_by]` in `schema.local.yaml`.
 
 ## Index completeness (opt-in)
 
