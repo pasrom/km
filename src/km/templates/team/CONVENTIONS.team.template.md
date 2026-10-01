@@ -7,11 +7,11 @@ shared, served knowledge base. For frontmatter, [km's base schema](https://githu
 
 ## Access & reading model
 
-- **One writer.** Only the maintainer commits to `main`; everyone else has **read** access to the
-  repository and reads the markdown directly. Contributions come as a **fork PR** (the maintainer
-  reviews and merges) or are **promoted** from a personal brain via `km promote`. Because
-  only the maintainer commits, git history shows the maintainer, not per-author activity; the
-  `author` field records who authored the knowledge (provenance, not a performance metric).
+- **One merger.** Only the maintainer merges to `main`; everyone else has **read** access to the
+  repository and reads the markdown directly. Contributions come as a **pull request** (the
+  maintainer reviews and merges) or are **promoted** from a personal brain via `km promote`. Git
+  history and pull requests show each contributor; they serve provenance, never per-person
+  analysis. The `author` field records who authored the knowledge.
 - **Curated corpus, not a workshop.** The <BRAIN> holds finished, reviewed knowledge; drafts and
   half-thoughts stay in personal brains. `status` marks maturity: read `accepted` as current and
   authoritative, `review` as submitted, `draft` as work in progress.
@@ -139,4 +139,4 @@ is stale or a folder with something to list has no `_index.md` (`km gen-index --
 - Relative markdown links in bodies; `related:` / `supersedes:` / `superseded_by:` use
   **repo-root-relative** paths. Never duplicate content, link.
 - Conventional Commits `type(scope): description`; the PR title carries the ticket key. Work on a
-  branch named by the ticket key; `main` is protected by the single-writer permission model.
+  branch named by the ticket key; `main` is protected by the one-merger permission model.
