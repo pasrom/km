@@ -125,7 +125,7 @@ def render(a: argparse.Namespace) -> dict[str, str]:
 def main() -> int:
     ap = argparse.ArgumentParser(prog="km init", description="Create a brain from km's templates.")
     ap.add_argument("repo")
-    ap.add_argument("--team", action="store_true", help="a shared team brain (CI, served bundle, one writer)")
+    ap.add_argument("--team", action="store_true", help="a shared team brain (CI, served bundle, one merger)")
     ap.add_argument("--initials", required=True, help="the owner's or maintainer's initials")
     ap.add_argument("--folder", action="append", metavar="DIR=PURPOSE")
     ap.add_argument("--name", help="team brain: its name, e.g. QA-Brain")

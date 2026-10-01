@@ -45,9 +45,9 @@ When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt
 ## Team brain init (`/km init --team`)
 
 A **team brain** is a shared, served knowledge base: one maintainer merges, the team reads the repo,
-everyone else contributes by fork PR or promotes from a personal brain. On top of a personal brain
+everyone else contributes by pull request or promotes from a personal brain. On top of a personal brain
 it adds CI (validation, a generated `_index.md` Documents list, a served bundle, weekly staleness
-demotion), domain folders instead of `inbox/`, and the single-writer rules.
+demotion), domain folders instead of `inbox/`, and the one-merger rules.
 
 1. Ask for: the brain's name (e.g. `QA-Brain`), a one-line description of the team (e.g. `the QA
    team`), the maintainer's initials, and the top-level folders with a one-line purpose each
@@ -67,7 +67,7 @@ demotion), domain folders instead of `inbox/`, and the single-writer rules.
 5. Tell the user what km does not do: create the repo (private), push `main`, give the team **read**
    access and the maintainer write, and ask members to add the brain to their personal brain with
    `/km brain add <url>`. Branch protection on a private repo needs a paid GitHub plan; without it
-   the single-writer rule is held by the permission model alone. Contributions arrive as fork PRs,
+   the one-merger rule is held by the permission model alone. Members with read access contribute by fork PR,
    and GitHub does not run Actions on fork PRs of a private repo until "Run workflows from fork pull
    requests" is enabled (repository or organization settings, Actions): without it those PRs get
    no CI. Dependabot then proposes a PR whenever a newer km is released.

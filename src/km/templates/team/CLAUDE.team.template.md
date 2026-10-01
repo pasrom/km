@@ -9,9 +9,9 @@ promoted here.
 
 ## Access & contribution model
 
-- **One writer.** Only the maintainer commits to `main`; everyone else reads. Contribute via a
-  **fork PR** (the maintainer reviews and merges) or by **promoting** from your personal brain with
-  `km promote`.
+- **One merger.** Only the maintainer merges to `main`; everyone else reads. Contribute via a
+  **pull request** (the maintainer reviews and merges) or by **promoting** from your personal brain
+  with `km promote`.
 - **Uphill-only:** a served doc never links into a personal brain; personal brains link up to here.
 
 ## How to Contribute
