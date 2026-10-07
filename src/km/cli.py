@@ -32,8 +32,9 @@ COMMANDS = {
     "approve": ("km.approve", "sign review docs off as accepted (--by WHO)"),
     "init": ("km.init", "create a brain: `init DIR --initials XX`, `--team ...` for a team brain"),
     "upgrade": ("km.upgrade", "move a brain's km pins to this version; drop km files copied in earlier"),
+    "doctor": ("km.doctor", "check this computer is set up for the brain: git, access, plugins, km version"),
 }
-NO_PIN_CHECK = {"init", "upgrade"}    # they write the pins, with the km that is running
+NO_PIN_CHECK = {"init", "upgrade", "doctor"}    # they write the pins, or check the km that is running
 RUNNER = os.environ.get("KM_PINNED_RUNNER", "uvx")
 
 

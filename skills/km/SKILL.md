@@ -10,7 +10,8 @@ description: >-
   knowledge base or looked up from it, rather than writing a markdown file by hand.
   Triggers on: km, knowledge base, brain, save this, was steht im brain, ins brain
   speichern, dokumentiere das, Entscheidung festhalten, Meeting-Notiz, ADR, lint,
-  "speicher das sauber ab", "was wissen wir über".
+  "speicher das sauber ab", "was wissen wir über", check my setup, "prüfe meine
+  Einrichtung".
 argument-hint: question, content, brain command, help, etc.
 ---
 
@@ -29,6 +30,24 @@ so a moved tag cannot change what runs), and so does `km` here: in a brain that 
 it runs that commit through `uvx`, so results match CI (`KM_LOCAL=1` keeps the plugin's). Without uv,
 offline, for a pin to a movable tag, or when the workflows disagree, it runs the plugin's km and warns;
 `/km upgrade` the brain then.
+
+## Setup check (`/km doctor`, "check my setup")
+
+For someone who just set up a computer for the brain, often not a developer. Answer in their
+language and in plain words, one line per problem, the fix first; no git jargon they did not use.
+
+1. Before km: `git --version`. Without git, nothing else works: say so and stop; the brain's own
+   setup guide (README or CLAUDE.md) says how to install it.
+2. `km doctor` in the brain (`--offline` when they say they have no network). Where `km` itself
+   cannot start, its message names uv and the one-line command that installs it (no administrator
+   rights needed): offer to run that command for their system, then run `km doctor` again. km finds
+   uv where the installer puts it, so the app need not be restarted first.
+3. Each `FAIL` comes with a fix. Offer to run the ones that change only this computer and are safe
+   (`git submodule update --init`, the `git pull --rebase` it names on a clean tree,
+   `git config --global user.name` after asking for the value); hand over the ones they must do
+   themselves (signing in, installing a plugin with `/plugin`, asking for access). A `note` needs nothing; mention it only if it
+   explains something they asked about.
+4. Run `km doctor` again after fixes and end with what still fails, or that the setup is complete.
 
 ## Init (`/km init`)
 
