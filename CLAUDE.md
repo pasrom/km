@@ -17,5 +17,5 @@ brains. See README.md for the layout.
 - A release bumps `src/km/__init__.py`, `.claude-plugin/plugin.json` and the README examples together
   (a test checks it). Merging it to main is the release: CI tags `vX.Y.Z` once main is green. The
   templates pin the tag of the km that wrote them.
-- Run all three smoke tests before pushing; add a case for every behaviour change and check that it
+- Run all the smoke tests before pushing; add a case for every behaviour change and check that it
   fails without the change.

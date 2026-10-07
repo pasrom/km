@@ -25,6 +25,7 @@ jobs:
           KM_REPO_URL="file://$GITHUB_WORKSPACE" /tmp/wheel/bin/km init /tmp/wheel-brain --team --name W --desc w --initials WW --folder d=D
       - run: bash tests/gate_smoke.sh
       - run: bash tests/index_smoke.sh
+      - run: bash tests/doctor_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
 
@@ -80,6 +81,10 @@ jobs:
           source tests/lib.sh
           windows_like "" || { echo "::error::the runner's encoding is UTF-8, this job tests nothing"; exit 1; }
           with_env "" bash tests/encoding_smoke.sh    # as checked: UTF-8 mode off
+      - name: km doctor on Windows
+        env:
+          PYTHON: python
+        run: bash tests/doctor_smoke.sh
 
   # Merging a version bump is the release: once main is green, tag v<__version__> if that tag is new.
   # Brains pin these tags, and `km init` writes the tag of the km that runs it.

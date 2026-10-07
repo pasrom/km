@@ -31,6 +31,7 @@ As a Claude Code plugin:
 /km brain add https://github.com/org/team-brain.git   # mount another brain
 /km @all Zephyr RTOS                           # search all mounted brains
 /km upgrade                                    # move the brain to the installed km version
+/km check my setup                             # what this computer still needs for the brain (km doctor)
 /km help                                       # all commands
 ```
 
@@ -49,7 +50,14 @@ km promote ...              move a note into the brain as a review doc
 km approve DOC... --by WHO  sign review docs off; ai:<model> only where the doc says approval: ai
 km init DIR [--team ...]    create a brain from the templates
 km upgrade                  move a brain's km pins to this version
+km doctor [--offline]       check this computer is set up for the brain
 ```
+
+`km doctor` reads what to expect from the brain alone: its origin, the brains it mounts
+(`.gitmodules`), the km version it pins, and the plugins its `.claude/settings.json` enables
+(`enabledPlugins`, with the marketplaces in `extraKnownMarketplaces`). A brain lists its plugins there
+for Claude Code anyway, which offers to add the marketplace when the folder is trusted. Each check
+that fails names its fix; it needs no PyYAML, so it also runs on a computer that is half set up.
 
 Every command takes `--root DIR`; the default is the git work tree around the current directory.
 Install a release by its commit (`git ls-remote https://github.com/pasrom/km refs/tags/v1.2.0` shows
@@ -83,7 +91,7 @@ a brain from the copy-in days into one that pins km.
 .claude-plugin/        plugin and marketplace manifests
 action.yml             GitHub Action: installs km at the action's version
 .pre-commit-hooks.yaml pre-commit hook km-validate
-src/km/                the package: cli, validate, gen_index, demote, serve, promote, init, upgrade
+src/km/                the package: cli, validate, gen_index, demote, serve, promote, init, upgrade, doctor
 src/km/templates/      what `km init` writes
 skills/km/SKILL.md     the skill; skills/km/bin/km runs the package from the installed plugin
 tests/                 smoke tests
@@ -92,7 +100,7 @@ tests/                 smoke tests
 ## Development
 
 The smoke tests need Python 3.11+, PyYAML and git: `bash tests/gate_smoke.sh`, `index_smoke.sh`,
-`team_smoke.sh`. CI runs all three plus the GitHub Action on every pull request, and
+`team_smoke.sh`, `doctor_smoke.sh`. CI runs all four plus the GitHub Action on every pull request, and
 `encoding_smoke.sh` on Windows (team_smoke runs it on macOS under non-UTF-8 locales). A release bumps
 `__version__` in `src/km/__init__.py`, `version` in `.claude-plugin/plugin.json` and the version in
 this README together; merging that to main is the release, CI tags `vX.Y.Z` once main is green.

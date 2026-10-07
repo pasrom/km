@@ -11,13 +11,18 @@ BASE_SCHEMA = PACKAGE / "schema.base.yaml"
 TEMPLATES = PACKAGE / "templates"
 
 
-def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def git(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None,
+        timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     """git, with its output decoded the way Python decodes file names, so each name it lists opens
     the file it names: UTF-8 on Windows and macOS, the locale's encoding on Linux. With the system's
     code page instead (cp1252 on Windows), a name with an umlaut named no file. Bytes that do not
-    decode (a git message in another encoding, an odd name) are kept, not a crash."""
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True,
-                          encoding=sys.getfilesystemencoding(), errors="surrogateescape")
+    decode (a git message in another encoding, an odd name) are kept, not a crash. Without git
+    installed it fails like a missing command (127) instead of raising."""
+    try:
+        return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, stdin=subprocess.DEVNULL,
+                              encoding=sys.getfilesystemencoding(), errors="surrogateescape", timeout=timeout)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(["git", *args], 127, "", "git is not installed")
 
 
 def write_text(path: Path, text: str) -> None:

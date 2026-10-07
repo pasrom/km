@@ -4,11 +4,29 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"   # -P: follow a symlinked skill install
 src="$here/../../../src"
 export PYTHONPATH="$src${PYTHONPATH:+:$PYTHONPATH}"
-if command -v uv >/dev/null 2>&1; then
-  exec uv run --quiet --no-project --python '>=3.11' --with pyyaml==6.0.3 python -m km "$@"
+# uv, also where its installer puts it before an app restart has put that folder on the PATH
+uv="$(command -v uv || true)"
+for u in "$HOME/.local/bin/uv" "$HOME/.local/bin/uv.exe"; do [ -n "$uv" ] || { [ -x "$u" ] && uv="$u"; }; done
+if [ -n "$uv" ]; then
+  exec "$uv" run --quiet --no-project --python '>=3.11' --with pyyaml==6.0.3 python -m km "$@"
 fi
-if ! python3 -c 'import sys, yaml; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
-  echo "km needs uv, or python3 3.11+ with PyYAML" >&2
-  exit 1
-fi
-exec python3 -m km "$@"
+# Without uv: a Python 3.11+ under any of its usual names (on Windows `python3` is often only the
+# Store's placeholder). `km doctor` needs no PyYAML, so it can say what is missing.
+cmd=""; skip=""
+for a in "$@"; do
+  if [ -n "$skip" ]; then skip=""; elif [ "$a" = --root ]; then skip=1; elif [ "${a#--root=}" = "$a" ]; then cmd="$a"; break; fi
+done
+need='import sys; sys.exit(sys.version_info < (3, 11))'
+[ "$cmd" = doctor ] || need="import yaml; $need"
+for py in python3 python "py -3"; do
+  if $py -c "$need" >/dev/null 2>&1; then exec $py -m km "$@"; fi
+done
+# Nothing to run km with: say so in words someone who never used a terminal can act on.
+printf '%s\n' >&2 \
+  "km cannot start on this computer: it needs uv (or Python 3.11+ with PyYAML). Install uv, no" \
+  "administrator rights needed:" \
+  '  Windows (PowerShell):  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"' \
+  "  macOS and Linux:       curl -LsSf https://astral.sh/uv/install.sh | sh" \
+  "then run the km command again. More: https://docs.astral.sh/uv/getting-started/installation/"
+command -v git >/dev/null 2>&1 || echo "git is missing as well: https://git-scm.com/downloads" >&2
+exit 1
