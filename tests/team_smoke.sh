@@ -255,6 +255,11 @@ repin "$KM_SHA" "$KM_REF" "$S99" v99.0.0 "$O"/.github/workflows/*.yml "$O/.pre-c
 KM_PINNED_RUNNER="$F/fake-uvx" km validate --root "$O" >/dev/null 2>&1
 grep -q -- "--from git+$KM_REPO_URL@$S99 km validate" "$F/runner-args" 2>/dev/null \
   && ok "a brain command runs the km version the brain pins" || no "pinned run ($(cat "$F/runner-args" 2>/dev/null))"
+repin "$S99" v99.0.0 "$V09_SHA" v0.9.0 "$O"/.github/workflows/*.yml "$O/.pre-commit-config.yaml"
+rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$O" any.md 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.4.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
+  && ok "a command the pinned km lacks says to upgrade" || no "command newer than the pin ($rc: $out)"
+repin "$V09_SHA" v0.9.0 "$S99" v99.0.0 "$O"/.github/workflows/*.yml "$O/.pre-commit-config.yaml"
 rm -f "$F/runner-args"; KM_LOCAL=1 KM_PINNED_RUNNER="$F/fake-uvx" km validate --root "$O" >/dev/null 2>&1
 [ ! -e "$F/runner-args" ] && ok "KM_LOCAL=1 keeps this km" || no "KM_LOCAL=1 keeps this km"
 out="$(KM_PINNED_RUNNER=no-such-runner km validate --root "$O" 2>&1)"; echo "$out" | grep -q "running this km since no-such-runner is not installed" \

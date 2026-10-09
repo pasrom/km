@@ -55,14 +55,14 @@ fields:
   participants:
     required: false
     type: list
-  sources:                # provenance pinning: path.md@hash (hash verified against git)
+  sources:                # provenance pinning: path.md@<blob or commit>; validate reports a changed source
     required: false
     type: list
     format: path_at_hash
   language:
     required: false
     enum: [en, de]
-  translates:             # linked translation source: path.md@hash
+  translates:             # linked translation source: path.md@<blob or commit>, checked like sources
     required: false
     format: path_at_hash
   contribution:           # pending-contribution marker: "<owner>/<repo>#<N>", an OPEN PR carries this doc

@@ -32,9 +32,9 @@ supersedes: <path.md>
 superseded_by: <path.md>
 related: [path1.md, path2.md]
 participants: [name1, name2]
-sources: [path.md@abc1234]                          # provenance pinning (recommended for type: summary)
+sources: [path.md@abc1234def0]                       # provenance pinning (recommended for type: summary); `km repin` writes it
 language: <en|de>
-translates: <path.md@abc1234>                       # linked translation source
+translates: <path.md@abc1234def0>                    # linked translation source; `km repin` writes it
 ---
 ```
 

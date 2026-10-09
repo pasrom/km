@@ -9,10 +9,9 @@ Run:  km demote [--root DIR] [--apply]
 from __future__ import annotations
 
 import datetime
-import re
 import sys
 
-from km.common import ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
+from km.common import ROOT, SERVED_STATUS, demote_raw, is_article, read, split_frontmatter, tracked_md
 from km.paths import write_text
 
 TODAY = datetime.date.today()
@@ -43,13 +42,11 @@ def main() -> int:
             continue
         # Edit the frontmatter block IN PLACE (only the status line, drop approval lines) so the
         # bot's diff stays reviewable as "just the demotion": no YAML round-trip, no reformat.
-        new_fm, n = re.subn(rf"(?m)^status:[ \t]*['\"]?{re.escape(SERVED_STATUS)}['\"]?[ \t]*(#.*)?$",
-                            "status: review", raw)
-        if n != 1:
+        new_fm = demote_raw(raw)
+        if new_fm is None:
             stuck.append(rel)      # a status line this edit cannot rewrite: never report it as demoted
             continue
         stale.append(rel)
-        new_fm = re.sub(r"(?m)^approved_(?:by|at):.*\n", "", new_fm)
         write_text(ROOT / rel, new_fm + body)
 
     if stale:

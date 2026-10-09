@@ -65,8 +65,8 @@ project: <name>
 supersedes: <path.md>
 superseded_by: <path.md>
 related: [path1.md, path2.md]                        # repo-root-relative
-sources: [path.md@abc1234]                           # required for type: summary
-translates: <path.md@abc1234>                        # linked translation source
+sources: [path.md@abc1234def0]                       # `km repin` writes it; required for type: summary
+translates: <path.md@abc1234def0>                    # linked translation source; `km repin` writes it
 ---
 ```
 
@@ -115,8 +115,11 @@ draft → review → accepted → superseded | obsolete
   build specifics; the gate scans them for forbidden terms and external emails). `internal` docs
   keep full implementation detail.
 - Frontmatter (`title` / `description` / `tags`) is **English**; the body is in its declared
-  `language`. `verbatim-block`s are paired per language via `translates:`; an accepted doc whose
-  `translates:` source has moved past the pinned hash should be re-reviewed.
+  `language`. `verbatim-block`s are paired per language via `translates:`; when a `translates:` or
+  `sources:` source changes after its pin, `km validate` reports `pin:stale`: re-review the doc, then
+  `km repin` it (an accepted doc goes back to review for a new sign-off). `km repin` pins the source's
+  content (its blob), which survives a rebase or squash merge; a pin to a commit set on a PR branch
+  does not.
 
 ## What the <BRAIN> is NOT
 

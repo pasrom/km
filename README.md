@@ -48,6 +48,7 @@ km demote [--apply]         demote served docs past their review date
 km serve                    build the per-audience bundle under dist/served/
 km promote ...              move a note into the brain as a review doc
 km approve DOC... --by WHO  sign review docs off; ai:<model> only where the doc says approval: ai
+km repin DOC...             pin a doc's sources and translates to their current content
 km init DIR [--team ...]    create a brain from the templates
 km upgrade                  move a brain's km pins to this version
 km doctor [--offline]       check this computer is set up for the brain
@@ -91,7 +92,7 @@ a brain from the copy-in days into one that pins km.
 .claude-plugin/        plugin and marketplace manifests
 action.yml             GitHub Action: installs km at the action's version
 .pre-commit-hooks.yaml pre-commit hook km-validate
-src/km/                the package: cli, validate, gen_index, demote, serve, promote, init, upgrade, doctor
+src/km/                the package: cli, validate, gen_index, demote, serve, promote, approve, repin, init, upgrade, doctor
 src/km/templates/      what `km init` writes
 skills/km/SKILL.md     the skill; skills/km/bin/km runs the package from the installed plugin
 tests/                 smoke tests

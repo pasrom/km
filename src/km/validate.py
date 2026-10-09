@@ -43,8 +43,8 @@ from pathlib import Path
 
 import yaml
 
-from km.common import EXEMPT, OVERLAY, ROOT, SCHEMA, approval_problem, tracked_md
-from km.paths import BASE_SCHEMA, git
+from km.common import EXEMPT, OVERLAY, PIN, ROOT, SCHEMA, approval_problem, as_list, pin_state, tracked_md
+from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
 from km.common import SKIP as SKIP_PREFIXES
@@ -191,7 +191,6 @@ HREF = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.I)
 TODAY = datetime.date.today()
 
 ISO = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})?)?$")
-PATH_AT_HASH = re.compile(r"^.+\.md@[0-9a-fA-F]{7,40}$")
 
 errors: list[tuple[str, str, str]] = []    # (category, path, detail)
 warnings: list[tuple[str, str, str]] = []
@@ -267,10 +266,25 @@ def resolve_ref(rel: str, target: str) -> bool:
     return ((ROOT / rel).parent / target).exists()
 
 
-def blob_exists(pin: str) -> bool:
-    """For a path.md@hash pin, verify the blob existed at that commit in git."""
-    path, _, h = pin.partition("@")
-    return git("cat-file", "-e", f"{h}:{path.lstrip('/')}", cwd=ROOT).returncode == 0
+PIN_PROBLEMS = {
+    "unknown": "not in this clone's git history (a shallow clone, a rewritten commit, a renamed "
+               "source); check the doc against {path}, then `km repin`",
+    "untracked": "{path} is not tracked",
+    "stale": "{path} changed since the pin; re-review, then `km repin`",
+}
+
+
+def pin_problem(field: str, pin: str) -> tuple[str, str] | None:
+    """What is wrong with a path.md@hash source pin, as a warning (category, detail), or None.
+
+    The hash names the source's own blob, or a commit that holds the source; a blob depends only on
+    the file's content, so it survives a rebase or squash merge that rewrites the commit. The pinned
+    content is compared with the source as staged (see km.common.pin_state)."""
+    state = pin_state(pin)
+    if state == "current":
+        return None
+    detail = f"{pin!r}: " + PIN_PROBLEMS[state].format(path=PIN.match(pin).group(1))
+    return ("pin:stale" if state == "stale" else f"pin:{field}"), detail
 
 
 # --- gate helpers ---
@@ -531,17 +545,15 @@ for rel in _target_list:
         if field in fm and spec.get("format") == "iso8601" and not ISO.match(str(fm[field])):
             warnings.append((f"iso8601:{field}", rel, f"{field}={fm[field]!r}"))
         if field in fm and spec.get("format") == "path_at_hash":
-            vals = fm[field] if isinstance(fm[field], list) else [fm[field]]
-            for v in vals:
+            for v in as_list(fm[field]):
                 if not v:
                     continue
-                if not PATH_AT_HASH.match(str(v)):
+                if not PIN.match(str(v)):
                     warnings.append((f"pin:{field}", rel, f"{v!r} not path.md@hash"))
-                elif not blob_exists(str(v)):
-                    warnings.append((f"pin:{field}", rel, f"{v!r} not in git history"))
+                elif _why := pin_problem(field, str(v)):
+                    warnings.append((_why[0], rel, _why[1]))
         if field in fm and spec.get("ref"):
-            vals = fm[field] if isinstance(fm[field], list) else [fm[field]]
-            for v in vals:
+            for v in as_list(fm[field]):
                 if v and not resolve_ref(rel, str(v)):
                     warnings.append((f"ref:{field}", rel, f"missing target {v}"))
 
@@ -583,8 +595,7 @@ for rel in _target_list:
                 if _mm.group(0).rsplit("@", 1)[-1].lower() not in EMAIL_ALLOWLIST:
                     errors.append(("gate-leak:email", rel, f"external email {_redact(_mm.group(0))}"))
         if served:
-            _refs = fm.get("related") or []
-            _refs = _refs if isinstance(_refs, list) else [_refs]
+            _refs = as_list(fm.get("related"))
             for _tgt in list(link_targets(text)) + [str(x) for x in _refs]:
                 _tp = resolve_path(rel, str(_tgt)) or resolve_slug(str(_tgt))
                 if not _tp or _tp == rel or _tp.startswith(SKIP_PREFIXES):
