@@ -21,7 +21,7 @@ from pathlib import Path
 
 from km import KM_REF, __version__
 from km.paths import repo_root
-from km.pins import read_pins, repo_url
+from km.pins import read_pins, repo_url, version_key
 
 COMMANDS = {
     "validate": ("km.validate", "check frontmatter, links, the gate and index completeness"),
@@ -30,11 +30,13 @@ COMMANDS = {
     "serve": ("km.serve", "build the served bundle under dist/served/"),
     "promote": ("km.promote", "move a note into the brain as a review doc, or `promote stub`"),
     "approve": ("km.approve", "sign review docs off as accepted (--by WHO)"),
+    "repin": ("km.repin", "pin a doc's sources and translates to their current content"),
     "init": ("km.init", "create a brain: `init DIR --initials XX`, `--team ...` for a team brain"),
     "upgrade": ("km.upgrade", "move a brain's km pins to this version; drop km files copied in earlier"),
     "doctor": ("km.doctor", "check this computer is set up for the brain: git, access, plugins, km version"),
 }
 NO_PIN_CHECK = {"init", "upgrade", "doctor"}    # they write the pins, or check the km that is running
+SINCE = {"repin": "v1.4.0"}                      # commands an older pinned km does not have
 RUNNER = os.environ.get("KM_PINNED_RUNNER", "uvx")
 
 
@@ -74,6 +76,10 @@ def run_pinned(root: Path, cmd: str, rest: list[str]) -> int | None:
            f"{pin.ref} is a movable tag, not a commit (`km upgrade` pins the commit)" if not pin.is_commit else
            f"{RUNNER} is not installed" if not shutil.which(RUNNER) else None)
     source = ["--from", f"git+{repo_url()}@{pin.ref}", "km"]
+    if not why and cmd in SINCE and (have := version_key(pin.version)) and have < version_key(SINCE[cmd]):
+        print(f"km: `km {cmd}` needs km {SINCE[cmd]}, the brain pins {_label(chosen)}; run `km upgrade` "
+              f"first (KM_LOCAL=1 runs this km instead).", file=sys.stderr)
+        return 2
     if not why:
         print(f"km: the brain pins km {_label(chosen)}; running that one (this is {KM_REF}; KM_LOCAL=1 keeps it)",
               file=sys.stderr)

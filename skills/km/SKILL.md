@@ -297,7 +297,7 @@ Response: summary, sources (with paths), recency, gaps, related topics.
 
 ### Query-to-wiki
 
-After answering, check: did the response synthesize information from 3+ sources or establish connections not found in any single file? If yes, offer to save the synthesis as a `type: summary` document. Use the standard save flow (frontmatter, folder placement, ripple update). The `related:` field should list all source files used in the synthesis.
+After answering, check: did the response synthesize information from 3+ sources or establish connections not found in any single file? If yes, offer to save the synthesis as a `type: summary` document. Use the standard save flow (frontmatter, folder placement, ripple update). The `related:` field should list all source files used in the synthesis. Pin them in `sources:` too and run `km repin` on the new doc (see "Source pins" below).
 
 Do not offer for simple lookups or single-source answers.
 
@@ -449,6 +449,23 @@ new date.
   `approval`, so the target brain decides its own level.
 - **Required fields:** `status_rules` keys are `<status>_<requires|recommends|forbids>`, e.g.
   `accepted_requires: [owner, review_by]` in `schema.local.yaml`.
+
+## Source pins (`km repin`)
+
+`sources:` (a summary's inputs) and `translates:` (a translation's original) pin a source as
+`path.md@<hash>`, so a reader can tell whether the doc still matches its source. Write the pin with
+`km repin <doc>...`: it sets each pinned source that changed (or has no hash yet) to the blob of its
+current content, as staged, and leaves current pins alone. A blob
+pin depends only on the content, so it survives the rebase or squash merge that rewrites a PR's
+commits; a commit pin set on a PR branch points nowhere after such a merge. `km validate` compares
+every pin, blob or commit, with the source as staged and reports `pin:stale` once the source has
+changed. Only the body counts: approving, demoting or re-pinning the source changes its frontmatter,
+not its pins. Re-review the doc against the change (`git diff` from the pinned content), then
+`km repin`; a signed-off doc whose pins change goes back to `status: review` without its approval and `reviewed_by`, so
+sign it off again with `km approve` in the same change: until then, served docs that link to it fail the gate.
+Stage the source first: an unstaged edit is not seen yet. `km repin` needs km 1.4.0 in the brain's pins (`km upgrade`). A per-file run (the pre-commit hook)
+checks only the docs it is given, so a doc whose source changed is reported by the whole-repo
+`km validate` (CI), not when only the source is committed.
 
 ## Index completeness (opt-in)
 

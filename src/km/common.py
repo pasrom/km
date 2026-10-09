@@ -81,6 +81,54 @@ def approval_problem(fm: dict, approver=None) -> str | None:
     return None
 
 
+PIN = re.compile(r"^(.+\.md)@([0-9a-fA-F]{7,40})$")   # a source pin: path.md@<commit or blob>
+
+
+def as_list(value) -> list:
+    """A frontmatter field that may hold one value or a list of them, as a list."""
+    return value if isinstance(value, list) else [] if value is None else [value]
+
+
+def _rev(spec: str) -> str:
+    return git("rev-parse", "--verify", "--quiet", spec, cwd=ROOT).stdout.strip()
+
+
+@functools.cache
+def staged_blob(path: str) -> str:
+    """The blob of a file as staged now (the index: what gets committed, after the repository's
+    filters), or '' if it is not tracked. `path` is relative to the brain, which may sit below the
+    repository's top level, or (as pins were written before) to the top level."""
+    path = path.lstrip("/")
+    return _rev(f":./{path}") or _rev(f":{path}")
+
+
+@functools.cache
+def pinned_blob(h: str, path: str) -> str:
+    """The content a pin names: the hash as a blob, or the source's blob in the commit it names."""
+    path = path.lstrip("/")
+    return _rev(f"{h}^{{blob}}") or _rev(f"{h}:./{path}") or _rev(f"{h}:{path}")
+
+
+@functools.cache
+def _body(blob: str) -> str:
+    text = git("cat-file", "blob", blob, cwd=ROOT).stdout.lstrip("\ufeff").replace("\r\n", "\n")
+    return split_frontmatter(text)[2] if text.startswith("---") else text
+
+
+def pin_state(pin: str) -> str:
+    """'current', 'stale', 'unknown' (the pinned content is not in this clone's history) or
+    'untracked' (the source is not). Only the body counts: a source whose frontmatter alone changed
+    (approved, demoted, re-pinned) still matches its pins."""
+    path, h = PIN.match(pin).groups()
+    pinned = pinned_blob(h, path)
+    if not pinned:
+        return "unknown"
+    current = staged_blob(path)
+    if not current:
+        return "untracked"
+    return "current" if current == pinned or _body(current) == _body(pinned) else "stale"
+
+
 def set_fm_line(raw: str, key: str, value: str) -> str:
     """Set `key: value` in a raw '---' frontmatter block in place: replace the line, or add it last."""
     line = f"{key}: {value}"
@@ -89,6 +137,30 @@ def set_fm_line(raw: str, key: str, value: str) -> str:
         return new
     end = raw.rstrip("\n").rfind("\n---")
     return raw[:end] + "\n" + line + raw[end:]
+
+
+def demote_raw(raw: str) -> str | None:
+    """A served doc's raw '---' block back at `status: review`, its approval lines dropped; the status
+    line edited in place, no YAML round-trip. None if no status line can be rewritten."""
+    new, n = re.subn(rf"(?m)^status:[ \t]*['\"]?{re.escape(SERVED_STATUS)}['\"]?[ \t]*(#.*)?$", "status: review", raw)
+    return re.sub(r"(?m)^approved_(?:by|at):.*\n", "", new) if n == 1 else None
+
+
+def set_fm_block(raw: str, key: str, text: str) -> str:
+    """Replace the whole `key:` entry of a raw '---' frontmatter block, its value lines included (a
+    block list, a folded scalar, blank or comment lines between them), with `text`, or drop it if
+    `text` is empty; unlike set_fm_line this covers multi-line values. None if no line starts with
+    `key:` (a quoted or spaced key this edit cannot find)."""
+    lines = raw.split("\n")
+    start = next((i for i, ln in enumerate(lines) if re.match(rf"{re.escape(key)}:(\s|$)", ln)), None)
+    if start is None:
+        return None
+    end = start + 1
+    while end < len(lines) and lines[end] != "---" and lines[end][:1] in ("", " ", "\t", "-", "#"):
+        end += 1
+    while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].startswith("#")):
+        end -= 1   # a trailing blank or comment line belongs to what follows
+    return "\n".join(lines[:start] + (text.split("\n") if text else []) + lines[end:])
 
 
 _FM = re.compile(r"^(---\n(.*?)\n---\n?)(.*)$", re.S)

@@ -25,6 +25,7 @@ jobs:
           KM_REPO_URL="file://$GITHUB_WORKSPACE" /tmp/wheel/bin/km init /tmp/wheel-brain --team --name W --desc w --initials WW --folder d=D
       - run: bash tests/gate_smoke.sh
       - run: bash tests/index_smoke.sh
+      - run: bash tests/pins_smoke.sh
       - run: bash tests/doctor_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
