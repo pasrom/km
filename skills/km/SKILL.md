@@ -436,8 +436,10 @@ full run); link-form coverage is inline/reference/wiki/HTML/angle-bracket (not e
 
 `km approve <doc>... --by WHO [--at YYYY-MM-DD] [--review-by YYYY-MM-DD]` moves a `status: review`
 doc to `accepted` and records `approved_by` / `approved_at`, then gates it with `km validate` and
-restores it byte for byte if that fails. A doc whose `review_by` has passed (typically one CI
-demoted) is refused until `--review-by` sets a new date.
+restores it byte for byte if that fails. The docs of one call are gated together, so docs that
+link to each other are signed off in one call: alone, each would link to a doc still in review. A
+doc whose `review_by` has passed (typically one CI demoted) is refused until `--review-by` sets a
+new date.
 
 - **Levels:** `approval: human` (the default when unset) needs a person; `approval: ai` lets an AI
   review alone sign off, written `--by ai:<model>`. `audience: customer` docs and `verbatim-block`s

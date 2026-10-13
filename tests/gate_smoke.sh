@@ -293,6 +293,29 @@ km approve --root "$T" "$T/ap/p9.md" --by RPA >/dev/null 2>&1 && grep -q '^statu
 RB= doc "$T/ap/p7.md" review ''; { printf '\357\273\277'; cat "$T/ap/p7.md"; } > "$T/p7.tmp" && mv "$T/p7.tmp" "$T/ap/p7.md"; cp "$T/ap/p7.md" "$T/p7.bak"
 km approve --root "$T" "$T/ap/p7.md" --by RPA 2>&1 | grep -q "km validate fails" && cmp -s "$T/ap/p7.md" "$T/p7.bak" \
   && ok "approve: a refused doc keeps its bytes, BOM included" || no "approve: a refused doc keeps its bytes, BOM included"
+# docs that link to each other: one call gates them together; a doc that fails takes back the one linking to it
+lk(){ doc "$1" review "${3:-}"; printf '[other](%s)\n' "$2" >> "$1"; }
+lk "$T/ap/l1.md" l2.md; lk "$T/ap/l2.md" l1.md
+km approve --root "$T" "$T/ap/l1.md" --by RPA >/dev/null 2>&1; grep -q '^status: review$' "$T/ap/l1.md" \
+  && ok "approve: alone, a doc linking to a review doc is refused" || no "approve: alone, a doc linking to a review doc is refused"
+km approve --root "$T" "$T/ap/l1.md" "$T/ap/l2.md" --by RPA >/dev/null 2>&1 && grep -q '^status: accepted$' "$T/ap/l1.md" && grep -q '^status: accepted$' "$T/ap/l2.md" \
+  && ok "approve: docs linking to each other are signed off together" || no "approve: docs linking to each other are signed off together"
+lk "$T/ap/l3.md" l4.md; RB= lk "$T/ap/l4.md" l3.md; cp "$T/ap/l3.md" "$T/l3.bak"; cp "$T/ap/l4.md" "$T/l4.bak"
+out="$(km approve --root "$T" "$T/ap/l3.md" "$T/ap/l4.md" --by RPA 2>&1)"
+out_has "REFUSED ap/l4.md" && out_has "REFUSED ap/l3.md" && cmp -s "$T/ap/l3.md" "$T/l3.bak" && cmp -s "$T/ap/l4.md" "$T/l4.bak" \
+  && ok "approve: a doc that fails takes back the one linking to it" || no "approve: a doc that fails takes back the one linking to it"
+doc "$T/ap/d1.md" review ''; doc "$T/ap/d2.md" draft ''
+out="$(km approve --root "$T" "$T/ap/d1.md" "$T/ap/../ap/d1.md" "$T/ap/d2.md" "$T/ap/d2.md" --by RPA 2>&1)"
+[ "$(grep -c 'ap/d1.md accepted' <<< "$out")" = 1 ] && [ "$(grep -c 'REFUSED ap/d2.md' <<< "$out")" = 1 ] && grep -q '^status: accepted$' "$T/ap/d1.md" \
+  && ok "approve: a doc named twice is handled once" || no "approve: a doc named twice is handled once"
+lk "$T/ap/l5.md" l6.md; lk "$T/ap/l6.md" l5.md; cp "$T/ap/l5.md" "$T/l5.bak"; cp "$T/ap/l6.md" "$T/l6.bak"
+KM_ROOT="$T" kmpy -c 'import sys, datetime, km.approve as a
+def stop(path): raise KeyboardInterrupt
+a.run_gate = stop
+try: a.approve(sys.argv[1:], "RPA", datetime.date(2026, 9, 30), None)
+except KeyboardInterrupt: pass' "$T/ap/l5.md" "$T/ap/l6.md" >/dev/null 2>&1
+cmp -s "$T/ap/l5.md" "$T/l5.bak" && cmp -s "$T/ap/l6.md" "$T/l6.bak" \
+  && ok "approve: an interrupted approve leaves every doc unchanged" || no "approve: an interrupted approve leaves every doc unchanged"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 
 # promote drops reviewed_by (new doc and --replace); a cross-repo promote also drops approval

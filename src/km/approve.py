@@ -15,22 +15,29 @@ import argparse
 import datetime
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from km.common import ROOT, SERVED_STATUS, approval_problem, set_fm_line, split_frontmatter
 from km.paths import write_text
 from km.promote import run_gate
 
 
-def approve_one(doc: str, by: str, at: datetime.date, review_by: datetime.date | None) -> str | None:
-    """Sign one doc off. Returns why it was refused, or None."""
-    path = Path(doc).resolve()
+class Candidate(NamedTuple):
+    path: Path
+    rel: str
+    old: bytes   # restored byte for byte if the gate fails (a BOM included)
+    new: str     # the signed-off text
+
+
+def prepare(doc: str, path: Path, by: str, at: datetime.date, review_by: datetime.date | None) -> Candidate | str:
+    """Check one doc and build its signed-off text. Returns the candidate, or why it was refused."""
     try:
         rel = path.relative_to(ROOT).as_posix()
     except ValueError:
         return f"{doc}: outside the brain"
     if not path.is_file():
         return f"{rel}: no such file"
-    old = path.read_bytes()   # restored byte for byte if the gate fails (a BOM included)
+    old = path.read_bytes()
     text = old.decode("utf-8-sig").replace("\r\n", "\n")   # strict decode (written back); CRLF like read()
     fm, raw, body = split_frontmatter(text)
     if fm is None:
@@ -52,13 +59,40 @@ def approve_one(doc: str, by: str, at: datetime.date, review_by: datetime.date |
         lines.append(("review_by", review_by.isoformat()))
     for key, value in lines:
         raw = set_fm_line(raw, key, value)
-    write_text(path, raw + body)
-    gate = run_gate(path)
-    if gate.returncode != 0:
-        path.write_bytes(old)
-        return f"{rel}: km validate fails after the change, left unchanged:\n{gate.stdout.rstrip()}"
-    print(f"approve: {rel} accepted, approved_by {by} on {at.isoformat()}")
-    return None
+    return Candidate(path, rel, old, raw + body)
+
+
+def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.date | None) -> list[str]:
+    """Sign the docs off together. Returns why each refused doc was refused."""
+    refused, candidates = [], {}   # resolved path -> Candidate, or None once refused
+    for doc in docs:
+        path = Path(doc).resolve()
+        if path in candidates:
+            continue   # a doc named twice is handled once
+        got = prepare(doc, path, by, at, review_by)
+        if isinstance(got, str):
+            refused.append(got)
+        candidates[path] = None if isinstance(got, str) else got
+    pending = {}   # written but not yet confirmed: restored if anything goes wrong on the way
+    try:
+        for c in filter(None, candidates.values()):
+            pending[c.path] = c
+            write_text(c.path, c.new)
+        while failed := [(c, gate) for c in pending.values() if (gate := run_gate(c.path)).returncode != 0]:
+            for c, gate in failed:
+                c.path.write_bytes(c.old)
+                del pending[c.path]
+                refused.append(f"{c.rel}: km validate fails after the change, left unchanged:\n{gate.stdout.rstrip()}")
+        accepted, pending = list(pending.values()), {}
+    finally:
+        for c in pending.values():
+            try:
+                c.path.write_bytes(c.old)
+            except OSError as e:
+                print(f"approve: could not restore {c.rel}: {e}", file=sys.stderr)
+    for c in accepted:
+        print(f"approve: {c.rel} accepted, approved_by {by} on {at.isoformat()}")
+    return refused
 
 
 def main() -> int:
@@ -73,7 +107,7 @@ def main() -> int:
         ap.error("--by must name the approver")
     if a.review_by and a.review_by < max(a.at, datetime.date.today()):
         ap.error(f"--review-by {a.review_by} is in the past; the next km demote would undo the approval")
-    refused = [why for doc in a.docs if (why := approve_one(doc, a.by, a.at, a.review_by))]
+    refused = approve(a.docs, a.by, a.at, a.review_by)
     for why in refused:
         print(f"approve: REFUSED {why}")
     return 1 if refused else 0
