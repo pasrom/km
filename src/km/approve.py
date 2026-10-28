@@ -45,7 +45,7 @@ def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.dat
 def main() -> int:
     ap = argparse.ArgumentParser(prog="km approve")
     ap.add_argument("docs", nargs="+")
-    ap.add_argument("--by", required=True, help="approver: initials, or ai:<model> where the doc says approval: ai")
+    ap.add_argument("--by", required=True, help="approver: initials, or ai:<model> where the doc is at level ai")
     ap.add_argument("--at", type=datetime.date.fromisoformat, default=datetime.date.today(),
                     help="approval date, YYYY-MM-DD")
     ap.add_argument("--review-by", type=datetime.date.fromisoformat, help="set a new review_by date")

@@ -16,11 +16,11 @@ import re
 import sys
 from pathlib import Path
 
-from km.common import CUSTOMER_AUDIENCE, ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
+from km.common import CUSTOMER_AUDIENCE, INTERNAL_AUDIENCE, ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
 from km.paths import write_text
 
 OUT = ROOT / "dist" / "served"
-ALLOWED_AUDIENCE = {"internal", CUSTOMER_AUDIENCE}
+ALLOWED_AUDIENCE = {INTERNAL_AUDIENCE, CUSTOMER_AUDIENCE}
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
@@ -37,7 +37,7 @@ def main() -> int:
         fm, _, body = split_frontmatter(read(rel))
         if not fm or fm.get("status") != SERVED_STATUS:
             continue
-        audience = fm.get("audience", "internal")
+        audience = fm.get("audience", INTERNAL_AUDIENCE)
         if audience not in ALLOWED_AUDIENCE:
             skipped_bad_audience += 1
             continue
