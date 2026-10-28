@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_list, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_list, fresh_run, pin_state, tracked_md
 from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
@@ -194,12 +194,8 @@ TODAY = datetime.date.today()
 
 ISO = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})?)?$")
 
-errors: list[tuple[str, str, str]] = []    # (category, path, detail)
+errors: list[tuple[str, str, str]] = []    # (category, path, detail); filled by main()
 warnings: list[tuple[str, str, str]] = []
-for _n in _gate_notices:
-    warnings.append(("gate-config", "schema.local.yaml", _n))
-for _f, _n in _repo_notices:
-    warnings.append(("km", _f, _n))
 
 
 def is_validatable(p: str) -> bool:
@@ -492,133 +488,6 @@ def _term_errors(rel: str, scan: str) -> list[tuple[str, str, str]]:
     return [("gate-leak:term", rel, f"forbidden term {_redact(t)}") for t, n in TERM_NEEDLES if n in scan]
 
 
-# --- text pre-pass over ANY tracked doc (frontmatter or not): secrets, and the path-keyed leak
-# scans (terms under term_scan_prefixes, project codes outside their own folder) ---
-if GATE_ON:
-    for _sf in secret_targets():
-        _stext = _norm((ROOT / _sf).read_text(encoding="utf-8-sig", errors="replace"))
-        for _snm, _spat in SECRET_PATTERNS.items():
-            for _smm in _spat.finditer(_stext):
-                errors.append((f"gate-secret:{_snm}", _sf, f"match {_redact(_smm.group(0))}"))
-        _scoped = _sf.startswith(TERM_SCAN_PREFIXES)
-        if not (_scoped or CODE_NEEDLES):
-            continue
-        if _scoped:
-            errors += _term_errors(_sf, _squash(_stext))
-        _rest = _sf[len(PROJECT_PREFIX):] if PROJECT_PREFIX and _sf.startswith(PROJECT_PREFIX) else None
-        if _rest is not None and "/" not in _rest:
-            continue                              # a hub file such as projects/_index.md lists every code
-        _own = _rest.split("/", 1)[0] if _rest else None
-        _scan = _code_text(_stext)
-        for _c, _n, _rx in CODE_NEEDLES:
-            if _c != _own and _n in _scan and _rx.search(_scan):   # substring first: the regex is slow
-                errors.append(("gate-leak:code", _sf, f"project code {_redact(_c)} outside its own folder"))
-
-_target_list = targets()
-for rel in _target_list:
-    name = rel.rsplit("/", 1)[-1]
-    text = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
-    fm = frontmatter(text)
-
-    if name in RESERVED_NF:
-        if fm is not None:
-            errors.append(("reserved-file", rel, f"'{name}' must have no frontmatter"))
-        continue
-    if fm is None:
-        errors.append(("no-frontmatter", rel, "missing YAML frontmatter"))
-        continue
-    if isinstance(fm, dict) and "__error__" in fm:
-        errors.append(("unparseable", rel, fm["__error__"]))
-        continue
-    if not isinstance(fm, dict):
-        errors.append(("non-mapping", rel, "frontmatter is not a key:value mapping"))
-        continue
-
-    # apply field aliases declared in the schema (e.g. date -> timestamp)
-    for _field, _spec in FIELDS.items():
-        _alias = _spec.get("alias")
-        if _alias and _field not in fm and _alias in fm:
-            fm[_field] = fm[_alias]
-
-    for field, spec in FIELDS.items():
-        if spec.get("required") and field not in fm:
-            errors.append((f"missing:{field}", rel, f"required field '{field}' absent"))
-        if field in fm and "enum" in spec and fm[field] not in spec["enum"]:
-            errors.append((f"enum:{field}", rel, f"{field}={fm[field]!r}"))
-        if field in fm and spec.get("type") == "list" and not isinstance(fm[field], list):
-            errors.append((f"type:{field}", rel, f"{field} must be a list"))
-        if field in fm and spec.get("format") == "iso8601" and not ISO.match(str(fm[field])):
-            warnings.append((f"iso8601:{field}", rel, f"{field}={fm[field]!r}"))
-        if field in fm and spec.get("format") == "path_at_hash":
-            for v in as_list(fm[field]):
-                if not v:
-                    continue
-                if not PIN.match(str(v)):
-                    warnings.append((f"pin:{field}", rel, f"{v!r} not path.md@hash"))
-                elif fm.get("status") not in RETIRED_STATUS and (_why := pin_problem(field, str(v))):
-                    warnings.append((_why[0], rel, _why[1]))
-        if field in fm and spec.get("ref"):
-            for v in as_list(fm[field]):
-                if v and not resolve_ref(rel, str(v)):
-                    warnings.append((f"ref:{field}", rel, f"missing target {v}"))
-
-    t = fm.get("type")
-    rule = TYPE_RULES.get(t, {}) if isinstance(t, str) else {}
-    for req in rule.get("require", []):
-        if req not in fm:
-            errors.append((f"type-rule:{t}", rel, f"type '{t}' requires '{req}'"))
-    soft = SOFT_RULES.get(t, {}) if isinstance(t, str) else {}
-    for rec in soft.get("recommend", []):
-        if rec not in fm:
-            warnings.append((f"soft:{t}", rel, f"type '{t}' should have '{rec}'"))
-
-    st = fm.get("status")
-    for (_st, _kind), _fields in STATUS_RULES.items():
-        if _st != st:
-            continue
-        for r in _fields:
-            if _kind == "requires" and r not in fm:
-                errors.append(("status-rule", rel, f"{st} requires '{r}'"))
-            elif _kind == "forbids" and r in fm:
-                warnings.append(("status-rule", rel, f"{st} should not set '{r}'"))
-            elif _kind == "recommends" and r not in fm:
-                warnings.append(("status-soft", rel, f"{st} should record '{r}'"))
-    # an ai: approver counts only on a signed-off doc; a contradicting `approval` always does
-    _why = approval_problem(fm, None if st == SERVED_STATUS else "")
-    if _why:
-        errors.append(("approval", rel, _why))
-
-    # --- km GATE (opt-in, advisory) — leak / bergab / freshness (secrets are a separate pass) ---
-    if GATE_ON:
-        served = fm.get("status") == SERVED_STATUS
-        customer = fm.get("audience") == CUSTOMER_AUDIENCE
-        if customer:
-            normed = _norm(text)
-            if not rel.startswith(TERM_SCAN_PREFIXES):   # else the pre-pass already scanned it
-                errors += _term_errors(rel, _squash(normed))
-            for _mm in EMAIL.finditer(normed):
-                if _mm.group(0).rsplit("@", 1)[-1].lower() not in EMAIL_ALLOWLIST:
-                    errors.append(("gate-leak:email", rel, f"external email {_redact(_mm.group(0))}"))
-        if served:
-            _refs = as_list(fm.get("related"))
-            for _tgt in list(link_targets(text)) + [str(x) for x in _refs]:
-                _tp = resolve_path(rel, str(_tgt)) or resolve_slug(str(_tgt))
-                if not _tp or _tp == rel or _tp.startswith(SKIP_PREFIXES):
-                    continue
-                _st2 = doc_status(_tp)
-                if _st2 in ("draft", "review"):
-                    errors.append(("gate-bergab", rel, f"served doc links to unfinished ({_st2}) {_tp}"))
-                elif _st2 in RETIRED_STATUS:
-                    warnings.append(("gate-bergab-old", rel, f"served doc links to {_st2} {_tp}"))
-            _rb = fm.get("review_by")
-            if _rb:
-                try:
-                    if datetime.date.fromisoformat(str(_rb)[:10]) < TODAY:
-                        warnings.append(("gate-stale", rel, f"review_by {_rb} is in the past"))
-                except (ValueError, TypeError):
-                    pass
-
-
 def report(title: str, items: list[tuple[str, str, str]]) -> None:
     print(f"\n{title}: {len(items)}")
     by_cat: dict[str, list[tuple[str, str]]] = defaultdict(list)
@@ -632,17 +501,155 @@ def report(title: str, items: list[tuple[str, str, str]]) -> None:
             print(f"          ... +{len(rows) - 4} more")
 
 
-if CHECK_INDEX and not _args():   # whole-repo lint only; skip on per-file (pre-commit) runs
-    check_index_tree()
-if not _args():                  # code the brain runs from a movable ref instead of a commit (see km.pins)
-    for _f, _what in movable_refs(ROOT):
-        warnings.append(("movable-ref", _f, f"runs {_what}, a ref that can be moved; pin it by commit "
-                                            f"(`km upgrade` does it for km)"))
+def main() -> int:
+    fresh_run()
+    errors.clear()
+    warnings.clear()
+    _status_cache.clear()
+    warnings.extend(("gate-config", "schema.local.yaml", _n) for _n in _gate_notices)
+    warnings.extend(("km", _f, _n) for _f, _n in _repo_notices)
+    # --- text pre-pass over ANY tracked doc (frontmatter or not): secrets, and the path-keyed leak
+    # scans (terms under term_scan_prefixes, project codes outside their own folder) ---
+    if GATE_ON:
+        for _sf in secret_targets():
+            _stext = _norm((ROOT / _sf).read_text(encoding="utf-8-sig", errors="replace"))
+            for _snm, _spat in SECRET_PATTERNS.items():
+                for _smm in _spat.finditer(_stext):
+                    errors.append((f"gate-secret:{_snm}", _sf, f"match {_redact(_smm.group(0))}"))
+            _scoped = _sf.startswith(TERM_SCAN_PREFIXES)
+            if not (_scoped or CODE_NEEDLES):
+                continue
+            if _scoped:
+                errors.extend(_term_errors(_sf, _squash(_stext)))
+            _rest = _sf[len(PROJECT_PREFIX):] if PROJECT_PREFIX and _sf.startswith(PROJECT_PREFIX) else None
+            if _rest is not None and "/" not in _rest:
+                continue                              # a hub file such as projects/_index.md lists every code
+            _own = _rest.split("/", 1)[0] if _rest else None
+            _scan = _code_text(_stext)
+            for _c, _n, _rx in CODE_NEEDLES:
+                if _c != _own and _n in _scan and _rx.search(_scan):   # substring first: the regex is slow
+                    errors.append(("gate-leak:code", _sf, f"project code {_redact(_c)} outside its own folder"))
 
-report("ERRORS", errors)
-report("WARNINGS", warnings)
-print()
-if GATE_ON and _args() and not (_target_list or secret_targets()):
-    print("no validatable .md matched the given paths", file=sys.stderr)
-    sys.exit(2)
-sys.exit(1 if errors else 0)
+    _target_list = targets()
+    for rel in _target_list:
+        name = rel.rsplit("/", 1)[-1]
+        text = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
+        fm = frontmatter(text)
+
+        if name in RESERVED_NF:
+            if fm is not None:
+                errors.append(("reserved-file", rel, f"'{name}' must have no frontmatter"))
+            continue
+        if fm is None:
+            errors.append(("no-frontmatter", rel, "missing YAML frontmatter"))
+            continue
+        if isinstance(fm, dict) and "__error__" in fm:
+            errors.append(("unparseable", rel, fm["__error__"]))
+            continue
+        if not isinstance(fm, dict):
+            errors.append(("non-mapping", rel, "frontmatter is not a key:value mapping"))
+            continue
+
+        # apply field aliases declared in the schema (e.g. date -> timestamp)
+        for _field, _spec in FIELDS.items():
+            _alias = _spec.get("alias")
+            if _alias and _field not in fm and _alias in fm:
+                fm[_field] = fm[_alias]
+
+        for field, spec in FIELDS.items():
+            if spec.get("required") and field not in fm:
+                errors.append((f"missing:{field}", rel, f"required field '{field}' absent"))
+            if field in fm and "enum" in spec and fm[field] not in spec["enum"]:
+                errors.append((f"enum:{field}", rel, f"{field}={fm[field]!r}"))
+            if field in fm and spec.get("type") == "list" and not isinstance(fm[field], list):
+                errors.append((f"type:{field}", rel, f"{field} must be a list"))
+            if field in fm and spec.get("format") == "iso8601" and not ISO.match(str(fm[field])):
+                warnings.append((f"iso8601:{field}", rel, f"{field}={fm[field]!r}"))
+            if field in fm and spec.get("format") == "path_at_hash":
+                for v in as_list(fm[field]):
+                    if not v:
+                        continue
+                    if not PIN.match(str(v)):
+                        warnings.append((f"pin:{field}", rel, f"{v!r} not path.md@hash"))
+                    elif fm.get("status") not in RETIRED_STATUS and (_why := pin_problem(field, str(v))):
+                        warnings.append((_why[0], rel, _why[1]))
+            if field in fm and spec.get("ref"):
+                for v in as_list(fm[field]):
+                    if v and not resolve_ref(rel, str(v)):
+                        warnings.append((f"ref:{field}", rel, f"missing target {v}"))
+
+        t = fm.get("type")
+        rule = TYPE_RULES.get(t, {}) if isinstance(t, str) else {}
+        for req in rule.get("require", []):
+            if req not in fm:
+                errors.append((f"type-rule:{t}", rel, f"type '{t}' requires '{req}'"))
+        soft = SOFT_RULES.get(t, {}) if isinstance(t, str) else {}
+        for rec in soft.get("recommend", []):
+            if rec not in fm:
+                warnings.append((f"soft:{t}", rel, f"type '{t}' should have '{rec}'"))
+
+        st = fm.get("status")
+        for (_st, _kind), _fields in STATUS_RULES.items():
+            if _st != st:
+                continue
+            for r in _fields:
+                if _kind == "requires" and r not in fm:
+                    errors.append(("status-rule", rel, f"{st} requires '{r}'"))
+                elif _kind == "forbids" and r in fm:
+                    warnings.append(("status-rule", rel, f"{st} should not set '{r}'"))
+                elif _kind == "recommends" and r not in fm:
+                    warnings.append(("status-soft", rel, f"{st} should record '{r}'"))
+        # an ai: approver counts only on a signed-off doc; a contradicting `approval` always does
+        _why = approval_problem(fm, None if st == SERVED_STATUS else "")
+        if _why:
+            errors.append(("approval", rel, _why))
+
+        # --- km GATE (opt-in, advisory) — leak / bergab / freshness (secrets are a separate pass) ---
+        if GATE_ON:
+            served = fm.get("status") == SERVED_STATUS
+            customer = fm.get("audience") == CUSTOMER_AUDIENCE
+            if customer:
+                normed = _norm(text)
+                if not rel.startswith(TERM_SCAN_PREFIXES):   # else the pre-pass already scanned it
+                    errors.extend(_term_errors(rel, _squash(normed)))
+                for _mm in EMAIL.finditer(normed):
+                    if _mm.group(0).rsplit("@", 1)[-1].lower() not in EMAIL_ALLOWLIST:
+                        errors.append(("gate-leak:email", rel, f"external email {_redact(_mm.group(0))}"))
+            if served:
+                _refs = as_list(fm.get("related"))
+                for _tgt in list(link_targets(text)) + [str(x) for x in _refs]:
+                    _tp = resolve_path(rel, str(_tgt)) or resolve_slug(str(_tgt))
+                    if not _tp or _tp == rel or _tp.startswith(SKIP_PREFIXES):
+                        continue
+                    _st2 = doc_status(_tp)
+                    if _st2 in ("draft", "review"):
+                        errors.append(("gate-bergab", rel, f"served doc links to unfinished ({_st2}) {_tp}"))
+                    elif _st2 in RETIRED_STATUS:
+                        warnings.append(("gate-bergab-old", rel, f"served doc links to {_st2} {_tp}"))
+                _rb = fm.get("review_by")
+                if _rb:
+                    try:
+                        if datetime.date.fromisoformat(str(_rb)[:10]) < TODAY:
+                            warnings.append(("gate-stale", rel, f"review_by {_rb} is in the past"))
+                    except (ValueError, TypeError):
+                        pass
+
+
+    if CHECK_INDEX and not _args():   # whole-repo lint only; skip on per-file (pre-commit) runs
+        check_index_tree()
+    if not _args():                  # code the brain runs from a movable ref instead of a commit (see km.pins)
+        for _f, _what in movable_refs(ROOT):
+            warnings.append(("movable-ref", _f, f"runs {_what}, a ref that can be moved; pin it by commit "
+                                                f"(`km upgrade` does it for km)"))
+
+    report("ERRORS", errors)
+    report("WARNINGS", warnings)
+    print()
+    if GATE_ON and _args() and not (_target_list or secret_targets()):
+        print("no validatable .md matched the given paths", file=sys.stderr)
+        return 2
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

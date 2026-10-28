@@ -15,7 +15,7 @@ ARGS_MAX = 8000   # characters of paths in one gate command line, well below Win
 
 
 def run_gate(*targets: Path):
-    """`km validate` on these files, in a child process: the validator runs its checks at import."""
+    """`km validate` on these files, in a child process: km reads its root and schema once, at import."""
     return subprocess.run([sys.executable, "-m", "km", "validate", "--root", str(ROOT), *map(str, targets)],
                           cwd=ROOT, capture_output=True, encoding="utf-8", errors="replace",
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})   # the child writes UTF-8 too
