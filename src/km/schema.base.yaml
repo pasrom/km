@@ -75,7 +75,7 @@ fields:
   approved_at:            # when sign-off happened (audit-grade record inside the repo)
     required: false
     format: iso8601
-  approval:               # who may sign off: ai or human (default); rules in km.common.approval_problem
+  approval:               # who may sign off: ai or human; unset = approval_default; rules in km.common
     required: false
     enum: [ai, human]
   reviewed_by:            # pre-reviews the doc went through (reviewer or model, date, PR); not an approval

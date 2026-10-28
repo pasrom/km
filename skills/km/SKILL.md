@@ -6,12 +6,13 @@ description: >-
   transcript with correct frontmatter and folder placement, update or supersede an
   existing page, run a consistency lint, and manage peer knowledge bases mounted as
   submodules, including corrections raised as a pull request against the other repo
-  rather than edited in place. Use it whenever something should be written into the
-  knowledge base or looked up from it, rather than writing a markdown file by hand.
+  rather than edited in place. Review a doc and sign it off where an AI review may.
+  Use it whenever something should be written into the knowledge base or looked up
+  from it, rather than writing a markdown file by hand.
   Triggers on: km, knowledge base, brain, save this, was steht im brain, ins brain
   speichern, dokumentiere das, Entscheidung festhalten, Meeting-Notiz, ADR, lint,
   "speicher das sauber ab", "was wissen wir über", check my setup, "prüfe meine
-  Einrichtung".
+  Einrichtung", review, km review, "review mein Dokument", freigeben.
 argument-hint: question, content, brain command, help, etc.
 ---
 
@@ -432,6 +433,33 @@ Known limitations (advisory scope, follow-ups): whole-repo mode sees TRACKED fil
 per-file mode does not check reverse edges (a target flipping to `draft` is caught only in a
 full run); link-form coverage is inline/reference/wiki/HTML/angle-bracket (not exhaustive).
 
+## Review (`/km review <doc>...`)
+
+The author's own review before sign-off, run on the docs a branch adds or changes. Read-only until
+the last step: report findings, never fix the doc during the review.
+
+1. **Rules first.** Read the brain's `CONVENTIONS.md`, `schema.local.yaml` and `CLAUDE.md`; they
+   override anything general here. Run `km validate` on the docs; its errors are blocking findings.
+2. **Level.** Determine who may sign off (see Approval below). At level `human`, say so up front,
+   review anyway, and hand the findings over.
+3. **Check the content, not the prose:**
+   - every factual claim against its source (`sources`, linked docs, datasheets, the code it
+     describes); a claim with no source and no evidence in the repo is a finding;
+   - contradictions with docs already in the brain on the same topic (search by tags and terms);
+   - numbers, units, part numbers and versions copied correctly from the source;
+   - `related`, `supersedes`, links and `_index.md` entries in place, and the doc reachable;
+   - nothing that belongs elsewhere: a customer, project or person named outside where the brain's
+     rules allow it, secrets, machine paths;
+   - `owner` and a realistic `review_by` for the sign-off.
+4. **Findings.** Each one names the line, what is wrong and the source that shows it. Blocking:
+   wrong or unsupported facts, contradictions, validate errors, leaks. Not blocking: wording, style,
+   structure preferences; mention them once, briefly, or leave them out.
+5. **Outcome.** No blocking findings and level `ai`: show the user the result, then on their OK run
+   `km approve <doc> --by ai:<model> [--review-by YYYY-MM-DD]` and commit. Blocking findings: list
+   them and stop. Level `human`: list the findings and name who should sign off.
+   Never change `audience`, `approval` or `type` to make a sign-off pass; `km approve` refuses what
+   the level does not allow and gates the result with `km validate`.
+
 ## Approval (`km approve`)
 
 `km approve <doc>... --by WHO [--at YYYY-MM-DD] [--review-by YYYY-MM-DD]` moves a `status: review`
@@ -441,9 +469,11 @@ link to each other are signed off in one call: alone, each would link to a doc s
 doc whose `review_by` has passed (typically one CI demoted) is refused until `--review-by` sets a
 new date.
 
-- **Levels:** `approval: human` (the default when unset) needs a person; `approval: ai` lets an AI
-  review alone sign off, written `--by ai:<model>`. `audience: customer` docs and `verbatim-block`s
-  always need a person. `km validate` enforces it on signed-off docs (metadata, not authentication).
+- **Levels:** `approval: human` needs a person; `approval: ai` lets an AI review alone sign off,
+  written `--by ai:<model>`. Unset, the level is the brain's `approval_default` in `schema.local.yaml`
+  (`human` when absent). Only an internal doc (no `audience` counts as internal) can be at level
+  `ai`: customer-facing docs, any other audience and `verbatim-block`s always need a person. `km validate` enforces it on
+  signed-off docs (metadata, not authentication).
 - **Pre-reviews:** `reviewed_by` (a list) records them, e.g. a PR bot's model, date and PR; it is not
   an approval. `promote` and `--replace` drop it with the approval; a cross-repo promote also drops
   `approval`, so the target brain decides its own level.

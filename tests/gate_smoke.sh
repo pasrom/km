@@ -222,10 +222,10 @@ rm -rf "$T/projects" "$T/bmsx" "$T/topics/ts2.md" "$T/.git"
 # AI approval: an ai: approver needs approval: ai; customer docs and verbatim-blocks need a human
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 mkdir -p "$T/ap"
-doc(){ # doc FILE STATUS "extra frontmatter lines"; TYPE=, AUD= override, RB= (empty) drops review_by
-  local rb="${RB-2027-01-01}"
-  printf -- '---\ntype: %s\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: %s\naudience: %s\nlanguage: en\ntags: [t]\nowner: X\n%b%b---\nbody\n' \
-    "${TYPE:-concept}" "$2" "${AUD:-internal}" "${rb:+review_by: $rb\n}" "${3:-}" > "$1"; }
+doc(){ # doc FILE STATUS "extra frontmatter lines"; TYPE=, AUD= override, AUD= / RB= (empty) drop the field
+  local rb="${RB-2027-01-01}" aud="${AUD-internal}"
+  printf -- '---\ntype: %s\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: %s\n%blanguage: en\ntags: [t]\nowner: X\n%b%b---\nbody\n' \
+    "${TYPE:-concept}" "$2" "${aud:+audience: $aud\n}" "${rb:+review_by: $rb\n}" "${3:-}" > "$1"; }
 doc "$T/ap/a1.md" accepted 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
 V "$T/ap/a1.md" && no "approval: an ai: approver without approval: ai fails" || ok "approval: an ai: approver without approval: ai fails"
 doc "$T/ap/a2.md" accepted 'approval: ai\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
@@ -240,6 +240,28 @@ doc "$T/ap/a6.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
 V "$T/ap/a6.md" && ok "approval: a human approver passes at the default level" || no "approval: a human approver passes at the default level"
 doc "$T/ap/a7.md" review 'approval: maybe\n'
 V "$T/ap/a7.md" && no "approval: an unknown level fails the enum" || ok "approval: an unknown level fails the enum"
+AUD= doc "$T/ap/a10.md" accepted 'approval: ai\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/a10.md" && ok "approval: a doc without an audience counts as internal" || no "approval: a doc without an audience counts as internal"
+# approval_default: ai puts internal docs at level ai; customer docs, verbatim-blocks and an explicit human stay human
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'approval_default: ai\n' >> "$T/schema.local.yaml"
+V "$T/ap/a1.md" && ok "approval_default: ai lets an internal doc take an ai: approver" || no "approval_default: ai lets an internal doc take an ai: approver"
+AUD=customer doc "$T/ap/d1.md" accepted 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/d1.md" && no "approval_default: a customer doc still needs a human" || ok "approval_default: a customer doc still needs a human"
+TYPE=verbatim-block doc "$T/ap/d2.md" accepted 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/d2.md" && no "approval_default: a verbatim-block still needs a human" || ok "approval_default: a verbatim-block still needs a human"
+doc "$T/ap/d3.md" accepted 'approval: human\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/d3.md" && no "approval_default: 'approval: human' overrides it" || ok "approval_default: 'approval: human' overrides it"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'approval_default: ai\nfields:\n  audience:\n    enum: [internal, customer, partner]\n' >> "$T/schema.local.yaml"
+AUD=partner doc "$T/ap/d5.md" accepted 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+V "$T/ap/d5.md" && no "approval_default: any audience other than internal needs a human" || ok "approval_default: any audience other than internal needs a human"
+AUD=partner doc "$T/ap/d6.md" review 'approval: ai\n'
+V "$T/ap/d6.md" && no "approval: 'approval: ai' on another audience is an error" || ok "approval: 'approval: ai' on another audience is an error"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'approval_default: ai\n' >> "$T/schema.local.yaml"
+doc "$T/ap/d4.md" review ''
+km approve --root "$T" "$T/ap/d4.md" --by ai:model-x --at 2026-09-30 >/dev/null 2>&1 && grep -q '^status: accepted$' "$T/ap/d4.md" \
+  && ok "approve: approval_default: ai signs an internal doc off by ai:" || no "approve: approval_default: ai signs an internal doc off by ai:"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'approval_default: maybe\n' >> "$T/schema.local.yaml"
+km validate --root "$T" "$T/ap/a6.md" 2>&1 | grep -q "approval_default must be ai or human" && ok "approval_default: an unknown value fails fast" || no "approval_default: an unknown value fails fast"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [review_by]\n' >> "$T/schema.local.yaml"
 RB= doc "$T/ap/a8.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
 V "$T/ap/a8.md" && no "accepted_requires: a missing field fails" || ok "accepted_requires: a missing field fails"

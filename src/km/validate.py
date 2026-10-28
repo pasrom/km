@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import EXEMPT, OVERLAY, PIN, ROOT, SCHEMA, approval_problem, as_list, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, ROOT, SCHEMA, approval_problem, as_list, pin_state, tracked_md
 from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
@@ -126,6 +126,8 @@ _ci_raw = SCHEMA.get("check_index", False)
 if not isinstance(_ci_raw, bool):                       # fail-fast on a non-bool, matching gate.enabled
     sys.exit(f"schema.local.yaml: check_index must be true or false, got {_ci_raw!r}")
 CHECK_INDEX = _ci_raw
+if SCHEMA.get("approval_default", "human") not in APPROVAL_LEVELS:
+    sys.exit(f"schema.local.yaml: approval_default must be ai or human, got {SCHEMA.get('approval_default')!r}")
 _isp = SCHEMA.get("index_skip_prefixes") or []
 if not (isinstance(_isp, list) and all(isinstance(x, str) for x in _isp)):
     sys.exit("schema.local.yaml: index_skip_prefixes must be a list of strings")

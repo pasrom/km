@@ -41,7 +41,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_FIELDS, ROOT, SCHEMA
+from km.common import APPROVAL_FIELDS, INTERNAL_AUDIENCE, ROOT, SCHEMA
 from km.edit import run_gate
 from km.paths import write_text
 
@@ -322,10 +322,10 @@ def main() -> int:
         fm.setdefault("tags", [a.slug])
         if a.owner:
             fm["owner"] = a.owner
-        fm.setdefault("audience", "internal")
+        fm.setdefault("audience", INTERNAL_AUDIENCE)
         fm.setdefault("review_by", review_by)
         if cross_repo:   # these reference the SOURCE repo and do not resolve in the target; and the
-            # target decides for itself whether an AI review may approve the doc (unset = human)
+            # target decides for itself whether an AI review may approve the doc (unset = its approval_default)
             for _k in ("related", "sources", "translates", "project", "evidence", "approval"):
                 fm.pop(_k, None)
             if isinstance(fm.get("resource"), str) and not fm["resource"].startswith(("http://", "https://")):
