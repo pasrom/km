@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import sys
 
 import yaml
 
-from km.common import PIN, SCHEMA, SERVED_STATUS, as_list, demote_raw, pin_state, set_fm_block, staged_blob
+from km.common import PIN, SCHEMA, SERVED_STATUS, as_list, demote_raw, pin_state, set_fm_block, staged_blob, unstaged
 from km.edit import edit_docs
 
 ABBREV = 12   # hex digits of a written pin: unambiguous in any brain, short enough to read
@@ -37,7 +38,7 @@ def scalar(value: str) -> str:
 
 def change(fm: dict, raw: str):
     """Re-pin one doc's frontmatter: the refusal, or `(new_raw, message)` for `edit_docs`."""
-    before, changed, missing, uncompared = raw, [], [], []
+    before, changed, missing, uncompared, seen = raw, [], [], [], set()
     for field in PINNED:
         values = [v for v in as_list(fm.get(field)) if v]   # an empty entry, as validate skips it
         if not values:
@@ -46,6 +47,7 @@ def change(fm: dict, raw: str):
         for v in values:
             m = PIN.match(str(v))
             src = (m.group(1) if m else str(v)).strip()
+            seen.add(posixpath.normpath(src.lstrip("/")))   # as `git diff --relative` names it
             state = pin_state(str(v)) if m else None
             if state == "current":
                 pins.append(str(v))
@@ -66,9 +68,11 @@ def change(fm: dict, raw: str):
             return f"cannot find the `{field}:` line to rewrite"
     if missing:
         return f"not a tracked .md file, cannot pin: {', '.join(missing)}"
+    dirty = sorted(seen & unstaged())
+    note = f"; {', '.join(dirty)} has edits not staged yet, pinned as staged (`git add` it, then repin)" if dirty else ""
     if not changed:
-        return before, "already pins the current content"
-    message = f"pins the current content of {', '.join(changed)}"
+        return before, "already pins the current content" + note
+    message = f"pins the current content of {', '.join(changed)}" + note
     if uncompared:
         message += f"; could not compare {', '.join(uncompared)} with the old pin (not in this clone's history)"
     if fm.get("status") == SERVED_STATUS:   # the approval saw other sources: sign off again

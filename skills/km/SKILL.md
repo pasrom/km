@@ -507,7 +507,7 @@ approving, demoting or re-pinning the source changes its frontmatter, not its pi
 diff` from the pinned content), then `km repin`; a signed-off doc whose pins change goes back to
 `status: review` without its approval and `reviewed_by`, so sign it off again with `km approve` in
 the same change: until then, served docs that link to it fail the gate. Stage the source first: an
-unstaged edit is not seen yet. `km repin` needs km 1.4.0 in the brain's pins (`km upgrade`). A
+unstaged edit is not seen yet (repin says so). `km repin` needs km 1.4.0 in the brain's pins (`km upgrade`). A
 per-file run (the pre-commit hook) checks only the docs it is given, so a doc whose source changed
 is reported by the whole-repo `km validate` (CI), not when only the source is committed.
 

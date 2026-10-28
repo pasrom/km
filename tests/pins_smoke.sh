@@ -151,6 +151,12 @@ git -C "$T" add qk.md; out="$(cd "$T" && km repin qk.md 2>&1)"; rc=$?
 printf '\xff\xfe---\n' > "$T/bin.md"; out="$(cd "$T" && km repin bin.md 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "not UTF-8" && ! out_has "Traceback"; } && ok "repin refuses a doc that is not UTF-8" || no "non-UTF-8 ($rc: $out)"
 
+# a source with edits not staged yet: repin pins the staged content and says so
+summary_doc us.md "src.md@$B1"; cp "$T/src.md" "$T/src.bak"; printf 'unstaged\n' >> "$T/src.md"
+out="$(cd "$T" && km repin us.md 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "src.md has edits not staged yet"; } && ok "repin warns about a source with edits not staged" || no "unstaged source ($rc: $out)"
+mv "$T/src.bak" "$T/src.md"; git -C "$T" rm -q --cached us.md && rm -f "$T/us.md"
+
 # a pin to a path outside the repository does not take the other pin lookups down with it
 summary_doc out.md "../outside.md@$B1"; val
 { ! out_has "Traceback" && out_has "out.md"; } && ok "a pin outside the repository is reported, no crash" || no "outside pin ($out)"
