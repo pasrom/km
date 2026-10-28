@@ -5,8 +5,10 @@ configuration than the validator checks; a broken schema file stops the run.
 """
 from __future__ import annotations
 
+import atexit
 import functools
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -101,8 +103,58 @@ def as_list(value) -> list:
     return value if isinstance(value, list) else [] if value is None else [value]
 
 
+@functools.cache
+def _objects() -> subprocess.Popen | None:
+    """One `git cat-file --batch-check` that answers every object lookup of a run; None without git."""
+    try:
+        proc = subprocess.Popen(["git", "cat-file", "--batch-check"], cwd=ROOT, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                encoding=sys.getfilesystemencoding(), errors="surrogateescape")
+    except OSError:   # no git, or no file descriptor left
+        return None
+    atexit.register(_close, proc)
+    return proc
+
+
+def _close(proc: subprocess.Popen) -> None:
+    """End a cat-file (it stops at the end of its input) and free its pipes, also when it already exited."""
+    for pipe in (proc.stdin, proc.stdout):
+        try:
+            pipe.close()
+        except OSError:
+            pass
+    proc.wait()
+
+
+def _drop_objects() -> None:
+    if _objects.cache_info().currsize and (proc := _objects()):
+        atexit.unregister(_close)
+        _close(proc)
+    _objects.cache_clear()
+
+
+def fresh_run() -> None:
+    """Forget what an earlier run in this process looked up: the file list, the index, the pins."""
+    _drop_objects()
+    for cached in (_ls_md, unstaged, staged_blob, pinned_blob, _body):
+        cached.cache_clear()
+
+
 def _rev(spec: str) -> str:
-    return git("rev-parse", "--verify", "--quiet", spec, cwd=ROOT).stdout.strip()
+    """The object `spec` names (`rev-parse --verify` semantics), or ''."""
+    if "\n" in spec or (batch := _objects()) is None:
+        return ""
+    try:
+        batch.stdin.write(spec + "\n")
+        batch.stdin.flush()
+        line = batch.stdout.readline()
+    except OSError:   # BrokenPipeError: git exited on an earlier spec
+        line = ""
+    if not line:      # git exits on some specs (a path outside the repository): the next lookup starts a new one
+        _drop_objects()
+        return ""
+    oid, _, rest = line.rstrip("\n").partition(" ")
+    return oid if re.fullmatch(r"[0-9a-f]{40,64}", oid) and not rest.endswith("missing") else ""
 
 
 @functools.cache
