@@ -55,13 +55,15 @@ INDEX_SKIP = tuple(SCHEMA.get("index_skip_prefixes") or [])
 _gate = SCHEMA.get("gate")
 _gate = _gate if isinstance(_gate, dict) else {}   # a malformed gate is reported by `km validate`
 SERVED_STATUS = _gate.get("served_status", "accepted")
+RETIRED_STATUS = ("superseded", "obsolete")
 CUSTOMER_AUDIENCE = _gate.get("customer_audience", "customer")
 
 # Approval: an AI review alone may sign a doc off only at level `ai`: the doc's own `approval`, or
-# where that is unset the brain's `approval_default`. Only an internal doc (no audience counts as
-# internal, as in `km serve`) can be at that level; a customer-facing doc, any other audience and a
-# verbatim-block always need a person. An AI approver is written `approved_by: "ai:<model>"`.
-# Metadata, not authentication: it catches slips, not a determined author.
+# where that is unset the brain's `approval_default`, and only on a doc marked `audience: internal`
+# that is not a verbatim-block. A customer-facing doc, any other audience and a doc without one need
+# a person (for everything else no audience counts as internal, as in `km serve`). An AI approver is
+# written `approved_by: "ai:<model>"`. Metadata, not authentication: it catches slips, not a
+# determined author.
 APPROVAL_FIELDS = ("approved_by", "approved_at")
 APPROVAL_LEVELS = ("ai", "human")
 INTERNAL_AUDIENCE = "internal"
@@ -69,7 +71,10 @@ APPROVAL_DEFAULT = "ai" if SCHEMA.get("approval_default") == "ai" else "human"  
 
 
 def is_ai_approver(who) -> bool:
-    return str(who or "").strip().lower().startswith("ai:")
+    """Signed off by AI alone: every approver (one, or a list) is `ai:<model>`; a person among them
+    counts as a human sign-off."""
+    ws = [str(w).strip().lower() for w in as_list(who) if w]
+    return bool(ws) and all(w.startswith("ai:") for w in ws)
 
 
 def approval_problem(fm: dict, approver=None) -> str | None:
@@ -78,9 +83,13 @@ def approval_problem(fm: dict, approver=None) -> str | None:
     if fm.get("approval") == "ai" and not may:
         return "'approval: ai' is only allowed on an internal doc that is not a verbatim-block"
     level = (fm.get("approval") or APPROVAL_DEFAULT) if may else "human"
-    if is_ai_approver(fm.get("approved_by") if approver is None else approver) and level != "ai":
+    if not is_ai_approver(fm.get("approved_by") if approver is None else approver):
+        return None
+    if level != "ai":
         return ("only an internal doc may take an AI approver, this one needs a human approver" if not may
                 else "an AI approver needs 'approval: ai' or approval_default: ai")
+    if fm.get("audience") != INTERNAL_AUDIENCE:
+        return "an AI approver needs 'audience: internal' set explicitly"
     return None
 
 

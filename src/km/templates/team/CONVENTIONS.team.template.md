@@ -95,9 +95,9 @@ draft → review → accepted → superseded | obsolete
 - `accepted` = reviewed, current, in the served set. Requires `owner` + `review_by`.
 - Sign-off is `km approve <doc> --by <initials>`, after the author's review (`/km review`). With
   `approval: ai`, or `approval_default: ai` in `schema.local.yaml` and no `approval` field, an AI
-  review alone may sign off (`--by ai:<model>`); otherwise a person must. Only internal docs can
-  take an AI sign-off: customer-facing docs, any other audience and verbatim-blocks always need a
-  person.
+  review alone may sign off (`--by ai:<model>`); otherwise a person must. Only docs marked
+  `audience: internal` can take an AI sign-off: customer-facing docs, any other audience, docs
+  without an audience and verbatim-blocks always need a person.
 - CI **demotes** an `accepted` doc back to `review` when its `review_by` lapses, so it drops out of
   the served set automatically. Staleness is prevented, not just warned. An accepted doc that links
   to a demoted one then fails the gate; the weekly run turns red so the maintainer re-reviews either.

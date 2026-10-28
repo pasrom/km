@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, ROOT, SCHEMA, approval_problem, as_list, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_list, pin_state, tracked_md
 from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
@@ -282,10 +282,13 @@ def pin_problem(field: str, pin: str) -> tuple[str, str] | None:
     The hash names the source's own blob, or a commit that holds the source; a blob depends only on
     the file's content, so it survives a rebase or squash merge that rewrites the commit. The pinned
     content is compared with the source as staged (see km.common.pin_state)."""
+    path = PIN.match(pin).group(1)
+    if (old := doc_status(path.lstrip("/"))) in RETIRED_STATUS:   # before stale: repin would pin the retired text
+        return "pin:old", f"{pin!r}: the source is {old}; point the doc at what replaced it"
     state = pin_state(pin)
     if state == "current":
         return None
-    detail = f"{pin!r}: " + PIN_PROBLEMS[state].format(path=PIN.match(pin).group(1))
+    detail = f"{pin!r}: " + PIN_PROBLEMS[state].format(path=path)
     return ("pin:stale" if state == "stale" else f"pin:{field}"), detail
 
 
@@ -552,7 +555,7 @@ for rel in _target_list:
                     continue
                 if not PIN.match(str(v)):
                     warnings.append((f"pin:{field}", rel, f"{v!r} not path.md@hash"))
-                elif _why := pin_problem(field, str(v)):
+                elif fm.get("status") not in RETIRED_STATUS and (_why := pin_problem(field, str(v))):
                     warnings.append((_why[0], rel, _why[1]))
         if field in fm and spec.get("ref"):
             for v in as_list(fm[field]):
@@ -605,7 +608,7 @@ for rel in _target_list:
                 _st2 = doc_status(_tp)
                 if _st2 in ("draft", "review"):
                     errors.append(("gate-bergab", rel, f"served doc links to unfinished ({_st2}) {_tp}"))
-                elif _st2 in ("superseded", "obsolete"):
+                elif _st2 in RETIRED_STATUS:
                     warnings.append(("gate-bergab-old", rel, f"served doc links to {_st2} {_tp}"))
             _rb = fm.get("review_by")
             if _rb:

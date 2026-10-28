@@ -151,6 +151,24 @@ git -C "$T" add qk.md; out="$(cd "$T" && km repin qk.md 2>&1)"; rc=$?
 printf '\xff\xfe---\n' > "$T/bin.md"; out="$(cd "$T" && km repin bin.md 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "not UTF-8" && ! out_has "Traceback"; } && ok "repin refuses a doc that is not UTF-8" || no "non-UTF-8 ($rc: $out)"
 
+# a source that is superseded or obsolete is reported even though its body did not change
+printf -- '---\ntype: note\ntitle: o\ntimestamp: 2026-10-09\nauthor: X\nstatus: draft\ntags: [t]\n---\nold body\n' > "$T/old.md"
+git -C "$T" add old.md; summary_doc oldsum.md "old.md@$(git -C "$T" rev-parse --short=12 :old.md)"
+sed -i.bak 's/^status: draft$/status: obsolete/' "$T/old.md" && rm -f "$T/old.md.bak" && git -C "$T" add old.md; val
+out_has "pin:old" && out_has "the source is obsolete" && ok "a pin to an obsolete source is reported" || no "obsolete source ($out)"
+printf 'replaced\n' >> "$T/old.md" && git -C "$T" add old.md; val
+{ out_has "pin:old" && ! out_has "pin:stale"; } && ok "a retired source whose text changed is pin:old, not stale" || no "retired and changed ($out)"
+sed -i.bak 's/^status: draft$/status: superseded/' "$T/oldsum.md" && rm -f "$T/oldsum.md.bak" && git -C "$T" add oldsum.md; val
+! out_has "pin:old" && ok "a retired doc's own pins are not checked" || no "retired doc pins ($out)"
+git -C "$T" rm -q --cached old.md oldsum.md && rm -f "$T/old.md" "$T/oldsum.md"
+
+# a doc under skip_prefixes (a mounted brain) is not repinned
+mkdir -p "$T/vendor" && summary_doc vendor/p.md "src.md@$B1" && cp "$T/vendor/p.md" "$T/p.bak"
+printf 'skip_prefixes: [vendor/]\n' >> "$T/schema.local.yaml"
+out="$(cd "$T" && km repin vendor/p.md 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "skip_prefixes" && cmp -s "$T/vendor/p.md" "$T/p.bak"; } && ok "repin refuses a doc under skip_prefixes" || no "repin skip ($rc: $out)"
+printf 'meta: {profile: pins}\n' > "$T/schema.local.yaml"; git -C "$T" rm -rq --cached vendor && rm -rf "$T/vendor"
+
 # a brain below the repository's top level: pins are relative to the brain
 mkdir -p "$T/sub" && cp "$T/schema.local.yaml" "$T/src.md" "$T/sub/" && echo "only in the subfolder" >> "$T/sub/src.md"
 git -C "$T" add sub

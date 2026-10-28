@@ -41,7 +41,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_FIELDS, INTERNAL_AUDIENCE, ROOT, SCHEMA
+from km.common import APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA
 from km.edit import run_gate
 from km.paths import write_text
 
@@ -120,7 +120,7 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
         return False
     if src_rel == target_rel:
         return False
-    if src_fm.get("status") in ("superseded", "obsolete"):
+    if src_fm.get("status") in RETIRED_STATUS:
         print(f"stub: source {src_rel} is already {src_fm['status']}; not re-stubbed.")
         return True
     stub = {k: v for k, v in src_fm.items() if k not in _STUB_DROPS}
@@ -322,7 +322,6 @@ def main() -> int:
         fm.setdefault("tags", [a.slug])
         if a.owner:
             fm["owner"] = a.owner
-        fm.setdefault("audience", INTERNAL_AUDIENCE)
         fm.setdefault("review_by", review_by)
         if cross_repo:   # these reference the SOURCE repo and do not resolve in the target; and the
             # target decides for itself whether an AI review may approve the doc (unset = its approval_default)

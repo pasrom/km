@@ -8,8 +8,8 @@ meta:
 # Promote fills `author` from this when neither a flag nor the source note names one (must be a string).
 author_default: "<MAINTAINER>"
 
-# Who signs off a doc without an `approval` field: human (the default) or ai. Only internal docs can
-# take an AI sign-off; customer-facing docs and verbatim-blocks always need a person.
+# Who signs off a doc without an `approval` field: human (the default) or ai. Which docs may take an
+# AI sign-off at all: CONVENTIONS.md, Status lifecycle.
 # approval_default: ai
 
 # Deterministic navigation lint: every folder with content docs or a subfolder index must have a
