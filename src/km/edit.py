@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from km.common import ROOT, split_frontmatter
+from km.common import ROOT, SKIP, split_frontmatter
 from km.paths import write_text
 
 
@@ -33,6 +33,8 @@ def load_doc(doc: str, path: Path) -> Loaded | str:
         rel = path.relative_to(ROOT).as_posix()
     except ValueError:
         return f"{doc}: outside the brain"
+    if rel.startswith(SKIP):
+        return f"{rel}: under skip_prefixes (a mounted brain or excluded folder), change it in its own repo"
     if not path.is_file():
         return f"{rel}: no such file"
     old = path.read_bytes()

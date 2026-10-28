@@ -240,8 +240,15 @@ doc "$T/ap/a6.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
 V "$T/ap/a6.md" && ok "approval: a human approver passes at the default level" || no "approval: a human approver passes at the default level"
 doc "$T/ap/a7.md" review 'approval: maybe\n'
 V "$T/ap/a7.md" && no "approval: an unknown level fails the enum" || ok "approval: an unknown level fails the enum"
-AUD= doc "$T/ap/a10.md" accepted 'approval: ai\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+AUD= doc "$T/ap/a10.md" accepted 'approval: ai\napproved_by: "RPA"\napproved_at: 2026-09-30\n'
 V "$T/ap/a10.md" && ok "approval: a doc without an audience counts as internal" || no "approval: a doc without an audience counts as internal"
+AUD= doc "$T/ap/a11.md" accepted 'approval: ai\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
+km validate --root "$T" "$T/ap/a11.md" 2>&1 | grep -q "needs 'audience: internal' set explicitly" \
+  && ok "approval: an AI approver needs the audience spelled out" || no "approval: an AI approver needs the audience spelled out"
+AUD=customer doc "$T/ap/a12.md" accepted 'approved_by: ["ai:model-x"]\napproved_at: 2026-09-30\n'
+V "$T/ap/a12.md" && no "approval: an AI approver in a list is still an AI approver" || ok "approval: an AI approver in a list is still an AI approver"
+AUD=customer doc "$T/ap/a13.md" accepted 'approved_by: [RPA, "ai:model-x"]\napproved_at: 2026-09-30\n'
+V "$T/ap/a13.md" && ok "approval: a person co-signing with an AI is a human sign-off" || no "approval: a person co-signing with an AI is a human sign-off"
 # approval_default: ai puts internal docs at level ai; customer docs, verbatim-blocks and an explicit human stay human
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'approval_default: ai\n' >> "$T/schema.local.yaml"
 V "$T/ap/a1.md" && ok "approval_default: ai lets an internal doc take an ai: approver" || no "approval_default: ai lets an internal doc take an ai: approver"
@@ -268,7 +275,7 @@ V "$T/ap/a8.md" && no "accepted_requires: a missing field fails" || ok "accepted
 V "$T/ap/a6.md" && ok "accepted_requires: a doc with the field passes" || no "accepted_requires: a doc with the field passes"
 printf 'meta: {profile: smoke}\ngate:\n  enabled: true\n  served_status: published\nfields:\n  status:\n    enum: [draft, review, published, superseded, obsolete]\n' > "$T/schema.local.yaml"
 doc "$T/ap/a9.md" published 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
-km validate --root "$T" "$T/ap/a9.md" 2>&1 | grep -q "an AI approver needs" && ok "approval: the rule follows a renamed served status" || no "approval: the rule follows a renamed served status"
+km validate --root "$T" "$T/ap/a9.md" 2>&1 | grep -q "an AI approver needs 'approval: ai'" && ok "approval: the rule follows a renamed served status" || no "approval: the rule follows a renamed served status"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  acepted_require: [owner]\n' >> "$T/schema.local.yaml"
 km validate --root "$T" "$T/ap/a6.md" 2>&1 | grep -q "must be <status>_<requires|recommends|forbids>" && ok "status_rules: a malformed key fails fast" || no "status_rules: a malformed key fails fast"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  acepted_requires: [owner]\n' >> "$T/schema.local.yaml"
@@ -284,6 +291,15 @@ doc "$T/ap/p2.md" review ''; cp "$T/ap/p2.md" "$T/p2.bak"
 out="$(km approve --root "$T" "$T/ap/p2.md" --by ai:model-x 2>&1)"
 out_has "needs 'approval: ai'" && ! out_has "km validate fails" && cmp -s "$T/ap/p2.md" "$T/p2.bak" \
   && ok "approve: ai: refused before writing at the default level" || no "approve: ai: refused before writing at the default level"
+AUD= doc "$T/ap/p5.md" review 'approval: ai\n'; cp "$T/ap/p5.md" "$T/p5.bak"
+km approve --root "$T" "$T/ap/p5.md" --by ai:model-x 2>&1 | grep -q "audience: internal" && cmp -s "$T/ap/p5.md" "$T/p5.bak" \
+  && ok "approve: ai: refused on a doc without an audience" || no "approve: ai: refused on a doc without an audience"
+mkdir -p "$T/vendor"; doc "$T/vendor/x.md" review ''; cp "$T/vendor/x.md" "$T/x.bak"
+printf 'skip_prefixes: [vendor/]\n' >> "$T/schema.local.yaml"
+out="$(km approve --root "$T" "$T/vendor/x.md" --by RPA 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "skip_prefixes" && cmp -s "$T/vendor/x.md" "$T/x.bak"; } \
+  && ok "approve: refuses a doc under skip_prefixes" || no "approve: refuses a doc under skip_prefixes ($rc: $out)"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [review_by]\n' >> "$T/schema.local.yaml"; rm -rf "$T/vendor"
 AUD=customer doc "$T/ap/p3.md" review ''
 km approve --root "$T" "$T/ap/p3.md" --by ai:model-x 2>&1 | grep -q "needs a human approver" \
   && ok "approve: ai: refused on a customer doc" || no "approve: ai: refused on a customer doc"
@@ -349,6 +365,7 @@ printf -- '---\ntype: note\ntitle: R\ntimestamp: 2026-09-30\nauthor: X\nstatus: 
 km promote --root "$T" rv-topic "$T/inbox/rv.md" --folder ap >/dev/null 2>&1
 { [ -f "$T/ap/rv-topic.md" ] && ! grep -q '^reviewed_by:' "$T/ap/rv-topic.md" && grep -q '^approval: ai' "$T/ap/rv-topic.md"; } \
   && ok "promote: drops reviewed_by, keeps approval in the same brain" || no "promote: drops reviewed_by, keeps approval in the same brain"
+! grep -q '^audience:' "$T/ap/rv-topic.md" && ok "promote: leaves the audience to the author" || no "promote: leaves the audience to the author"
 doc "$T/ap/rp.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\nreviewed_by: ["model-x 2026-09-29 (PR #1)"]\n'
 printf -- '---\ntype: concept\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: draft\ntags: [t]\n---\nnew text\n' > "$T/inbox/rp.md"
 km promote --root "$T" rp "$T/inbox/rp.md" --replace >/dev/null 2>&1
