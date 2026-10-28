@@ -20,6 +20,8 @@ KM_REPO = "https://github.com/pasrom/km"
 SHA = re.compile(r"[0-9a-f]{40}")
 VERSION = r"v\d[\w.\-]*"
 PIN = re.compile(rf"(pasrom/km@)([\w.\-]+)(?:[ \t]*#[ \t]*({VERSION}))?")
+# CONVENTIONS.md links the base schema of the km it was written for; set_pins moves it with the pins
+SCHEMA_LINK = re.compile(r"(https://github\.com/pasrom/km/blob/)[0-9a-f]{7,40}(/src/km/schema\.base\.yaml\) \(km )([^)\s]+)(\))")
 USES = re.compile(r"(?m)^\s*-?\s*uses:\s*['\"]?([\w.\-]+/[\w.\-/]+)@([\w.\-]+)")   # any action a workflow runs
 # In .pre-commit-config.yaml: a repo entry (a list item at the indent of the first one), the km repo
 # line inside it (quoted or not, with or without .git), and its rev line wherever it sits in the entry.
@@ -117,6 +119,16 @@ def set_pins(root: Path, sha: str, version: str) -> list[str]:
                 write_text(p, new)
                 changed.append(str(p.relative_to(root)))
     return changed
+
+
+def set_schema_link(root: Path, sha: str, version: str) -> bool:
+    """Point the base-schema link in CONVENTIONS.md at `sha` / `version`; True if it changed."""
+    conv = root / "CONVENTIONS.md"
+    text = conv.read_text(encoding="utf-8") if conv.is_file() else ""
+    new = SCHEMA_LINK.sub(lambda m: f"{m.group(1)}{sha}{m.group(2)}{version}{m.group(4)}", text)
+    if new != text:
+        write_text(conv, new)
+    return new != text
 
 
 def movable_refs(root: Path) -> list[tuple[str, str]]:
