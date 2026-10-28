@@ -440,13 +440,21 @@ the last step: report findings, never fix the doc during the review.
 
 1. **Rules first.** Read the brain's `CONVENTIONS.md`, `schema.local.yaml` and `CLAUDE.md`; they
    override anything general here. Run `km validate` on the docs; its errors are blocking findings.
+   Its `pin:` warnings are not, but each one decides a check in step 3.
 2. **Level.** Determine who may sign off (see Approval below). At level `human`, say so up front,
-   review anyway, and hand the findings over.
+   review anyway, and hand the findings over. A missing `audience` is the author's to set: ask,
+   do not set it yourself.
 3. **Check the content, not the prose:**
    - every factual claim against its source (`sources`, linked docs, datasheets, the code it
      describes); a claim with no source and no evidence in the repo is a finding;
    - contradictions with docs already in the brain on the same topic (search by tags and terms);
    - numbers, units, part numbers and versions copied correctly from the source;
+   - `audience` matches the content: a doc written for a customer or other outside reader that is
+     marked internal, or has no audience, is blocking;
+   - every pinned source (`sources`, `translates`) read against the doc. `pin:stale`: `git diff`
+     from the pinned content shows the change; a doc that has not caught up with it is blocking,
+     one that has is pinned in step 5. `pin:old`: the source was replaced; a doc still built on it
+     is blocking, and repinning does not fix that;
    - `related`, `supersedes`, links and `_index.md` entries in place, and the doc reachable;
    - nothing that belongs elsewhere: a customer, project or person named outside where the brain's
      rules allow it, secrets, machine paths;
@@ -454,9 +462,14 @@ the last step: report findings, never fix the doc during the review.
 4. **Findings.** Each one names the line, what is wrong and the source that shows it. Blocking:
    wrong or unsupported facts, contradictions, validate errors, leaks. Not blocking: wording, style,
    structure preferences; mention them once, briefly, or leave them out.
-5. **Outcome.** No blocking findings and level `ai`: show the user the result, then on their OK run
-   `km approve <doc> --by ai:<model> [--review-by YYYY-MM-DD]` and commit. Blocking findings: list
-   them and stop. Level `human`: list the findings and name who should sign off.
+5. **Outcome.** Blocking findings: list them and stop. Otherwise show the user the result, and on
+   their OK:
+   - a `draft` doc goes to `status: review` first (`km approve` signs off review docs only);
+   - `km repin <doc>` where a pin is stale or has no hash, so the approval covers the sources just
+     checked (run after `km approve`, it would take the approval back); no `pin:` warning is left;
+   - level `ai`: `km approve <doc> --by ai:<model> [--review-by YYYY-MM-DD]`, then commit;
+   - level `human`: add `"ai:<model> <date>"` to `reviewed_by`, so the approver sees that an AI
+     review ran, commit, and name who should sign off.
    Never change `audience`, `approval` or `type` to make a sign-off pass; `km approve` refuses what
    the level does not allow and gates the result with `km validate`.
 
@@ -471,9 +484,9 @@ new date.
 
 - **Levels:** `approval: human` needs a person; `approval: ai` lets an AI review alone sign off,
   written `--by ai:<model>`. Unset, the level is the brain's `approval_default` in `schema.local.yaml`
-  (`human` when absent). Only an internal doc (no `audience` counts as internal) can be at level
-  `ai`: customer-facing docs, any other audience and `verbatim-block`s always need a person. `km validate` enforces it on
-  signed-off docs (metadata, not authentication).
+  (`human` when absent). An AI sign-off needs a doc marked `audience: internal` that is not a
+  `verbatim-block`; customer-facing docs, any other audience and docs without one need a person.
+  `km validate` enforces it on signed-off docs (metadata, not authentication).
 - **Pre-reviews:** `reviewed_by` (a list) records them, e.g. a PR bot's model, date and PR; it is not
   an approval. `promote` and `--replace` drop it with the approval; a cross-repo promote also drops
   `approval`, so the target brain decides its own level.
@@ -485,17 +498,18 @@ new date.
 `sources:` (a summary's inputs) and `translates:` (a translation's original) pin a source as
 `path.md@<hash>`, so a reader can tell whether the doc still matches its source. Write the pin with
 `km repin <doc>...`: it sets each pinned source that changed (or has no hash yet) to the blob of its
-current content, as staged, and leaves current pins alone. A blob
-pin depends only on the content, so it survives the rebase or squash merge that rewrites a PR's
-commits; a commit pin set on a PR branch points nowhere after such a merge. `km validate` compares
-every pin, blob or commit, with the source as staged and reports `pin:stale` once the source has
-changed. Only the body counts: approving, demoting or re-pinning the source changes its frontmatter,
-not its pins. Re-review the doc against the change (`git diff` from the pinned content), then
-`km repin`; a signed-off doc whose pins change goes back to `status: review` without its approval and `reviewed_by`, so
-sign it off again with `km approve` in the same change: until then, served docs that link to it fail the gate.
-Stage the source first: an unstaged edit is not seen yet. `km repin` needs km 1.4.0 in the brain's pins (`km upgrade`). A per-file run (the pre-commit hook)
-checks only the docs it is given, so a doc whose source changed is reported by the whole-repo
-`km validate` (CI), not when only the source is committed.
+current content, as staged, and leaves current pins alone. A blob pin depends only on the content,
+so it survives the rebase or squash merge that rewrites a PR's commits; a commit pin set on a PR
+branch points nowhere after such a merge. `km validate` compares every pin, blob or commit, with the
+source as staged and reports `pin:stale` once the source has changed. Only the body counts:
+approving, demoting or re-pinning the source changes its frontmatter, not its pins. A source that is
+`superseded` or `obsolete` is reported as `pin:old`. Re-review the doc against the change (`git
+diff` from the pinned content), then `km repin`; a signed-off doc whose pins change goes back to
+`status: review` without its approval and `reviewed_by`, so sign it off again with `km approve` in
+the same change: until then, served docs that link to it fail the gate. Stage the source first: an
+unstaged edit is not seen yet. `km repin` needs km 1.4.0 in the brain's pins (`km upgrade`). A
+per-file run (the pre-commit hook) checks only the docs it is given, so a doc whose source changed
+is reported by the whole-repo `km validate` (CI), not when only the source is committed.
 
 ## Index completeness (opt-in)
 
