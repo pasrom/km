@@ -158,6 +158,12 @@ def _rev(spec: str) -> str:
 
 
 @functools.cache
+def unstaged() -> frozenset[str]:
+    """Brain-relative paths whose work-tree edits are not staged: a pin sees the staged content."""
+    return frozenset(filter(None, git("diff", "--name-only", "--relative", "-z", cwd=ROOT).stdout.split("\0")))
+
+
+@functools.cache
 def staged_blob(path: str) -> str:
     """The blob of a file as staged now (the index: what gets committed, after the repository's
     filters), or '' if it is not tracked. `path` is relative to the brain, which may sit below the
