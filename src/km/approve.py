@@ -14,85 +14,32 @@ from __future__ import annotations
 import argparse
 import datetime
 import sys
-from pathlib import Path
-from typing import NamedTuple
 
-from km.common import ROOT, SERVED_STATUS, approval_problem, set_fm_line, split_frontmatter
-from km.paths import write_text
-from km.promote import run_gate
-
-
-class Candidate(NamedTuple):
-    path: Path
-    rel: str
-    old: bytes   # restored byte for byte if the gate fails (a BOM included)
-    new: str     # the signed-off text
-
-
-def prepare(doc: str, path: Path, by: str, at: datetime.date, review_by: datetime.date | None) -> Candidate | str:
-    """Check one doc and build its signed-off text. Returns the candidate, or why it was refused."""
-    try:
-        rel = path.relative_to(ROOT).as_posix()
-    except ValueError:
-        return f"{doc}: outside the brain"
-    if not path.is_file():
-        return f"{rel}: no such file"
-    old = path.read_bytes()
-    text = old.decode("utf-8-sig").replace("\r\n", "\n")   # strict decode (written back); CRLF like read()
-    fm, raw, body = split_frontmatter(text)
-    if fm is None:
-        return f"{rel}: no frontmatter"
-    if fm.get("status") != "review":
-        return f"{rel}: only a review doc can be approved (status: {fm.get('status')!r})"
-    why = approval_problem(fm, by)
-    if why:
-        return f"{rel}: {why}"
-    if review_by is None:
-        try:
-            due = datetime.date.fromisoformat(str(fm.get("review_by"))[:10]) if fm.get("review_by") else None
-        except ValueError:
-            return f"{rel}: review_by {fm.get('review_by')!r} is not a YYYY-MM-DD date; pass --review-by"
-        if due and due < max(at, datetime.date.today()):   # km demote compares with today
-            return f"{rel}: review_by {due} has passed; pass --review-by with a new date"
-    lines = [("status", SERVED_STATUS), ("approved_by", f'"{by}"'), ("approved_at", at.isoformat())]
-    if review_by:
-        lines.append(("review_by", review_by.isoformat()))
-    for key, value in lines:
-        raw = set_fm_line(raw, key, value)
-    return Candidate(path, rel, old, raw + body)
+from km.common import SERVED_STATUS, approval_problem, set_fm_line
+from km.edit import edit_docs
 
 
 def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.date | None) -> list[str]:
     """Sign the docs off together. Returns why each refused doc was refused."""
-    refused, candidates = [], {}   # resolved path -> Candidate, or None once refused
-    for doc in docs:
-        path = Path(doc).resolve()
-        if path in candidates:
-            continue   # a doc named twice is handled once
-        got = prepare(doc, path, by, at, review_by)
-        if isinstance(got, str):
-            refused.append(got)
-        candidates[path] = None if isinstance(got, str) else got
-    pending = {}   # written but not yet confirmed: restored if anything goes wrong on the way
-    try:
-        for c in filter(None, candidates.values()):
-            pending[c.path] = c
-            write_text(c.path, c.new)
-        while failed := [(c, gate) for c in pending.values() if (gate := run_gate(c.path)).returncode != 0]:
-            for c, gate in failed:
-                c.path.write_bytes(c.old)
-                del pending[c.path]
-                refused.append(f"{c.rel}: km validate fails after the change, left unchanged:\n{gate.stdout.rstrip()}")
-        accepted, pending = list(pending.values()), {}
-    finally:
-        for c in pending.values():
+    def change(fm: dict, raw: str):
+        if fm.get("status") != "review":
+            return f"only a review doc can be approved (status: {fm.get('status')!r})"
+        if why := approval_problem(fm, by):
+            return why
+        if review_by is None:
             try:
-                c.path.write_bytes(c.old)
-            except OSError as e:
-                print(f"approve: could not restore {c.rel}: {e}", file=sys.stderr)
-    for c in accepted:
-        print(f"approve: {c.rel} accepted, approved_by {by} on {at.isoformat()}")
-    return refused
+                due = datetime.date.fromisoformat(str(fm.get("review_by"))[:10]) if fm.get("review_by") else None
+            except ValueError:
+                return f"review_by {fm.get('review_by')!r} is not a YYYY-MM-DD date; pass --review-by"
+            if due and due < max(at, datetime.date.today()):   # km demote compares with today
+                return f"review_by {due} has passed; pass --review-by with a new date"
+        lines = [("status", SERVED_STATUS), ("approved_by", f'"{by}"'), ("approved_at", at.isoformat())]
+        if review_by:
+            lines.append(("review_by", review_by.isoformat()))
+        for key, value in lines:
+            raw = set_fm_line(raw, key, value)
+        return raw, f"accepted, approved_by {by} on {at.isoformat()}"
+    return edit_docs(docs, change, "approve")
 
 
 def main() -> int:
