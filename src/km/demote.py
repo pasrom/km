@@ -12,6 +12,7 @@ import datetime
 import sys
 
 from km.common import ROOT, SERVED_STATUS, demote_raw, is_article, read, split_frontmatter, tracked_md
+from km.edit import load_doc
 from km.paths import write_text
 
 TODAY = datetime.date.today()
@@ -31,30 +32,33 @@ def main() -> int:
     for rel in tracked_md():
         if not is_article(rel):
             continue
-        fm, raw, body = split_frontmatter(read(rel))
+        fm = split_frontmatter(read(rel))[0]
         if not fm or fm.get("status") != SERVED_STATUS:
             continue
         rb = as_date(fm.get("review_by"))
         if rb is None or rb >= TODAY:
+            continue
+        if isinstance(d := load_doc(rel, ROOT / rel), str):   # strict: written back, bytes must survive
+            stuck.append(d)
             continue
         if not apply:
             stale.append(rel)
             continue
         # Edit the frontmatter block IN PLACE (only the status line, drop approval lines) so the
         # bot's diff stays reviewable as "just the demotion": no YAML round-trip, no reformat.
-        new_fm = demote_raw(raw)
+        new_fm = demote_raw(d.raw)
         if new_fm is None:
-            stuck.append(rel)      # a status line this edit cannot rewrite: never report it as demoted
+            stuck.append(f"{rel}: status line cannot be rewritten")      # never report it as demoted
             continue
         stale.append(rel)
-        write_text(ROOT / rel, new_fm + body)
+        write_text(ROOT / rel, new_fm + d.body)
 
     if stale:
         print(f"km demote: {'demoted' if apply else 'would demote'} {len(stale)} doc(s) past review_by:")
         for s in stale:
             print(f"  - {s}")
     if stuck:
-        print("km demote: past review_by, but the status line could not be rewritten; fix by hand:")
+        print("km demote: past review_by, but the doc cannot be rewritten; fix by hand:")
         for s in stuck:
             print(f"  - {s}")
     if not (stale or stuck):
