@@ -366,6 +366,12 @@ km promote --root "$T" rv-topic "$T/inbox/rv.md" --folder ap >/dev/null 2>&1
 { [ -f "$T/ap/rv-topic.md" ] && ! grep -q '^reviewed_by:' "$T/ap/rv-topic.md" && grep -q '^approval: ai' "$T/ap/rv-topic.md"; } \
   && ok "promote: drops reviewed_by, keeps approval in the same brain" || no "promote: drops reviewed_by, keeps approval in the same brain"
 ! grep -q '^audience:' "$T/ap/rv-topic.md" && ok "promote: leaves the audience to the author" || no "promote: leaves the audience to the author"
+printf -- '---\ntype: note\ntitle: Au\ntimestamp: 2026-09-30\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$T/inbox/au.md"
+km promote --root "$T" au-topic "$T/inbox/au.md" --folder ap --audience internal >/dev/null 2>&1
+grep -q '^audience: internal$' "$T/ap/au-topic.md" && ok "promote: --audience sets it" || no "promote: --audience sets it"
+AUD= doc "$T/ap/ra.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
+out="$(km promote --root "$T" ra "$T/inbox/au.md" --replace --audience internal 2>&1)"
+grep -q '^audience: internal$' "$T/ap/ra.md" && ok "promote --replace: --audience sets it too" || no "promote --replace: --audience sets it too ($out)"
 doc "$T/ap/rp.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\nreviewed_by: ["model-x 2026-09-29 (PR #1)"]\n'
 printf -- '---\ntype: concept\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: draft\ntags: [t]\n---\nnew text\n' > "$T/inbox/rp.md"
 km promote --root "$T" rp "$T/inbox/rp.md" --replace >/dev/null 2>&1
