@@ -410,7 +410,7 @@ Findings are redacted. The link scan strips code fences; the secret/leak scans s
 
 ### Promote (`km promote`)
 
-`km promote <slug> <source> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--ticket KEY] [--replace] [--stub-source]`
+`km promote <slug> <source> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--audience A] [--ticket KEY] [--replace] [--stub-source]`
 moves a note into the brain as a `status: review` doc, **dedups by slug** (updates the existing
 topic doc, never a duplicate), gates the candidate **before** placing it (a failing promote writes
 nothing), and prints a pointer to paste back into personal scratch instead of a copy. The source's

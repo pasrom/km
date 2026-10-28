@@ -28,7 +28,7 @@ scratch instead of keeping a copy). Safety rules:
     link / a leaked source path; code fences excluded). --replace keeps the existing doc's author.
     --ticket (optional, any key, need not be a Jira ticket) stamps the `ticket` field.
 
-Usage: km promote [--root DIR] <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--ticket KEY] [--replace] [--stub-source]
+Usage: km promote [--root DIR] <slug> <src> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--audience A] [--ticket KEY] [--replace] [--stub-source]
        km promote [--root DIR] stub <src> --to <path>   # only the stub, e.g. once a contribution PR merged
 """
 from __future__ import annotations
@@ -240,6 +240,7 @@ def main() -> int:
     ap.add_argument("--title", default=None, help="title override (else source frontmatter, else the slug)")
     ap.add_argument("--author", default=None, help="author (else taken from the source frontmatter)")
     ap.add_argument("--owner", default=None, help="owner for staleness (optional)")
+    ap.add_argument("--audience", default=None, help="who the doc is for, e.g. internal (else the source's; never defaulted)")
     ap.add_argument("--replace", action="store_true")
     ap.add_argument("--stub-source", action="store_true", help="rewrite an in-repo source note into a superseded stub pointing at the promoted doc")
     ap.add_argument("--ticket", default=None, help="Jira/work-item key -> the `ticket` frontmatter field")
@@ -349,6 +350,8 @@ def main() -> int:
 
     if a.ticket:
         fm["ticket"] = a.ticket
+    if a.audience:
+        fm["audience"] = a.audience
     if cross_repo:   # a body link that does not resolve in the target is dead / leaks a source-repo path
         _bad = outward_links(body, target.parent)
         if _bad:
