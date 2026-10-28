@@ -151,6 +151,17 @@ git -C "$T" add qk.md; out="$(cd "$T" && km repin qk.md 2>&1)"; rc=$?
 printf '\xff\xfe---\n' > "$T/bin.md"; out="$(cd "$T" && km repin bin.md 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "not UTF-8" && ! out_has "Traceback"; } && ok "repin refuses a doc that is not UTF-8" || no "non-UTF-8 ($rc: $out)"
 
+# a pin to a path outside the repository does not take the other pin lookups down with it
+summary_doc out.md "../outside.md@$B1"; val
+{ ! out_has "Traceback" && out_has "out.md"; } && ok "a pin outside the repository is reported, no crash" || no "outside pin ($out)"
+git -C "$T" rm -q --cached out.md && rm -f "$T/out.md"
+out="$(KM_ROOT="$T" kmpy -c 'import os, km.common as c
+before = len(os.listdir("/dev/fd"))
+for i in range(40): c.staged_blob(f"../gone{i}.md")
+print("fds grew by", len(os.listdir("/dev/fd")) - before)' 2>&1)"
+{ out_has "fds grew by" && [ "$(echo "$out" | sed -n 's/.*fds grew by \(-*[0-9]*\).*/\1/p')" -le 4 ]; } \
+  && ok "a git process that exits on a lookup is closed, not leaked" || no "cat-file leak ($out)"
+
 # a source that is superseded or obsolete is reported even though its body did not change
 printf -- '---\ntype: note\ntitle: o\ntimestamp: 2026-10-09\nauthor: X\nstatus: draft\ntags: [t]\n---\nold body\n' > "$T/old.md"
 git -C "$T" add old.md; summary_doc oldsum.md "old.md@$(git -C "$T" rev-parse --short=12 :old.md)"

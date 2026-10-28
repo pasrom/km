@@ -11,9 +11,12 @@ from km.common import ROOT, SKIP, split_frontmatter
 from km.paths import write_text
 
 
-def run_gate(target: Path):
-    """`km validate` on one file, in a child process: the validator runs its checks at import."""
-    return subprocess.run([sys.executable, "-m", "km", "validate", "--root", str(ROOT), str(target)],
+ARGS_MAX = 8000   # characters of paths in one gate command line, well below Windows' 32K limit
+
+
+def run_gate(*targets: Path):
+    """`km validate` on these files, in a child process: the validator runs its checks at import."""
+    return subprocess.run([sys.executable, "-m", "km", "validate", "--root", str(ROOT), *map(str, targets)],
                           cwd=ROOT, capture_output=True, encoding="utf-8", errors="replace",
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})   # the child writes UTF-8 too
 
@@ -76,8 +79,14 @@ def edit_docs(docs: list[str], change, prog: str) -> list[str]:
         for d, raw, message in edits:
             pending[d.path] = d, message
             write_text(d.path, raw + d.body)
-        while failed := [(d, gate) for d, _ in pending.values() if (gate := run_gate(d.path)).returncode != 0]:
-            for d, gate in failed:
+        while pending:
+            together = len(pending) > 1 and sum(len(str(p)) + 1 for p in pending) < ARGS_MAX
+            if together and (whole := run_gate(*pending)).returncode == 0:
+                break                     # one run while all pass; alone, to find which ones to restore
+            failed = [(d, gate) for d, _ in pending.values() if (gate := run_gate(d.path)).returncode != 0]
+            if not failed and not together:
+                break
+            for d, gate in failed or [(d, whole) for d, _ in pending.values()]:   # fail only together: none passes
                 d.path.write_bytes(d.old)
                 del pending[d.path]
                 refused.append(f"{d.rel}: km validate fails after the change, left unchanged:\n{gate.stdout.rstrip()}")
