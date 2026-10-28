@@ -364,6 +364,13 @@ def count(*paths): calls.append(len(paths)); return gate(*paths)
 e.run_gate = count
 a.approve(sys.argv[1:], "RPA", datetime.date(2026, 9, 30), None); print("gate runs:", *calls)' "$T/ap/l5.md" "$T/ap/l6.md" 2>&1)"
 out_has "gate runs: 2$" && ok "approve: docs that pass are gated in one validate run" || no "approve: one gate run ($out)"
+doc "$T/ap/m1.md" review ''; printf -- '---\ntitle: broken\n---\nx\n' > "$T/ap/m2.md"
+out="$(KM_ROOT="$T" kmpy -c 'import sys, km.validate as v
+bad, good = sys.argv[1:3]
+sys.argv = ["km validate", bad]; first = v.main()
+sys.argv = ["km validate", good]; print("runs:", first, v.main())' "$T/ap/m2.md" "$T/ap/m1.md" 2>&1)"
+out_has "runs: 1 0$" && ok "validate: a second main() starts with a clean report" || no "validate main twice ($out)"
+rm -f "$T/ap/m1.md" "$T/ap/m2.md"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 
 # promote drops reviewed_by (new doc and --replace); a cross-repo promote also drops approval

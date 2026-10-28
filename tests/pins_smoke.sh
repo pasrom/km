@@ -167,6 +167,12 @@ for i in range(40): c.staged_blob(f"../gone{i}.md")
 print("fds grew by", len(os.listdir("/dev/fd")) - before)' 2>&1)"
 { out_has "fds grew by" && [ "$(echo "$out" | sed -n 's/.*fds grew by \(-*[0-9]*\).*/\1/p')" -le 4 ]; } \
   && ok "a git process that exits on a lookup is closed, not leaked" || no "cat-file leak ($out)"
+out="$(cd "$T" && KM_ROOT="$T" kmpy -c 'import subprocess, sys, km.validate as v
+sys.argv = ["km validate"]; v.main()
+open("late.md", "w").write("---\ntitle: late\n---\nx\n"); subprocess.run(["git", "add", "late.md"])
+sys.argv = ["km validate"]; v.main()' 2>&1)"
+out_has "late.md" && ok "validate: a second main() sees files added since the first" || no "validate main twice, new file"
+git -C "$T" rm -q --cached late.md; rm -f "$T/late.md"
 
 # a source that is superseded or obsolete is reported even though its body did not change
 printf -- '---\ntype: note\ntitle: o\ntimestamp: 2026-10-09\nauthor: X\nstatus: draft\ntags: [t]\n---\nold body\n' > "$T/old.md"

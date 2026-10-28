@@ -9,7 +9,7 @@ brains. See README.md for the layout.
 - Public repository: no employer, customer, host or ticket names in code, examples, tests or history.
 - Conventional Commits `type(scope): description`; one logical change per commit.
 - Python 3.11+, only PyYAML as a dependency. The package lives in `src/km/`; each command is a module
-  run as a script by `km.cli`.
+  with a `main()` that `km.cli` calls.
 - Shell scripts: `bash`, portable (macOS + Linux).
 - Brains pin a km version and never carry km code, but their `schema.local.yaml`, docs and templates
   from earlier versions stay: keep new versions working on them, and keep `km upgrade` able to move

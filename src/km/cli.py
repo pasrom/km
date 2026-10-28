@@ -1,6 +1,6 @@
 """`km <command> [--root DIR] [args]`: one entry point for the km tools.
 
-Each command is a module run as a script, so it keeps its own argument handling and exit code.
+Each command is a module whose main() the CLI calls; it keeps its own argument handling and exit code.
 `--root DIR` names the brain (default: the git work tree containing the current directory).
 
 A brain pins a km release by commit (see km.pins) for CI (its workflows) and its pre-commit hook.
@@ -12,8 +12,8 @@ apart from CI gets a note.
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
-import runpy
 import shutil
 import subprocess
 import sys
@@ -118,11 +118,10 @@ def main(argv: list[str] | None = None) -> int:
         return code
     sys.argv = [f"km {cmd}", *rest]           # argparse shows "km <cmd>" in its usage lines
     try:
-        runpy.run_module(COMMANDS[cmd][0], run_name="__main__")
-    except SystemExit as exc:
+        return importlib.import_module(COMMANDS[cmd][0]).main() or 0
+    except SystemExit as exc:   # argparse, and a fail-fast config check at import
         code = exc.code
         if code is None or isinstance(code, int):
             return code or 0
         print(code, file=sys.stderr)
         return 1
-    return 0
