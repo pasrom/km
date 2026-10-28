@@ -290,6 +290,10 @@ km approve --root "$T" "$T/ap/p10.md" --by RPA 2>&1 | grep -q "is not a YYYY-MM-
 doc "$T/ap/p9.md" review ''; python3 -c "import sys;p=sys.argv[1];b=open(p,'rb').read();open(p,'wb').write(b.replace(b'\n',b'\r\n'))" "$T/ap/p9.md"
 km approve --root "$T" "$T/ap/p9.md" --by RPA >/dev/null 2>&1 && grep -q '^status: accepted' "$T/ap/p9.md" \
   && ok "approve: a CRLF doc is approved" || no "approve: a CRLF doc is approved"
+printf '\xff\xfe---\n' > "$T/ap/bin.md"; cp "$T/ap/bin.md" "$T/bin.bak"; out="$(km approve --root "$T" "$T/ap/bin.md" --by RPA 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "not UTF-8" && ! out_has "Traceback" && cmp -s "$T/ap/bin.md" "$T/bin.bak"; } \
+  && ok "approve: a doc that is not UTF-8 is refused" || no "approve: a doc that is not UTF-8 is refused ($rc: $out)"
+rm -f "$T/ap/bin.md" "$T/bin.bak"
 RB= doc "$T/ap/p7.md" review ''; { printf '\357\273\277'; cat "$T/ap/p7.md"; } > "$T/p7.tmp" && mv "$T/p7.tmp" "$T/ap/p7.md"; cp "$T/ap/p7.md" "$T/p7.bak"
 km approve --root "$T" "$T/ap/p7.md" --by RPA 2>&1 | grep -q "km validate fails" && cmp -s "$T/ap/p7.md" "$T/p7.bak" \
   && ok "approve: a refused doc keeps its bytes, BOM included" || no "approve: a refused doc keeps its bytes, BOM included"
@@ -309,9 +313,9 @@ out="$(km approve --root "$T" "$T/ap/d1.md" "$T/ap/../ap/d1.md" "$T/ap/d2.md" "$
 [ "$(grep -c 'ap/d1.md accepted' <<< "$out")" = 1 ] && [ "$(grep -c 'REFUSED ap/d2.md' <<< "$out")" = 1 ] && grep -q '^status: accepted$' "$T/ap/d1.md" \
   && ok "approve: a doc named twice is handled once" || no "approve: a doc named twice is handled once"
 lk "$T/ap/l5.md" l6.md; lk "$T/ap/l6.md" l5.md; cp "$T/ap/l5.md" "$T/l5.bak"; cp "$T/ap/l6.md" "$T/l6.bak"
-KM_ROOT="$T" kmpy -c 'import sys, datetime, km.approve as a
+KM_ROOT="$T" kmpy -c 'import sys, datetime, km.approve as a, km.edit as e
 def stop(path): raise KeyboardInterrupt
-a.run_gate = stop
+e.run_gate = stop
 try: a.approve(sys.argv[1:], "RPA", datetime.date(2026, 9, 30), None)
 except KeyboardInterrupt: pass' "$T/ap/l5.md" "$T/ap/l6.md" >/dev/null 2>&1
 cmp -s "$T/ap/l5.md" "$T/l5.bak" && cmp -s "$T/ap/l6.md" "$T/l6.bak" \

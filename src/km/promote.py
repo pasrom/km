@@ -35,15 +35,14 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 
 from km.common import APPROVAL_FIELDS, ROOT, SCHEMA
+from km.edit import run_gate
 from km.paths import write_text
 
 
@@ -93,13 +92,6 @@ def type_enum() -> set[str] | None:
     """Allowed `type` values from the merged schema, or None (the gate still backstops)."""
     enum = ((SCHEMA.get("fields") or {}).get("type") or {}).get("enum")
     return {str(v) for v in enum} if isinstance(enum, list) else None
-
-
-def run_gate(target: Path):
-    """`km validate` on one file, in a child process: the validator runs its checks at import."""
-    return subprocess.run([sys.executable, "-m", "km", "validate", "--root", str(ROOT), str(target)],
-                          cwd=ROOT, capture_output=True, encoding="utf-8", errors="replace",
-                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})   # the child writes UTF-8 too
 
 
 _REVIEW = (*APPROVAL_FIELDS, "reviewed_by")   # sign-off and pre-reviews: they hold for the text they saw
