@@ -197,9 +197,21 @@ out="$(km upgrade --root "$O" 2>&1)"
   && ok "upgrade adds a .gitattributes to a brain without one" || no "upgrade adds .gitattributes ($out)"
 out="$(km upgrade --root "$O" 2>&1)"; echo "$out" | grep -q "already on km $KM_REF" && ok "a second upgrade changes nothing" || no "a second upgrade changes nothing ($out)"
 repin "$KM_SHA" "$KM_REF" "$V09_SHA" v0.9.0 "$O/.github/workflows/ci.yml" "$O/.pre-commit-config.yaml"
+printf 'See [km base schema](https://github.com/pasrom/km/blob/%s/src/km/schema.base.yaml) (km v0.9.0).\n' "$V09_SHA" > "$O/CONVENTIONS.md"
 out="$(km upgrade --root "$O" 2>&1)"
 { grep -q "$PINW" "$O/.github/workflows/ci.yml" && grep -q "$PINH" "$O/.pre-commit-config.yaml"; } \
   && ok "upgrade moves older pins to this km" || no "upgrade moves older pins ($out)"
+grep -q "blob/$KM_SHA/src/km/schema.base.yaml) (km $KM_REF)" "$O/CONVENTIONS.md" \
+  && ok "upgrade moves the CONVENTIONS schema link with the pins" || no "upgrade schema link ($(cat "$O/CONVENTIONS.md"))"
+printf 'See [km base schema](https://github.com/pasrom/km/blob/%s/src/km/schema.base.yaml) (km v0.9.0).\n' "$V09_SHA" > "$O/CONVENTIONS.md"
+out="$(km upgrade --root "$O" 2>&1)"
+grep -q "blob/$KM_SHA/src/km/schema.base.yaml) (km $KM_REF)" "$O/CONVENTIONS.md" \
+  && ok "upgrade fixes a stale schema link on a brain already on the release" || no "upgrade schema link when current ($out)"
+NP="$(mktemp -d)"; git init -q "$NP"; printf 'meta: {profile: np}\n' > "$NP/schema.local.yaml"
+printf 'See [km base schema](https://github.com/pasrom/km/blob/%s/src/km/schema.base.yaml) (km v0.9.0).\n' "$V09_SHA" > "$NP/CONVENTIONS.md"
+out="$(km upgrade --root "$NP" 2>&1)"
+out_has "left the base-schema link" && ok "upgrade says when it cannot move the schema link" || no "upgrade link without pins ($out)"
+rm -rf "$NP"
 
 # --- upgrade is careful with what is not km's ---
 N="$F/notkm"; mkdir -p "$N/scripts"; echo "print('mine')" > "$N/scripts/validate.py"

@@ -32,7 +32,7 @@ import sys
 from km import KM_REF
 from km.init import ensure_lf, pin_values, template
 from km.paths import repo_root, write_text
-from km.pins import hook_rev, movable_refs, read_pins, resolve, set_pins, version_key, workflow_files
+from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
 
 COPIED = {                            # a file km copied in -> text only km's copy of it carries
     "scripts/validate.py": "Validate knowledge-base frontmatter against the km schema",
@@ -140,6 +140,11 @@ def main() -> int:
     if values and (not current or stray):
         sha = values["<KM_SHA>"]
         done += [f"pinned {f} to km {target} ({sha[:12]})" for f in set_pins(root, sha, target)]
+    if values and set_schema_link(root, values["<KM_SHA>"], target):   # also on a brain already on the release
+        done.append(f"pointed the base-schema link in CONVENTIONS.md at km {target}")
+    elif not values and (conv := root / "CONVENTIONS.md").is_file() and any(
+            m.group(3) != target for m in SCHEMA_LINK.finditer(conv.read_text(encoding="utf-8"))):
+        done.append(f"left the base-schema link in CONVENTIONS.md: km {target}'s commit could not be looked up")
     done += [f"{f} runs {what} from a movable ref: pin it by commit" for f, what in movable_refs(root)]
     for line in done or [f"already on km {target}"]:
         print(f"km upgrade: {line}")
