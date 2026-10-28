@@ -108,8 +108,13 @@ G add -A; kt demote --apply >/dev/null
 grep -q '^status: review$' "$T/process/odd.md" && ok "a status line with a trailing comment is demoted" || no "a status line with a trailing comment is demoted"
 printf -- '---\n{type: concept, title: Flow, timestamp: 2025-01-15, author: TT, status: accepted, review_by: 2025-06-01, tags: [t]}\n---\nx\n' > "$T/process/flow.md"
 G add -A; out="$(kt demote --apply)"; rc=$?
-{ [ "$rc" = 1 ] && echo "$out" | grep -qx "  - process/flow.md" && ! echo "$out" | grep -q "demoted"; } \
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "  - process/flow.md: status line" && ! echo "$out" | grep -q "demoted"; } \
   && ok "a status it cannot rewrite fails loudly, never reported as demoted" || no "unrewritable status reported wrongly (rc=$rc: $out)"
+printf -- '---\ntype: concept\ntitle: L1\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\n---\nCaf\xe9\n' > "$T/process/l1.md"
+cp "$T/process/l1.md" "$T/l1.bak"; G add -A; out="$(kt demote --apply)"; rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -qx "  - process/l1.md: not UTF-8" && cmp -s "$T/process/l1.md" "$T/l1.bak"; } \
+  && ok "demote leaves a doc that is not UTF-8 byte for byte and reports it" || no "demote non-UTF-8 (rc=$rc: $out)"
+rm -f "$T/process/l1.md" "$T/l1.bak"; G add -A
 G rm -qf --cached process/flow.md; rm -f "$T/process/flow.md"
 
 # --- a tracked file deleted on disk (deletion not staged yet) does not crash the scripts ---
