@@ -6,13 +6,15 @@ description: >-
   transcript with correct frontmatter and folder placement, update or supersede an
   existing page, run a consistency lint, and manage peer knowledge bases mounted as
   submodules, including corrections raised as a pull request against the other repo
-  rather than edited in place. Review a doc and sign it off where an AI review may.
+  rather than edited in place. Review a doc and sign it off where an AI review may,
+  and prepare a pull request: review, fold the fixes, label what it still needs.
   Use it whenever something should be written into the knowledge base or looked up
   from it, rather than writing a markdown file by hand.
   Triggers on: km, knowledge base, brain, save this, was steht im brain, ins brain
   speichern, dokumentiere das, Entscheidung festhalten, Meeting-Notiz, ADR, lint,
   "speicher das sauber ab", "was wissen wir über", check my setup, "prüfe meine
-  Einrichtung", review, km review, "review mein Dokument", freigeben.
+  Einrichtung", review, km review, "review mein Dokument", freigeben, km pr, brain
+  PR, "PR fürs Brain vorbereiten".
 argument-hint: question, content, brain command, help, etc.
 ---
 
@@ -173,13 +175,13 @@ verbatim in every command and delete explicitly at the end.
    ```
 4. Apply the edit under `/tmp/km-fix-<name>`; follow the brain's own `CONVENTIONS.md` for
    frontmatter/naming and the Ripple update rules (see "Ripple update" below). Commit there per "Writing content".
-5. Push straight to a remote branch, no local branch: `git -C /tmp/km-fix-<name> push origin "HEAD:refs/heads/km-<short>-<YYYYMMDD>"`. If push is denied: `gh repo fork --remote=false <owner>/<repo>`, then push by URL: `git -C /tmp/km-fix-<name> push "https://github.com/<you>/<repo>.git" "HEAD:refs/heads/km-<short>-<YYYYMMDD>"`.
-6. `gh pr create --head "km-<short>-<YYYYMMDD>"` (fork path: `--head "<you>:km-<short>-<YYYYMMDD>"`); the body must **paraphrase, not paste** any parent-repo source that surfaced the error.
+5. Prepare the PR (`/km pr` steps 1–4), then push straight to a remote branch, no local branch: `git -C /tmp/km-fix-<name> push origin "HEAD:refs/heads/km-<short>-<YYYYMMDD>"`. If push is denied: `gh repo fork --remote=false <owner>/<repo>`, then push by URL: `git -C /tmp/km-fix-<name> push "https://github.com/<you>/<repo>.git" "HEAD:refs/heads/km-<short>-<YYYYMMDD>"`.
+6. `gh pr create --head "km-<short>-<YYYYMMDD>"` (fork path: `--head "<you>:km-<short>-<YYYYMMDD>"`); the body must **paraphrase, not paste** any parent-repo source that surfaced the error. Then `/km pr` step 6 on the new PR.
 7. Return the PR URL, then `rm -rf /tmp/km-fix-<name>`. The mounted submodule was never touched.
 
 ### Hard rules
 
-- Never push to a brain's `main`, never `--force` push
+- Never push to a brain's `main`, never `--force` push; the one exception is `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
 - Never bump the parent's submodule pointer to an unmerged branch — wait for merge, then `git submodule update --remote brains/<name>` from the parent
 - Never edit the mounted `brains/<name>/` working tree; every correction runs in the throwaway clone above (that is what keeps the parent drift-free). If a mounted submodule is already drifted, repair it with `brain reset <name>`
 - Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
@@ -256,8 +258,9 @@ wait for explicit OK. Then:
    ```
    Never `git add -A`: a terms file must NOT be committed. In a brain whose indexes have no
    `## Documents` list, add the doc to its folder's `_index.md` by hand.
-7. Push and open the PR: `git -C /tmp/km-contrib-<slug> push origin "HEAD:refs/heads/<BR>"` (fork path
-   as in `brain fix` if push is denied), then `gh pr create --head "<BR>"`. Return the PR URL, then
+7. Prepare the PR (`/km pr` steps 1–4), push and open it: `git -C /tmp/km-contrib-<slug> push origin
+   "HEAD:refs/heads/<BR>"` (fork path as in `brain fix` if push is denied), then `gh pr create --head
+   "<BR>"` and `/km pr` step 6. Return the PR URL, then
    `rm -rf /tmp/km-contrib-<slug>`.
 8. **Mark the source pending** in YOUR brain: add `contribution: "<owner>/<repo>#<N>"` to its
    frontmatter and commit (`docs(<scope>): mark <slug> pending in <owner>/<repo>#<N>`). It is a
@@ -472,6 +475,48 @@ the last step: report findings, never fix the doc during the review.
      review ran, commit, and name who should sign off.
    Never change `audience`, `approval` or `type` to make a sign-off pass; `km approve` refuses what
    the level does not allow and gates the result with `km validate`.
+
+## Pull request preparation (`/km pr`)
+
+Runs on a brain branch before its first push, and again before pushing new commits to your own open
+PR: steps 1–5 before the push, step 6 once the PR exists. On a PR you did not open, run step 1 only
+and post the findings as a PR comment; never commit to or push their branch. `<base>` is the merge
+base with the brain's default branch.
+
+1. **Review, sized to the PR.** The docs are the ones the branch adds or changes since `<base>`, or
+   on an open PR since the head the PR body records as last reviewed (all of them if that commit
+   no longer resolves). Each reviewer is a separate agent running `/km review` steps 1–4 on its docs:
+   - up to 4 docs: one reviewer, who also checks them against each other;
+   - more: one per about three docs, grouped by folder or topic, at most six, plus one that checks
+     them against each other and the brain.
+2. **Verify, then fix.** Verify each finding against its named source; drop the unsupported ones.
+   Commit the remaining fixes, one commit per doc, and have a fresh reviewer check only those
+   commits.
+3. **Fold.** One commit per doc or logical change: every later content commit on a doc (fixes,
+   review fixes, earlier plain fix commits) goes into the branch's first commit that touches it
+   (`git log --reverse --format=%h <base>.. -- <doc> | head -1`). Sign-off commits are never folded:
+   leave them where they are. Note `git rev-parse HEAD` as `<before>`, write the rebase todo
+   yourself with each such commit as `fixup <sha>` right under its target, and run
+   `GIT_SEQUENCE_EDITOR="cp <todo-file>" git rebase -i <base>`. Afterwards `git diff <before> HEAD`
+   must be empty. On a conflict, `git rebase --abort`, leave those commits unfolded and say so in
+   the PR; do the same for a commit that changes docs from several commits.
+4. **Sign-off.** `/km review` step 5 on the user's OK, as its own commit on top of the content
+   (`docs(<scope>): approve <doc> (<approver>)`), so the history shows apart what was written and
+   who signed it off. A doc whose content changed after its sign-off on this branch is signed off
+   again.
+5. **Push.** First push as the calling flow says. To your own open PR after a fold:
+   `--force-with-lease=<branch>:<pushed-head>`, where `<pushed-head>` is the PR head you started
+   from, read before your first commit (`gh pr view <N> --json headRefOid`, or `FETCH_HEAD` right
+   after fetching `pull/<N>/head`), so a push someone made since is refused, not overwritten.
+6. **Label and summary.** Exactly one label, set in one call (`gh pr edit <N> --add-label <label>
+   --remove-label <the other two>`; pass the number, a detached HEAD has no current PR); first
+   create all three with `gh label create <label> --force` where missing, or name the label in the
+   PR when you lack the rights:
+   - `km:ready`: every changed doc is accepted at its level; once CI is green it only needs a merge;
+   - `km:needs-human`: a doc waits for a person's sign-off; the PR body names who;
+   - `km:blocked`: blocking findings remain.
+   The PR body carries a table of doc, level, findings and status, and the pushed head as last
+   reviewed.
 
 ## Approval (`km approve`)
 
