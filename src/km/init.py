@@ -23,9 +23,11 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 from km import KM_REF
 from km.paths import TEMPLATES, git, write_text
-from km.pins import resolve
+from km.pins import ITEM, resolve
 
 PERSONAL = {                          # template -> path in the brain (repo-owned after init)
     "CONVENTIONS.template.md": "CONVENTIONS.md",
@@ -43,6 +45,7 @@ TEAM = {
     "team/gitignore.template": ".gitignore",
     "team/ci.yml": ".github/workflows/ci.yml",
     "team/staleness.yml": ".github/workflows/staleness.yml",
+    "team/main-guard.yml": ".github/workflows/main-guard.yml",
     "team/dependabot.yml": ".github/dependabot.yml",
     "pre-commit-config.template.yaml": ".pre-commit-config.yaml",
 }
@@ -65,6 +68,69 @@ def template(name: str, values: dict[str, str]) -> str:
     for k, v in values.items():
         text = text.replace(k, v)
     return text
+
+
+def _repos(config: str) -> list | None:
+    """The `repos:` list of a pre-commit config, or None when the config does not parse as one."""
+    try:
+        d = yaml.safe_load(config)
+    except yaml.YAMLError:
+        return None
+    repos = d.get("repos", []) if isinstance(d, dict) else None
+    return repos if isinstance(repos, list) else None
+
+
+def guards_main(config: str) -> bool:
+    """Whether a pre-commit config has a no-commit-to-branch hook that covers main (with no branch
+    argument the hook guards main and master)."""
+    for r in _repos(config) or []:
+        for h in (r.get("hooks") or []) if isinstance(r, dict) else []:
+            if not isinstance(h, dict) or h.get("id") != "no-commit-to-branch":
+                continue
+            args, branches = [str(a) for a in h.get("args") or []], []
+            for i, a in enumerate(args):
+                if a in ("--branch", "-b") and i + 1 < len(args):
+                    branches.append(args[i + 1])
+                elif a.startswith("--branch="):
+                    branches.append(a.split("=", 1)[1])
+            if not branches or "main" in branches:
+                return True
+    return False
+
+
+def with_main_hook(config: str) -> str | None:
+    """The pre-commit config with the team hook that refuses a commit on main added at the end of its
+    `repos:` list, at the list's own indent; unchanged when a hook already guards main. None when the
+    hook cannot be added safely (a config that does not parse, or a layout this edit does not
+    handle): the result must parse to the same config with exactly that hook more."""
+    before = _repos(config)
+    if before is None:
+        return None
+    if guards_main(config):
+        return config
+    lines = config.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    top = next((i for i, ln in enumerate(lines) if ln.startswith("repos:")), None)
+    if top is None:
+        lines, top = [*lines, "repos:\n"], len(lines)
+    end, pad = len(lines), None          # the repos block ends at the next top-level key
+    for i in range(top + 1, len(lines)):
+        ln = lines[i]
+        if pad is None and (m := ITEM.match(ln)):
+            pad = m.group(1)
+        if ln.strip() and not ln[0].isspace() and not ln.startswith(("#", "-")):
+            end = i
+            break
+    while end > top + 1 and not lines[end - 1].strip():
+        end -= 1                         # keep blank lines before the next key after the block
+    hook = template("team/no-commit-hook.yaml", {})
+    block = "".join((pad if pad is not None else "  ") + ln if ln.strip() else ln for ln in hook.splitlines(keepends=True))
+    out = "".join(lines[:end]) + block + "".join(lines[end:])
+    after, rest = _repos(out), lambda t: {k: v for k, v in (yaml.safe_load(t) or {}).items() if k != "repos"}
+    if after != [*before, *yaml.safe_load(hook)] or rest(out) != rest(config):
+        return None
+    return out
 
 
 def ensure_lf(repo: Path) -> str | None:
@@ -117,6 +183,9 @@ def render(a: argparse.Namespace) -> dict[str, str]:
         "<PLACEMENT_RULES>": "\n".join(f"- {r}" for r in rules),
     }
     out = {dst: template(tpl, values) for tpl, dst in TEAM.items()}
+    hooked = with_main_hook(out[".pre-commit-config.yaml"])
+    assert hooked, "km's own pre-commit template takes the main hook"
+    out[".pre-commit-config.yaml"] = hooked
     for n, p in folders:
         out[f"{n}/_index.md"] = template("team/_index.folder.template.md", {**values, "<folder>": n, "<purpose>": p})
     return out

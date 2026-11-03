@@ -12,6 +12,11 @@ shared, served knowledge base. For frontmatter, [km's base schema](https://githu
   maintainer reviews and merges) or are **promoted** from a personal brain via `km promote`. Git
   history and pull requests show each contributor; they serve provenance, never per-person
   analysis. The `author` field records who authored the knowledge.
+- **No direct push to `main`, the maintainer included.** `main` changes only by merging a pull
+  request (rebase merge). The one exception is the weekly staleness run, which commits its
+  demotions to `main` itself. The pre-commit hook refuses a commit on `main`; where the host does
+  not enforce the rule, the main-guard workflow fails and opens an issue for any commit on `main`
+  that no merged pull request contains.
 - **Curated corpus, not a workshop.** The <BRAIN> holds finished, reviewed knowledge; drafts and
   half-thoughts stay in personal brains. `status` marks maturity: read `accepted` as current and
   authoritative, `review` as submitted, `draft` as work in progress.
@@ -144,4 +149,4 @@ is stale or a folder with something to list has no `_index.md` (`km gen-index --
 - Relative markdown links in bodies; `related:` / `supersedes:` / `superseded_by:` use
   **repo-root-relative** paths. Never duplicate content, link.
 - Conventional Commits `type(scope): description`; the PR title carries the ticket key. Work on a
-  branch named by the ticket key; `main` is protected by the one-merger permission model.
+  branch named by the ticket key; `main` changes only through a merged pull request.
