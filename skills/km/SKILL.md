@@ -295,7 +295,11 @@ carrying `contribution: "<owner>/<repo>#<N>"` belongs to it (`grep -rl` finds th
 
 ## Search strategy
 
-1. Frontmatter tags (skip `status: obsolete/superseded` unless asked)
+1. Frontmatter tags (skip `status: obsolete/superseded` unless asked). A question about the docs
+   themselves (what lies in a folder, what waits for sign-off, what is overdue for review) is one
+   `km list` call, not a read of each file: `km list <folder>`; waiting for a person's sign-off:
+   `--status review --signoff human`; overdue: `--status accepted --due today`; also `--tag X`,
+   `--fields path,title,owner`, `--json`. A mounted brain: `km list --root <its folder>`.
 2. Folder structure + `_index.md` files
 3. H1/H2 headings scan, read matching files
 4. Full-text grep (only if needed)

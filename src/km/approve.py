@@ -15,7 +15,7 @@ import argparse
 import datetime
 import sys
 
-from km.common import SERVED_STATUS, approval_problem, set_fm_line
+from km.common import SERVED_STATUS, approval_problem, as_date, set_fm_line
 from km.edit import edit_docs
 
 
@@ -27,9 +27,8 @@ def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.dat
         if why := approval_problem(fm, by):
             return why
         if review_by is None:
-            try:
-                due = datetime.date.fromisoformat(str(fm.get("review_by"))[:10]) if fm.get("review_by") else None
-            except ValueError:
+            due = as_date(fm.get("review_by"))
+            if fm.get("review_by") and due is None:
                 return f"review_by {fm.get('review_by')!r} is not a YYYY-MM-DD date; pass --review-by"
             if due and due < max(at, datetime.date.today()):   # km demote compares with today
                 return f"review_by {due} has passed; pass --review-by with a new date"

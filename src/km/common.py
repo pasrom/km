@@ -6,6 +6,7 @@ configuration than the validator checks; a broken schema file stops the run.
 from __future__ import annotations
 
 import atexit
+import datetime
 import functools
 import re
 import subprocess
@@ -79,20 +80,41 @@ def is_ai_approver(who) -> bool:
     return bool(ws) and all(w.startswith("ai:") for w in ws)
 
 
+def _ai_parts(fm: dict) -> tuple[bool, bool, bool]:
+    """(may: internal by default and not a verbatim-block, level ai: its own `approval` or the brain's
+    default, explicit: `audience: internal` written out). An AI may sign off only when all three hold."""
+    return (fm.get("audience", INTERNAL_AUDIENCE) == INTERNAL_AUDIENCE and fm.get("type") != "verbatim-block",
+            (fm.get("approval") or APPROVAL_DEFAULT) == "ai", fm.get("audience") == INTERNAL_AUDIENCE)
+
+
+def approval_level(fm: dict) -> str:
+    """Who may sign the doc off: "ai" only for a doc marked `audience: internal` that is not a
+    verbatim-block and is at level ai (its own `approval`, else the brain's default); else "human".
+    The rule approval_problem enforces on an AI approver."""
+    return "ai" if all(_ai_parts(fm)) else "human"
+
+
+def as_date(v) -> datetime.date | None:
+    """A date field (review_by, timestamp) as a date, whether YAML read it as a date, a datetime or a
+    string; None when it is none of these."""
+    try:
+        return datetime.date.fromisoformat(str(v)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
 def approval_problem(fm: dict, approver=None) -> str | None:
     """Why `approver` (default: the doc's approved_by) may not sign this doc off, or None."""
-    may = fm.get("audience", INTERNAL_AUDIENCE) == INTERNAL_AUDIENCE and fm.get("type") != "verbatim-block"
+    may, level_ai, explicit = _ai_parts(fm)
     if fm.get("approval") == "ai" and not may:
         return "'approval: ai' is only allowed on an internal doc that is not a verbatim-block"
-    level = (fm.get("approval") or APPROVAL_DEFAULT) if may else "human"
-    if not is_ai_approver(fm.get("approved_by") if approver is None else approver):
+    if not is_ai_approver(fm.get("approved_by") if approver is None else approver) or (may and level_ai and explicit):
         return None
-    if level != "ai":
-        return ("only an internal doc may take an AI approver, this one needs a human approver" if not may
-                else "an AI approver needs 'approval: ai' or approval_default: ai")
-    if fm.get("audience") != INTERNAL_AUDIENCE:
-        return "an AI approver needs 'audience: internal' set explicitly"
-    return None
+    if not may:
+        return "only an internal doc may take an AI approver, this one needs a human approver"
+    if not level_ai:
+        return "an AI approver needs 'approval: ai' or approval_default: ai"
+    return "an AI approver needs 'audience: internal' set explicitly"
 
 
 PIN = re.compile(r"^(.+\.md)@([0-9a-fA-F]{7,40})$")   # a source pin: path.md@<commit or blob>
@@ -277,3 +299,20 @@ def is_article(rel: str) -> bool:
 
 def folder_of(path: str) -> str:
     return path.rsplit("/", 1)[0] if "/" in path else "."
+
+
+def submodule_prefixes() -> set[str]:
+    """Where mounted brains live: brains/ and every path in .gitmodules."""
+    prefixes = {"brains"}
+    gm = ROOT / ".gitmodules"
+    if gm.is_file():
+        for ln in gm.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if ln.startswith("path"):
+                prefixes.add(ln.split("=", 1)[1].strip().strip("/"))
+    return prefixes
+
+
+def under(rel: str, prefixes) -> bool:
+    """Whether a path from the brain root is one of the prefixes or lies below one."""
+    return any(rel == p or rel.startswith(p + "/") for p in prefixes)
