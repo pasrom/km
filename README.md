@@ -3,7 +3,8 @@
 Knowledge management for markdown knowledge bases ("brains"): a Claude Code skill, and the `km`
 command and GitHub Action that keep a brain consistent.
 
-- Answer a question from the brain, with sources.
+- Answer a question from the brain, with sources, also from its open pull requests. GitHub reads
+  use `gh`, or GitHub MCP tools where `gh` is not signed in.
 - Save a note, decision or meeting transcript with validated frontmatter, in the right folder.
 - Update or supersede a page, lint the brain, mount peer brains as submodules.
 - Contribute to a brain you only read, as a pull request.
