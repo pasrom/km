@@ -2,19 +2,18 @@
 name: km
 description: >-
   Knowledge management for a markdown knowledge base that follows CONVENTIONS.md:
-  answer a question from it with sources, save a note, decision or meeting
-  transcript with correct frontmatter and folder placement, update or supersede an
-  existing page, run a consistency lint, and manage peer knowledge bases mounted as
-  submodules, including corrections raised as a pull request against the other repo
-  rather than edited in place. Review a doc and sign it off where an AI review may,
-  and prepare a pull request: review, fold the fixes, label what it still needs.
-  Use it whenever something should be written into the knowledge base or looked up
-  from it, rather than writing a markdown file by hand.
+  answer a question from it with sources; save a note, decision or meeting
+  transcript with correct frontmatter and folder placement; update or supersede a
+  page; run a consistency lint; manage peer knowledge bases mounted as submodules,
+  with corrections raised as a pull request against their repo, not edited in place.
+  Review a doc and sign it off where an AI review may, and prepare a pull request:
+  review, fold the fixes, label what it still needs. Use it for every write to or
+  lookup in the knowledge base instead of writing a markdown file by hand.
   Triggers on: km, knowledge base, brain, save this, was steht im brain, ins brain
   speichern, dokumentiere das, Entscheidung festhalten, Meeting-Notiz, ADR, lint,
   "speicher das sauber ab", "was wissen wir über", check my setup, "prüfe meine
-  Einrichtung", review, km review, "review mein Dokument", freigeben, km pr, brain
-  PR, "PR fürs Brain vorbereiten".
+  Einrichtung", km review, "review mein Dokument", freigeben, km pr, "PR fürs
+  Brain vorbereiten".
 argument-hint: question, content, brain command, help, etc.
 ---
 
