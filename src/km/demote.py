@@ -11,18 +11,11 @@ from __future__ import annotations
 import datetime
 import sys
 
-from km.common import ROOT, SERVED_STATUS, demote_raw, is_article, read, split_frontmatter, tracked_md
+from km.common import ROOT, SERVED_STATUS, as_date, demote_raw, is_article, read, split_frontmatter, tracked_md
 from km.edit import load_doc
 from km.paths import write_text
 
 TODAY = datetime.date.today()
-
-
-def as_date(v):
-    try:
-        return datetime.date.fromisoformat(str(v)[:10])
-    except (ValueError, TypeError):
-        return None
 
 
 def main() -> int:

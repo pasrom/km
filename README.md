@@ -52,6 +52,7 @@ km repin DOC...             pin a doc's sources and translates to their current 
 km init DIR [--team ...]    create a brain from the templates
 km upgrade                  move a brain's km pins to this version
 km doctor [--offline]       check this computer is set up for the brain
+km list [PATH...] [filters] docs from their frontmatter: --status, --signoff, --due DATE, --json
 ```
 
 `km doctor` reads what to expect from the brain alone: its origin, the brains it mounts
@@ -99,7 +100,7 @@ reaches `main` without a merged pull request. `km upgrade` adds whichever a team
 .claude-plugin/        plugin and marketplace manifests
 action.yml             GitHub Action: installs km at the action's version
 .pre-commit-hooks.yaml pre-commit hook km-validate
-src/km/                the package: cli, validate, gen_index, demote, serve, promote, approve, repin, init, upgrade, doctor
+src/km/                the package: cli, validate, gen_index, demote, serve, promote, approve, repin, init, upgrade, doctor, list_docs
 src/km/templates/      what `km init` writes
 skills/km/SKILL.md     the skill; skills/km/bin/km runs the package from the installed plugin
 tests/                 smoke tests
@@ -108,7 +109,7 @@ tests/                 smoke tests
 ## Development
 
 The smoke tests need Python 3.11+, PyYAML and git: `bash tests/gate_smoke.sh`, `index_smoke.sh`,
-`team_smoke.sh`, `doctor_smoke.sh`. CI runs all four plus the GitHub Action on every pull request, and
+`team_smoke.sh`, `doctor_smoke.sh`, `list_smoke.sh`. CI runs them plus the GitHub Action on every pull request, and
 `encoding_smoke.sh` on Windows (team_smoke runs it on macOS under non-UTF-8 locales). A release bumps
 `__version__` in `src/km/__init__.py`, `version` in `.claude-plugin/plugin.json` and the version in
 this README together; merging that to main is the release, CI tags `vX.Y.Z` once main is green.

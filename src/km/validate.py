@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_list, fresh_run, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_date, as_list, fresh_run, pin_state, tracked_md
 from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
@@ -627,12 +627,8 @@ def main() -> int:
                     elif _st2 in RETIRED_STATUS:
                         warnings.append(("gate-bergab-old", rel, f"served doc links to {_st2} {_tp}"))
                 _rb = fm.get("review_by")
-                if _rb:
-                    try:
-                        if datetime.date.fromisoformat(str(_rb)[:10]) < TODAY:
-                            warnings.append(("gate-stale", rel, f"review_by {_rb} is in the past"))
-                    except (ValueError, TypeError):
-                        pass
+                if (_due := as_date(_rb)) and _due < TODAY:
+                    warnings.append(("gate-stale", rel, f"review_by {_rb} is in the past"))
 
 
     if CHECK_INDEX and not _args():   # whole-repo lint only; skip on per-file (pre-commit) runs

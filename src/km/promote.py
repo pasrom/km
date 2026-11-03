@@ -41,24 +41,9 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA
+from km.common import APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, submodule_prefixes, under
 from km.edit import run_gate
 from km.paths import write_text
-
-
-def submodule_prefixes() -> set[str]:
-    prefixes = {"brains"}
-    gm = ROOT / ".gitmodules"
-    if gm.is_file():
-        for ln in gm.read_text(encoding="utf-8").splitlines():
-            ln = ln.strip()
-            if ln.startswith("path"):
-                prefixes.add(ln.split("=", 1)[1].strip().strip("/"))
-    return prefixes
-
-
-def in_submodule(rel_str: str, prefixes: set[str]) -> bool:
-    return any(rel_str == p or rel_str.startswith(p + "/") for p in prefixes)
 
 
 def find_hits(slug: str, prefixes: set[str], exclude: Path | None = None):
@@ -69,7 +54,7 @@ def find_hits(slug: str, prefixes: set[str], exclude: Path | None = None):
         if exclude is not None and p.resolve() == exclude:
             continue   # the source note is never the doc it dedups against
         rel = str(p.relative_to(ROOT))
-        if in_submodule(rel, prefixes):
+        if under(rel, prefixes):
             continue
         out.append(p)
     return sorted(out)
@@ -115,7 +100,7 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
     except ValueError:
         print(f"stub: source is outside this repo ({src}); stub it in its own repo.")
         return False
-    if in_submodule(src_rel, prefixes):
+    if under(src_rel, prefixes):
         print(f"stub: source {src_rel} is inside a peer brain/submodule; not touched.")
         return False
     if src_rel == target_rel:
@@ -257,7 +242,7 @@ def main() -> int:
     prefixes = submodule_prefixes()
     src_resolved = Path(a.source).resolve()
     try:                                            # cross-repo = outside this repo OR inside a mounted brain
-        cross_repo = in_submodule(str(src_resolved.relative_to(ROOT)), prefixes)
+        cross_repo = under(str(src_resolved.relative_to(ROOT)), prefixes)
     except ValueError:
         cross_repo = True
 
@@ -340,7 +325,7 @@ def main() -> int:
     except ValueError:
         print(f"promote: REFUSED — target escapes the repository: {target}")
         return 2
-    if in_submodule(rel_target, prefixes):
+    if under(rel_target, prefixes):
         print(f"promote: REFUSED — target {rel_target} is inside a peer brain/submodule.")
         print("         Correct a foreign brain via a PR against its own repo, never in the parent.")
         return 2

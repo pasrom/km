@@ -34,8 +34,9 @@ COMMANDS = {
     "init": ("km.init", "create a brain: `init DIR --initials XX`, `--team ...` for a team brain"),
     "upgrade": ("km.upgrade", "move a brain's km pins to this version; drop km files copied in earlier"),
     "doctor": ("km.doctor", "check this computer is set up for the brain: git, access, plugins, km version"),
+    "list": ("km.list_docs", "list docs from their frontmatter: by folder, status, approval, review date (--json)"),
 }
-NO_PIN_CHECK = {"init", "upgrade", "doctor"}    # they write the pins, or check the km that is running
+NO_PIN_CHECK = {"init", "upgrade", "doctor", "list"}   # they write the pins, check the km that is running, or only read
 SINCE = {"repin": "v1.4.0"}                      # commands an older pinned km does not have
 RUNNER = os.environ.get("KM_PINNED_RUNNER", "uvx")
 
