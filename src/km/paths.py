@@ -25,6 +25,12 @@ def git(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None,
         return subprocess.CompletedProcess(["git", *args], 127, "", "git is not installed")
 
 
+def sets_no_eol(repo: Path) -> bool:
+    """Whether the repository's attributes leave the line ending of text files to each computer."""
+    res = git("check-attr", "eol", "--", "any.md", cwd=repo)
+    return res.returncode == 0 and res.stdout.strip().endswith(": unspecified")
+
+
 def write_text(path: Path, text: str) -> None:
     """Every file km writes: UTF-8 with LF, the bytes the repo holds, also where the default is a code
     page and CRLF (Windows)."""

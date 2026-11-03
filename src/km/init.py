@@ -26,7 +26,7 @@ from pathlib import Path
 import yaml
 
 from km import KM_REF
-from km.paths import TEMPLATES, git, write_text
+from km.paths import TEMPLATES, git, sets_no_eol, write_text
 from km.pins import ITEM, resolve
 
 PERSONAL = {                          # template -> path in the brain (repo-owned after init)
@@ -142,8 +142,7 @@ def ensure_lf(repo: Path) -> str | None:
         write_text(path, template("gitattributes.template", {}))
         return ("added .gitattributes: text files in LF on every platform "
                 "(`git add --renormalize .` if the repo already holds CRLF files)")
-    res = git("check-attr", "eol", "--", "any.md", cwd=repo)
-    if res.returncode == 0 and res.stdout.strip().endswith(": unspecified"):
+    if sets_no_eol(repo):
         return "kept .gitattributes, which sets no line ending: add `* text=auto eol=lf` for LF on every platform"
     return None
 

@@ -57,7 +57,9 @@ km doctor [--offline]       check this computer is set up for the brain
 `km doctor` reads what to expect from the brain alone: its origin, the brains it mounts
 (`.gitmodules`), the km version it pins, and the plugins its `.claude/settings.json` enables
 (`enabledPlugins`, with the marketplaces in `extraKnownMarketplaces`). A brain lists its plugins there
-for Claude Code anyway, which offers to add the marketplace when the folder is trusted. Each check
+for Claude Code anyway, which offers to add the marketplace when the folder is trusted. It also checks
+that the pre-commit hook is installed, that text files keep LF line endings, and, for a brain on
+GitHub, that `gh` is signed in and whether you push to the brain or through a fork. Each check
 that fails names its fix; it needs no PyYAML, so it also runs on a computer that is half set up.
 
 Every command takes `--root DIR`; the default is the git work tree around the current directory.
