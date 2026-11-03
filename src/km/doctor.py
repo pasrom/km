@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from km import KM_REF
-from km.paths import git, repo_root
+from km.paths import git, repo_root, sets_no_eol
 from km.pins import read_pins, version_key
 
 TIMEOUT = 15                      # seconds per network check
@@ -224,20 +224,22 @@ def check_km_version(root: Path) -> None:
                        "run without uv, so its results may differ from CI", f"install uv: {UV_DOCS}")
 
 
-def installed(plugin: str, root: Path, cfg: Path) -> bool:
-    """Installed for this brain: for the user, or for a project the brain lies in; or synced to the
-    account by its organization (`<cfg>/plugins/synced/<bucket>/<name>[~gN]/`)."""
+def installed(plugin: str, root: Path, cfg: Path) -> str | None:
+    """Where the plugin is installed for this brain from: "user", "project" (a project the brain lies
+    in), "synced" (by its organization, `<cfg>/plugins/synced/<bucket>/<name>[~gN]/`), or None."""
     entries = install_records(cfg).get(plugin, [])
     for e in entries if isinstance(entries, list) else [entries]:
         e = as_dict(e)
         project = e.get("projectPath")
-        if e.get("scope", "user") == "user" or (isinstance(project, str) and project
-                                                and Path(project).resolve() in (root, *root.parents)):
-            return True
+        if e.get("scope", "user") == "user":
+            return "user"
+        if isinstance(project, str) and project and Path(project).resolve() in (root, *root.parents):
+            return "project"
     name = plugin.split("@")[0]
     synced = cfg / "plugins" / "synced"
-    return synced.is_dir() and any(d.is_dir() and d.name.split("~")[0] == name for d in synced.glob("*/*"))
-
+    if synced.is_dir() and any(d.is_dir() and d.name.split("~")[0] == name for d in synced.glob("*/*")):
+        return "synced"
+    return None
 
 def check_plugins(root: Path) -> None:
     settings = load_json(root / ".claude" / "settings.json")
@@ -245,18 +247,147 @@ def check_plugins(root: Path) -> None:
     if not wanted:
         return
     cfg = config_dir()
-    known = load_json(cfg / "plugins" / "known_marketplaces.json")
+    try:                                  # a list this computer has and can read; otherwise unknown
+        known, listed = as_dict(json.loads((cfg / "plugins" / "known_marketplaces.json").read_text(encoding="utf-8"))), True
+    except (OSError, ValueError):
+        known, listed = {}, False
     extra = as_dict(settings.get("extraKnownMarketplaces"))
     for plugin in wanted:
-        if installed(plugin, root, cfg):
-            report("ok", f"plugin {plugin} is installed")
-            continue
         market = plugin.partition("@")[2]
         src = as_dict(as_dict(extra.get(market)).get("source"))
         where = src.get("repo") or src.get("url")     # not a "directory" source: a path on its author's computer
-        add = f"`/plugin marketplace add {shown(where)}`, then " if market not in known and isinstance(where, str) else ""
-        report("FAIL", f"plugin {plugin} is not installed", f"in Claude Code: {add}`/plugin install {plugin}`, "
-               "or add it in the Claude app under Customize, Plugins; then restart Claude")
+        add = f"`/plugin marketplace add {shown(where)}`" if isinstance(where, str) else None
+        unknown = bool(market) and market not in known
+        source = installed(plugin, root, cfg)
+        if source in ("user", "project") and unknown and listed:
+            # installed from a marketplace this computer no longer knows: it gets no updates
+            report("FAIL", f"plugin {plugin} is installed, but its marketplace {market} is not registered: no updates arrive",
+                   f"in Claude Code: {add or '`/plugin marketplace add` with its address'}")
+        elif source:
+            report("ok", f"plugin {plugin} is installed")
+        else:
+            then = f"{add}, then " if unknown and add else ""
+            report("FAIL", f"plugin {plugin} is not installed", f"in Claude Code: {then}`/plugin install {plugin}`, "
+                   "or add it in the Claude app under Customize, Plugins; then restart Claude")
+
+
+def check_hook(root: Path) -> None:
+    """The brain's pre-commit config does nothing until `pre-commit install` put it in git's hooks:
+    then km validate (and in a team brain the refusal of a commit on main) never runs locally."""
+    if not (root / ".pre-commit-config.yaml").is_file():
+        return
+    hooks = Path(git("rev-parse", "--git-path", "hooks", cwd=root).stdout.strip())   # honours core.hooksPath
+    hook = (hooks if hooks.is_absolute() else root / hooks) / "pre-commit"
+    try:
+        ours = any(m in hook.read_text(encoding="utf-8", errors="replace") for m in ("pre-commit.com", "pre_commit"))
+    except OSError:
+        ours = False
+    if ours and (os.name == "nt" or os.access(hook, os.X_OK)):     # git skips a hook it cannot execute
+        report("ok", "the pre-commit hook is installed")
+        return
+    if ours:
+        report("FAIL", "the pre-commit hook is there but not executable, so git skips it", f'`chmod +x "{hook}"`')
+    elif git("config", "--get", "core.hooksPath", cwd=root).stdout.strip():
+        report("FAIL", "the pre-commit hook is not installed, and git takes its hooks from core.hooksPath "
+                       "(another hook manager), where `pre-commit install` refuses to write",
+               "run pre-commit from that hook manager, or `git config --unset core.hooksPath` (where it is set) "
+               "and then `pre-commit install`")
+    else:
+        how = "`pre-commit install`" if shutil.which("pre-commit") else "`uv tool install pre-commit`, then `pre-commit install`"
+        report("FAIL", "the pre-commit hook is not installed: the brain's checks do not run when you commit",
+               f"{how} in the brain")
+
+
+def check_line_endings(root: Path) -> None:
+    """Text files in CRLF: without the brain's eol attribute, git writes them so where autocrlf is on
+    (Git for Windows' default). Files the brain keeps in CRLF on purpose (eol=crlf, -text) do not count."""
+    unset = sets_no_eol(root)
+    autocrlf = git("config", "--type=bool", "--get", "core.autocrlf", cwd=root).stdout.strip() == "true"
+    here, committed = [], []                       # CRLF only in this working tree / CRLF in the repo
+    for rec in git("ls-files", "--eol", "-z", cwd=root).stdout.split("\0"):
+        info, _, path = rec.partition("\t")
+        if len(info.split()) < 2:
+            continue
+        index, tree, *attr = info.split()
+        if "eol=crlf" in attr or "attr/-text" in attr:
+            continue
+        if index == "i/crlf":
+            committed.append(path)
+        elif tree == "w/crlf":
+            here.append(path)
+    if unset and autocrlf:
+        report("FAIL", "the brain sets no line ending, so git on this computer writes text files in CRLF",
+               "add `* text=auto eol=lf` to the brain's .gitattributes (`km upgrade` adds the file where it is missing)")
+    elif committed:
+        report("note", f"{len(committed)} file(s) are committed with CRLF line endings, e.g. {committed[0]}",
+               ("add `* text=auto eol=lf` to .gitattributes, then " if unset else "")
+               + "`git add --renormalize .` and commit")
+    elif here:
+        report("note", f"{len(here)} file(s) have CRLF line endings here, e.g. {here[0]}; a commit stores them as LF",
+               "for LF here too, on a clean tree: `git rm -rq --cached .`, then `git reset -q --hard`")
+    else:
+        report("ok", "text files have LF line endings")
+
+def github_repo(url: str) -> tuple[str, str] | None:
+    """(owner, name) of a github.com URL in https or ssh form, else None."""
+    m = re.match(r"(?:https://(?:[^/@]+@)?github\.com/|(?:ssh://)?git@github\.com[:/])([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def gh(*args: str) -> tuple[int, str]:
+    """The GitHub CLI without prompts, with a time limit. (code, stdout); -1 when it did not answer."""
+    env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+    try:
+        res = subprocess.run(["gh", *args], capture_output=True, stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
+                             env=env, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return -1, ""
+    return res.returncode, res.stdout.strip()
+
+
+# Your forks with their parents, in one call: a fork can carry another name than its parent.
+FORKS = ("query { viewer { repositories(isFork: true, first: 100, ownerAffiliations: OWNER) "
+         "{ nodes { nameWithOwner parent { nameWithOwner } } } } }")
+
+
+def check_github(origin: str, offline: bool) -> None:
+    """On a GitHub brain, `/km pr`, a contribution and the search of open pull requests run through
+    gh. Without push access to origin, a contribution goes through a fork."""
+    repo = github_repo(origin)
+    if not repo:
+        return
+    if not shutil.which("gh"):
+        report("FAIL", "the GitHub CLI (gh) is not installed: pull requests and their search need it",
+               "install it: https://cli.github.com, then `gh auth login`")
+        return
+    if offline:
+        report("skip", "gh login and access (offline)")
+        return
+    code, login = gh("api", "--hostname", "github.com", "user", "--jq", ".login")
+    if code != 0 or not login:
+        if gh("auth", "status", "--hostname", "github.com")[0] != 0:
+            report("FAIL", "gh is not signed in to github.com",
+                   "`gh auth login` (choose github.com, HTTPS, and sign in in the browser)")
+        else:
+            report("FAIL", "gh is signed in but github.com did not answer", "check the network or VPN; --offline skips this")
+        return
+    report("ok", f"gh is signed in as {login}")
+    code, out = gh("api", "--hostname", "github.com", f"repos/{'/'.join(repo)}", "--jq", "[.permissions.push, .full_name] | @tsv")
+    if code != 0:
+        report("FAIL", f"gh cannot see {'/'.join(repo)} as {login}", "ask the brain's owner for read access")
+        return
+    push, _, full = out.partition("\t")           # full_name: the current name, after a rename or transfer
+    if push == "true":
+        report("ok", f"you can push branches to {full}")
+        return
+    _, forks = gh("api", "--hostname", "github.com", "graphql", "-f", f"query={FORKS}", "--jq",
+                  f'.data.viewer.repositories.nodes[] | select((.parent.nameWithOwner // "" | ascii_downcase) == '
+                  f'"{full.lower()}") | .nameWithOwner')
+    if forks:
+        report("ok", f"you contribute through your fork {forks.split()[0]}")
+    else:
+        report("note", f"you can read {full} but not push to it, and have no fork of it yet",
+               "a contribution creates one (`gh repo fork --remote=false`); nothing to do before then")
 
 
 def main() -> int:
@@ -274,6 +405,9 @@ def main() -> int:
         origin = check_origin(root, args.offline)
         check_worktree(root)
         check_submodules(root, origin, args.offline)
+        check_hook(root)
+        check_line_endings(root)
+        check_github(origin, args.offline)
         check_km_version(root)
         check_plugins(root)
     check_uv()

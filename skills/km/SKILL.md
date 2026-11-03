@@ -47,8 +47,10 @@ language and in plain words, one line per problem, the fix first; no git jargon 
    uv where the installer puts it, so the app need not be restarted first.
 3. Each `FAIL` comes with a fix. Offer to run the ones that change only this computer and are safe
    (`git submodule update --init`, the `git pull --rebase` it names on a clean tree,
-   `git config --global user.name` after asking for the value); hand over the ones they must do
-   themselves (signing in, installing a plugin with `/plugin`, asking for access). A `note` needs nothing; mention it only if it
+   `git config --global user.name` after asking for the value, `pre-commit install`); hand over the
+   ones they must do themselves (signing in, `gh auth login`, installing a plugin or adding a
+   marketplace with `/plugin`, asking for access). The re-checkout that fixes CRLF files discards
+   uncommitted changes: run it only on a clean tree and after they agree. A `note` needs nothing; mention it only if it
    explains something they asked about.
 4. Run `km doctor` again after fixes and end with what still fails, or that the setup is complete.
 
