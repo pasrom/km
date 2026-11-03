@@ -32,6 +32,7 @@ As a Claude Code plugin:
 /km brain add https://github.com/org/team-brain.git   # mount another brain
 /km @all Zephyr RTOS                           # search all mounted brains
 /km upgrade                                    # move the brain to the installed km version
+/km queue                                      # what waits for review: docs and open PRs
 /km check my setup                             # what this computer still needs for the brain (km doctor)
 /km help                                       # all commands
 ```
