@@ -15,6 +15,8 @@
     still runs stays until that workflow is switched to the km command;
   - a legacy schema.yaml becomes schema.local.yaml, the overlay it already acts as;
   - a team brain gets the Dependabot config, and the obsolete `team_brain:` line goes.
+- A team brain gets the main-guard workflow and the pre-commit hook that refuses a commit on main,
+  whichever it lacks.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
 
@@ -30,7 +32,7 @@ import shutil
 import sys
 
 from km import KM_REF
-from km.init import ensure_lf, pin_values, template
+from km.init import ensure_lf, pin_values, template, with_main_hook
 from km.paths import repo_root, write_text
 from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
 
@@ -87,7 +89,11 @@ def main() -> int:
     done: list[str] = [f"a pin names km {target} but points at {r[:12]}, not its release commit; re-pinned"
                        for r in stray if current]
     local = root / "schema.local.yaml"
-    team = local.is_file() and bool(MARKER.search(local.read_text(encoding="utf-8")))
+    # A team brain: the old team_brain marker, or a km workflow only `km init --team` writes.
+    wf = root / ".github/workflows"
+    team = ((wf / "staleness.yml").is_file()
+            or (wf / "ci.yml").is_file() and "pasrom/km" in (wf / "ci.yml").read_text(encoding="utf-8")
+            or local.is_file() and bool(MARKER.search(local.read_text(encoding="utf-8"))))
     for rel, (tpl, known) in OLD_COPIES.items():
         p = root / rel
         if not p.is_file():
@@ -96,7 +102,6 @@ def main() -> int:
         if rel in rewrites:
             write_text(p, template(tpl, values))
             done.append(f"rewrote {rel} (it was km's own, unchanged) to install km")
-            team |= rel.startswith(".github/")
         elif rel == ".pre-commit-config.yaml" and "scripts/validate.py" in text:
             done.append(f"{rel} differs from km's old hook: replace its km hook by hand with "
                         f"`repo: https://github.com/pasrom/km`, `rev: {hook_rev(values.get('<KM_SHA>', '<commit of ' + target + '>'), target)}`, "
@@ -129,11 +134,21 @@ def main() -> int:
         if (new := MARKER.sub("", text)) != text:
             write_text(local, new)
             done.append("dropped team_brain from schema.local.yaml (no longer used)")
-    dependabot = root / ".github/dependabot.yml"
-    if team and not dependabot.exists():
-        dependabot.parent.mkdir(parents=True, exist_ok=True)
-        write_text(dependabot, template("team/dependabot.yml", {}))
-        done.append("added .github/dependabot.yml")
+    if team:
+        for tpl, rel in (("team/dependabot.yml", ".github/dependabot.yml"), ("team/main-guard.yml", ".github/workflows/main-guard.yml")):
+            if not (p := root / rel).exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                write_text(p, template(tpl, {}))
+                done.append(f"added {rel}")
+        hook = root / ".pre-commit-config.yaml"
+        if not hook.is_file():
+            done.append(f"no {hook.name}: nothing refuses a commit on main locally; `km init` writes one")
+        elif (new := with_main_hook(text := hook.read_text(encoding="utf-8"))) is None:
+            done.append(f"could not add the hook that refuses a commit on main to {hook.name}: add `no-commit-to-branch` "
+                        f"with `args: [--branch, main]` from https://github.com/pre-commit/pre-commit-hooks by hand")
+        elif new != text:
+            write_text(hook, new)
+            done.append(f"added the hook that refuses a commit on main to {hook.name}")
     if note := ensure_lf(root):
         done.append(note)
 

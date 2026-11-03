@@ -419,4 +419,57 @@ readme = {v for ln in lines for v in re.findall(r"\bv\d+\.\d+\.\d+\b", ln)}
 sys.exit(0 if "v" + json.load(open(f"{repo}/.claude-plugin/plugin.json"))["version"] == ref and readme == {ref} else 1)
 PY
 
+# --- main guard: the hook that refuses a commit on main, and the workflow that flags a direct push ---
+hooks_of(){ kmpy -c 'import sys, yaml
+print(" ".join(r["repo"].rsplit("/", 1)[-1] + ":" + h["id"] + ":" + ",".join(h.get("args", []))
+               for r in yaml.safe_load(open(sys.argv[1]))["repos"] for h in r["hooks"]))' "$1"; }
+[ "$(hooks_of "$T/.pre-commit-config.yaml")" = "km:km-validate: pre-commit-hooks:no-commit-to-branch:--branch,main" ] \
+  && ok "a team brain's hook refuses a commit on main" || no "team hook ($(hooks_of "$T/.pre-commit-config.yaml"))"
+grep -q "branches: \[main\]" "$T/.github/workflows/main-guard.yml" \
+  && ok "a team brain gets the main-guard workflow" || no "team brain main-guard workflow"
+! grep -q "no-commit-to-branch" "$P/.pre-commit-config.yaml" && ok "a personal brain keeps committing on main" || no "personal brain has no main hook"
+{ [ -f "$O/.github/workflows/main-guard.yml" ] && [ "$(grep -c 'no-commit-to-branch' "$O/.pre-commit-config.yaml")" = 1 ] \
+  && [ "$(hooks_of "$O/.pre-commit-config.yaml")" = "km:km-validate: pre-commit-hooks:no-commit-to-branch:--branch,main" ]; } \
+  && ok "upgrade adds the guard workflow and hook to a team brain, once" || no "upgrade adds the main guard ($(cat "$O/.pre-commit-config.yaml"))"
+Z="$F/zero-indent"; mkdir -p "$Z/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$Z/.github/workflows/"
+printf 'meta: {profile: z}\n' > "$Z/schema.local.yaml"
+printf 'repos:\n- repo: https://github.com/pasrom/km\n  rev: %s  # frozen: %s\n  hooks:\n  - id: km-validate\n' "$KM_SHA" "$KM_REF" > "$Z/.pre-commit-config.yaml"
+out="$(km upgrade --root "$Z" 2>&1)"
+[ "$(hooks_of "$Z/.pre-commit-config.yaml" 2>&1)" = "km:km-validate: pre-commit-hooks:no-commit-to-branch:--branch,main" ] \
+  && ok "the added hook follows the brain's own indent" || no "hook indent ($out; $(cat "$Z/.pre-commit-config.yaml"))"
+W="$F/with-keys"; mkdir -p "$W/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$W/.github/workflows/"
+printf 'meta: {profile: w}\n' > "$W/schema.local.yaml"
+printf 'default_stages: [pre-commit]\nrepos:\n  - repo: https://github.com/pasrom/km\n    rev: %s  # frozen: %s\n    hooks:\n      - id: km-validate\n  - repo: local\n    hooks:\n      - id: no-commit-to-branch\n        name: x\n        entry: x\n        language: system\n        args: [--branch, master]\n\nci:\n  skip:\n  - km-validate\n' "$KM_SHA" "$KM_REF" > "$W/.pre-commit-config.yaml"
+out="$(km upgrade --root "$W" 2>&1)"
+{ [ "$(hooks_of "$W/.pre-commit-config.yaml" 2>&1)" = "km:km-validate: local:no-commit-to-branch:--branch,master pre-commit-hooks:no-commit-to-branch:--branch,main" ] \
+  && kmpy -c 'import sys, yaml; sys.exit(yaml.safe_load(open(sys.argv[1]))["ci"] != {"skip": ["km-validate"]})' "$W/.pre-commit-config.yaml"; } \
+  && ok "the hook goes into repos: before a later key, and a hook guarding another branch does not count" || no "hook placement ($out; $(cat "$W/.pre-commit-config.yaml"))"
+R="$F/flow"; mkdir -p "$R/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$R/.github/workflows/"
+printf 'meta: {profile: r}\n' > "$R/schema.local.yaml"; printf 'repos: [{repo: local, hooks: [{id: y, name: y, entry: y, language: system}]}]\n' > "$R/.pre-commit-config.yaml"
+cp "$R/.pre-commit-config.yaml" "$F/flow.before"; out="$(km upgrade --root "$R" 2>&1)"
+{ cmp -s "$R/.pre-commit-config.yaml" "$F/flow.before" && out_has "could not add the hook"; } \
+  && ok "a config the edit cannot handle is left alone, with a note" || no "flow-style config ($out)"
+Q="$F/own-ci"; mkdir -p "$Q/.github/workflows"; printf 'meta: {profile: q}\n' > "$Q/schema.local.yaml"
+printf 'jobs:\n  t:\n    runs-on: x\n    steps:\n      - run: make\n' > "$Q/.github/workflows/ci.yml"; cp "$P/.pre-commit-config.yaml" "$Q/"
+km upgrade --root "$Q" >/dev/null 2>&1
+{ [ ! -e "$Q/.github/workflows/main-guard.yml" ] && ! grep -q no-commit-to-branch "$Q/.pre-commit-config.yaml"; } \
+  && ok "a personal brain with a ci.yml of its own is not taken for a team brain" || no "own ci.yml makes a team brain"
+# The workflow's check, run with a stand-in gh: a merged PR per commit passes; an unmerged commit or a
+# force push fails and opens an issue.
+SB="$F/stub"; mkdir -p "$SB"
+cat > "$SB/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  api) case "$2" in *"/commits/bad"*) echo 0 ;; *"/commits/down"*) exit 1 ;; *) echo 1 ;; esac ;;
+  issue) echo "issue $*" >> "$GH_LOG" ;;
+esac
+SH
+printf '#!/bin/sh\n' > "$SB/sleep"; chmod +x "$SB/gh" "$SB/sleep"
+kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["check"]["steps"][0]["run"])' "$T/.github/workflows/main-guard.yml" > "$F/guard.sh"
+guard(){ GH_LOG="$F/gh.log" PATH="$SB:$PATH" REPO=o/r FORCED="$1" COMMITS="$2" PUSHER=p RUN=u bash "$F/guard.sh" >/dev/null 2>&1; }
+rm -f "$F/gh.log"; guard false '["good1","good2"]' && [ ! -f "$F/gh.log" ] && ok "main-guard passes commits from merged PRs" || no "main-guard passes merged commits"
+rm -f "$F/gh.log"; ! guard false '["good1","bad2"]' && grep -q "Direct push to main" "$F/gh.log" && ok "main-guard fails and opens an issue on a commit without a PR" || no "main-guard flags an unmerged commit"
+rm -f "$F/gh.log"; ! guard true '["good1"]' && grep -q "issue" "$F/gh.log" && ok "main-guard fails on a force push" || no "main-guard flags a force push"
+rm -f "$F/gh.log"; ! guard false '["good1","down2"]' && [ ! -f "$F/gh.log" ] && ok "a failed lookup fails main-guard without a false issue" || no "main-guard on a failed lookup"
+
 summary team-smoke || exit 1

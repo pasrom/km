@@ -86,6 +86,11 @@ must never be moved or deleted; a repository ruleset on `v*` makes sure of it. D
 and `pre-commit autoupdate --freeze` propose newer versions; `/km upgrade` moves the pins and turns
 a brain from the copy-in days into one that pins km.
 
+A team brain also keeps direct pushes off `main`, which the host may not enforce for a private
+repository on a free plan: its pre-commit config adds `no-commit-to-branch` for `main` from
+`pre-commit/pre-commit-hooks`, and a `main-guard` workflow fails and opens an issue when a commit
+reaches `main` without a merged pull request. `km upgrade` adds whichever a team brain lacks.
+
 ## Layout
 
 ```

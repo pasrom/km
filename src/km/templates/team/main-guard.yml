@@ -1,0 +1,52 @@
+# Written by `km init --team`; owned by this repo.
+name: main-guard
+
+# main changes only through a merged pull request (CONVENTIONS.md). Where the host cannot enforce that
+# (no branch protection for private repositories on GitHub's free plan), this run makes a direct push
+# visible: every commit pushed to main must belong to a merged pull request, and a force push never
+# passes. On a violation the run fails and opens an issue. Pushes made with GITHUB_TOKEN, such as the
+# staleness workflow's demotions, start no workflow and are not checked. Known gap: fast-forwarding
+# main to the head of an open pull request marks that request merged, so such a push passes.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: every pushed commit comes from a merged pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FORCED: ${{ github.event.forced }}
+          COMMITS: ${{ toJSON(github.event.commits.*.id) }}
+          PUSHER: ${{ github.event.pusher.name }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          unmerged() {    # those of the given commits no merged pull request contains
+            for sha in "$@"; do
+              n=$(gh api "repos/$REPO/commits/$sha/pulls" --jq '[.[] | select(.merged_at != null)] | length') \
+                || exit 1   # a failed lookup fails the run instead of counting as a direct push
+              [ "$n" -gt 0 ] || echo "$sha"
+            done
+          }
+          bad=$(unmerged $(jq -r '.[]' <<<"$COMMITS"))
+          for wait in 30 60 120; do   # the link from a rebased commit to its PR can lag the merge
+            [ -z "$bad" ] && break
+            sleep "$wait"; bad=$(unmerged $bad)
+          done
+          [ "$FORCED" = true ] && bad="force push${bad:+ and }$bad"
+          [ -z "$bad" ] && { echo "every commit came from a merged pull request"; exit 0; }
+          list=$(sed 's/^/- /' <<<"$bad")
+          echo "::error::direct push to main by $PUSHER, not through a pull request:%0A${list//$'\n'/%0A}"
+          gh issue create -R "$REPO" --title "Direct push to main by $PUSHER" --body "$(printf \
+            'main changed without a merged pull request (CONVENTIONS.md):\n\n%s\n\nRun: %s\n\nCheck the change, then revert it or raise it as a pull request after the fact.' \
+            "$list" "$RUN")" || echo "::warning::could not open an issue"
+          exit 1
