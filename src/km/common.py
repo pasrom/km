@@ -265,7 +265,7 @@ def split_frontmatter(text: str) -> tuple[dict | None, str, str]:
         return None, "", text
     try:
         fm = yaml.safe_load(m.group(2)) or {}
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):   # ValueError: a date YAML cannot build (2026-02-30)
         return None, "", text
     return (fm if isinstance(fm, dict) else None), m.group(1), m.group(3)
 
