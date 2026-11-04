@@ -44,6 +44,11 @@ summary_doc sum.md "src.md@$B1" "orig.md@$C2"; val
 { out_has "src.md@$B1" && ! out_has "orig.md@"; } && ok "an unchanged translates source is clean" || no "translates unchanged ($out)"
 
 # the earlier checks still hold
+printf -- '---\ntype: note\ntitle: d\ntimestamp: 2026-02-30\nauthor: X\nstatus: draft\ntags: [t]\n---\nx\n' > "$T/day.md"
+git -C "$T" add day.md; val
+{ out_has "unparseable" && out_has "day is out of range" && ! out_has Traceback; } \
+  && ok "an impossible date is reported, not a crash" || no "impossible date ($out)"
+git -C "$T" rm -q --cached day.md && rm -f "$T/day.md"
 summary_doc sum.md "src.md"; val
 out_has "not path.md@hash" && ok "a pin without a hash is reported" || no "pin without hash ($out)"
 summary_doc sum.md "src.md@deadbeefdead"; val

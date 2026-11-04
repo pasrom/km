@@ -251,7 +251,7 @@ def frontmatter(text: str):
         return None
     try:
         return yaml.safe_load(m.group(1)) or {}
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError) as exc:   # ValueError: a date YAML cannot build (2026-02-30)
         return {"__error__": str(exc)}
 
 
