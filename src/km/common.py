@@ -8,6 +8,7 @@ from __future__ import annotations
 import atexit
 import datetime
 import functools
+import json
 import re
 import subprocess
 import sys
@@ -236,6 +237,29 @@ def demote_raw(raw: str) -> str | None:
     line edited in place, no YAML round-trip. None if no status line can be rewritten."""
     new, n = re.subn(rf"(?m)^status:[ \t]*['\"]?{re.escape(SERVED_STATUS)}['\"]?[ \t]*(#.*)?$", "status: review", raw)
     return re.sub(r"(?m)^approved_(?:by|at):.*\n", "", new) if n == 1 else None
+
+
+def send_back(fm: dict, raw: str, message: str):
+    """A doc whose sources changed under its approval: a signed-off one goes back to `status: review`
+    without its approval and pre-reviews (`reviewed_by`, which saw the old sources), to be approved
+    again. The refusal, or `(new_raw, message)` for `edit_docs`."""
+    if fm.get("status") != SERVED_STATUS:
+        return raw, message
+    if (raw := demote_raw(raw)) is None:
+        return "signed off, but its status line cannot be rewritten to review"
+    if "reviewed_by" in fm and (raw := set_fm_block(raw, "reviewed_by", "")) is None:
+        return "cannot find the `reviewed_by:` line to drop"
+    return raw, message + "; back to review without its approval, run `km approve` after review"
+
+
+def scalar(value: str) -> str:
+    """`value` as a YAML scalar: plain where YAML reads it back unchanged, else double-quoted."""
+    try:
+        if yaml.safe_load(f"k: {value}") == {"k": value}:
+            return value
+    except yaml.YAMLError:
+        pass
+    return json.dumps(value)
 
 
 def set_fm_block(raw: str, key: str, text: str) -> str:
