@@ -13,27 +13,14 @@ Run:  km repin [--root DIR] <doc.md>...
 from __future__ import annotations
 
 import argparse
-import json
 import posixpath
 import sys
 
-import yaml
-
-from km.common import PIN, SCHEMA, SERVED_STATUS, as_list, demote_raw, pin_state, set_fm_block, staged_blob, unstaged
+from km.common import PIN, SCHEMA, as_list, pin_state, scalar, send_back, set_fm_block, staged_blob, unstaged
 from km.edit import edit_docs
 
 ABBREV = 12   # hex digits of a written pin: unambiguous in any brain, short enough to read
 PINNED = [f for f, spec in SCHEMA["fields"].items() if spec.get("format") == "path_at_hash"]
-
-
-def scalar(value: str) -> str:
-    """`value` as a YAML scalar: plain where YAML reads it back unchanged, else double-quoted."""
-    try:
-        if yaml.safe_load(f"k: {value}") == {"k": value}:
-            return value
-    except yaml.YAMLError:
-        pass
-    return json.dumps(value)
 
 
 def change(fm: dict, raw: str):
@@ -75,13 +62,7 @@ def change(fm: dict, raw: str):
     message = f"pins the current content of {', '.join(changed)}" + note
     if uncompared:
         message += f"; could not compare {', '.join(uncompared)} with the old pin (not in this clone's history)"
-    if fm.get("status") == SERVED_STATUS:   # the approval saw other sources: sign off again
-        if (raw := demote_raw(raw)) is None:
-            return "signed off, but its status line cannot be rewritten to review"
-        if "reviewed_by" in fm and (raw := set_fm_block(raw, "reviewed_by", "")) is None:
-            return "cannot find the `reviewed_by:` line to drop"   # pre-reviews saw the old sources
-        message += "; back to review without its approval, run `km approve` after review"
-    return raw, message
+    return send_back(fm, raw, message)
 
 
 def main() -> int:
