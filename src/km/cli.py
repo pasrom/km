@@ -30,14 +30,17 @@ COMMANDS = {
     "serve": ("km.serve", "build the served bundle under dist/served/"),
     "promote": ("km.promote", "move a note into the brain as a review doc, or `promote stub`"),
     "approve": ("km.approve", "sign review docs off as accepted (--by WHO)"),
-    "repin": ("km.repin", "pin a doc's sources and translates to their current content"),
+    "repin": ("km.repin", "pin a doc's sources and translates to their current content (--cites: its cited files)"),
+    "cite": ("km.cite", "`cite add DOC URL --file COPY`: record an external file a doc cites, by its sha256"),
+    "cites": ("km.cites", "`cites check`: compare the files docs cite with local copies (--file, --dir)"),
     "init": ("km.init", "create a brain: `init DIR --initials XX`, `--team ...` for a team brain"),
     "upgrade": ("km.upgrade", "move a brain's km pins to this version; drop km files copied in earlier"),
     "doctor": ("km.doctor", "check this computer is set up for the brain: git, access, plugins, km version"),
     "list": ("km.list_docs", "list docs from their frontmatter: by folder, status, approval, review date (--json)"),
 }
 NO_PIN_CHECK = {"init", "upgrade", "doctor", "list"}   # they write the pins, check the km that is running, or only read
-SINCE = {"repin": "v1.4.0"}                      # commands an older pinned km does not have
+SINCE = {"repin": "v1.4.0", "cite": "v1.8.0", "cites": "v1.8.0"}   # commands an older pinned km does not have
+OPTION_SINCE = {("repin", "--cites"): "v1.8.0"}                     # options it does not have
 RUNNER = os.environ.get("KM_PINNED_RUNNER", "uvx")
 
 
@@ -77,8 +80,10 @@ def run_pinned(root: Path, cmd: str, rest: list[str]) -> int | None:
            f"{pin.ref} is a movable tag, not a commit (`km upgrade` pins the commit)" if not pin.is_commit else
            f"{RUNNER} is not installed" if not shutil.which(RUNNER) else None)
     source = ["--from", f"git+{repo_url()}@{pin.ref}", "km"]
-    if not why and cmd in SINCE and (have := version_key(pin.version)) and have < version_key(SINCE[cmd]):
-        print(f"km: `km {cmd}` needs km {SINCE[cmd]}, the brain pins {_label(chosen)}; run `km upgrade` "
+    need = max([v for (c, opt), v in OPTION_SINCE.items() if c == cmd and opt in rest]   # exact: no allow_abbrev
+               + ([SINCE[cmd]] if cmd in SINCE else []), key=version_key, default=None)
+    if not why and need and (have := version_key(pin.version)) and have < version_key(need):
+        print(f"km: `km {cmd}` needs km {need}, the brain pins {_label(chosen)}; run `km upgrade` "
               f"first (KM_LOCAL=1 runs this km instead).", file=sys.stderr)
         return 2
     if not why:

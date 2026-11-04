@@ -26,6 +26,7 @@ jobs:
       - run: bash tests/gate_smoke.sh
       - run: bash tests/index_smoke.sh
       - run: bash tests/pins_smoke.sh
+      - run: bash tests/cites_smoke.sh
       - run: bash tests/doctor_smoke.sh
       - run: bash tests/list_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
