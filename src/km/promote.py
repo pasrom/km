@@ -41,7 +41,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, submodule_prefixes, under
+from km.common import APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, submodule_prefixes, under, yaml_reason
 from km.edit import run_gate
 from km.paths import write_text
 
@@ -60,13 +60,32 @@ def find_hits(slug: str, prefixes: set[str], exclude: Path | None = None):
     return sorted(out)
 
 
-def split_fm(txt: str):
-    if txt.startswith("---"):
-        end = txt.find("\n---", 3)
-        if end != -1:
-            fm = yaml.safe_load(txt[3:end]) or {}
-            return (fm if isinstance(fm, dict) else {}), txt[end + 4:].lstrip("\n")
-    return {}, txt
+class Unparsable(Exception):
+    """A note or doc whose frontmatter does not parse: carrying it over would lose fields."""
+
+
+def split_fm(path: Path, name: str) -> tuple[dict, str]:
+    """(frontmatter, body) of a note or doc: a '---' block at the top (an empty one too, trailing
+    spaces on the fences allowed), read as km reads docs, so a byte order mark and CRLF line endings
+    do not hide it; {} and the whole text when there is none. A file that is not UTF-8 or a block
+    that does not parse raises Unparsable: carrying it over would lose fields."""
+    try:
+        txt = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    except UnicodeDecodeError as exc:
+        raise Unparsable(f"{name} is not UTF-8 text ({exc.reason} at byte {exc.start})") from None
+    lines = txt.split("\n")
+    if lines[0].rstrip() != "---":
+        return {}, txt
+    end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
+    if end is None:
+        return {}, txt
+    try:
+        fm = yaml.safe_load("\n".join(lines[1:end]))
+    except (yaml.YAMLError, ValueError) as exc:   # ValueError: a date YAML cannot build (2026-02-30)
+        raise Unparsable(f"the frontmatter of {name} does not parse: {yaml_reason(exc, 2)}") from None
+    if fm is not None and not isinstance(fm, dict):
+        raise Unparsable(f"the frontmatter of {name} is not a mapping of fields")
+    return (fm or {}), "\n".join(lines[end + 1:]).lstrip("\n")
 
 
 def dump(fm: dict, body: str) -> str:
@@ -209,8 +228,12 @@ def stub_main(argv: list[str]) -> int:
     src = Path(a.source)
     if not src.is_file():
         sys.exit(f"stub: {src} not found")
-    src_fm, _ = split_fm(src.read_text(encoding="utf-8"))
-    ok = _stub_source(src, a.to, submodule_prefixes(), src_fm or {}, {}, datetime.date.today().isoformat())
+    try:
+        src_fm, _ = split_fm(src, str(src))
+    except Unparsable as exc:
+        print(f"stub: {exc}; fix it and run the stub again")
+        return 1
+    ok = _stub_source(src, a.to, submodule_prefixes(), src_fm, {}, datetime.date.today().isoformat())
     return 0 if ok else 1
 
 
@@ -235,7 +258,14 @@ def main() -> int:
         print(f"promote: REFUSED — slug must be a single path segment (no '/' or '..'), got {a.slug!r}")
         return 2
 
-    src_fm, body = split_fm(Path(a.source).read_text(encoding="utf-8"))   # strip source frontmatter -> no doubling
+    if not Path(a.source).is_file():
+        print(f"promote: REFUSED — {a.source} not found")
+        return 2
+    try:
+        src_fm, body = split_fm(Path(a.source), a.source)   # strip source frontmatter -> no doubling
+    except Unparsable as exc:
+        print(f"promote: REFUSED — {exc}; fix the note and promote again")
+        return 2
     body = body.strip()
     today = datetime.date.today().isoformat()
     review_by = (datetime.date.today() + datetime.timedelta(days=180)).isoformat()
@@ -255,7 +285,11 @@ def main() -> int:
 
     existing = hits[0] if hits else None
     if existing:
-        ex_fm, _old = split_fm(existing.read_text(encoding="utf-8"))
+        try:
+            ex_fm, _old = split_fm(existing, str(existing.relative_to(ROOT)))
+        except Unparsable as exc:
+            print(f"promote: REFUSED — {exc}: the doc in the brain is broken; fix it first (km validate shows it)")
+            return 2
         if ex_fm.get("type") == "verbatim-block":
             print(f"promote: REFUSED — {existing.relative_to(ROOT)} is a verbatim-block; change it only via supersede, not --replace.")
             return 2

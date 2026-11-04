@@ -285,6 +285,17 @@ def set_fm_block(raw: str, key: str, text: str) -> str:
 _FM = re.compile(r"^(---\n(.*?)\n---\n?)(.*)$", re.S)
 
 
+def yaml_reason(exc: Exception, first_line: int = 1) -> str:
+    """Why YAML refused a block, in one line: the problem, and where, with line numbers of the file
+    when the block starts on line `first_line`; for a date YAML cannot build (ValueError) its text."""
+    if isinstance(exc, yaml.MarkedYAMLError):
+        at = lambda m: f" (line {m.line + first_line}, column {m.column + 1})" if m else ""
+        parts = [f"{exc.context}{at(exc.context_mark)}" if exc.context else "",
+                 f"{exc.problem}{at(exc.problem_mark)}" if exc.problem else ""]
+        return "; ".join(p for p in parts if p) or "YAML error"
+    return str(exc).strip() or type(exc).__name__
+
+
 def split_frontmatter(text: str) -> tuple[dict | None, str, str]:
     """(frontmatter or None, the raw '---' block, body). No or unparsable block: (None, '', text)."""
     m = _FM.match(text)

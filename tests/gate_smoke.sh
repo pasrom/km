@@ -63,6 +63,53 @@ grep -q 'status: accepted' "$T/brains/peer/shared.md" && ok "B2 peer-brain doc u
 
 # P1: a source WITH frontmatter keeps its type, re-stamps the lifecycle, and does not double the header
 printf -- '---\ntype: decision\ntitle: Src Title\ntimestamp: 2026-08-26\nauthor: Y\nstatus: draft\ntags: [t]\n---\ndecision body\n' > "$T/srcfm.md"
+# a source whose frontmatter does not parse (an impossible date, a YAML error) is refused, not a crash
+for bad in 'timestamp: 2026-02-30' 'title: [unclosed'; do
+  printf -- '---\ntype: note\n%s\n---\nbody\n' "$bad" > "$T/badfm.md"
+  out="$(km promote --root "$T" "bad-fm" "$T/badfm.md" --folder bms 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && grep -q "REFUSED .*frontmatter of .*badfm.md does not parse" <<< "$out" && ! grep -q Traceback <<< "$out" \
+    && [ ! -e "$T/bms/bad-fm.md" ]; } && ok "promote refuses a source whose frontmatter does not parse (${bad%%:*})" \
+    || no "promote bad frontmatter ${bad%%:*} (rc=$rc: $out)"
+done
+rm -f "$T/badfm.md"
+out="$(printf -- '---\ntype: note\ntitle: [unclosed\n---\nb\n' > "$T/badfm.md"; km promote --root "$T" bad-fm "$T/badfm.md" --folder bms 2>&1)"
+grep -q "does not parse: while parsing a flow sequence (line 3, column [0-9]*).*(line [0-9]*, column" <<< "$out" \
+  && ok "the refusal names the YAML problem, where it opened and where it failed, in file lines" || no "yaml mark ($out)"
+# an existing doc in the brain with a broken date: --replace refuses and blames that doc, not the note
+printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-02-30\nauthor: X\nstatus: accepted\ntags: [t]\n---\nold\n' > "$T/bms/brokentarget.md"
+printf -- 'new body\n' > "$T/newnote.txt"
+out="$(km promote --root "$T" brokentarget "$T/newnote.txt" --replace 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && grep -q "frontmatter of bms/brokentarget.md does not parse.*doc in the brain is broken" <<< "$out" \
+  && grep -q '^old$' "$T/bms/brokentarget.md"; } && ok "promote --replace refuses a broken target and names it" || no "broken target (rc=$rc: $out)"
+rm -f "$T/bms/brokentarget.md" "$T/newnote.txt"
+# km promote stub on a note with a broken date: its own prefix and exit code
+printf -- '---\ntype: note\ntimestamp: 2026-02-30\n---\nb\n' > "$T/badfm.md"
+out="$(cd "$T" && km promote stub badfm.md --to bms/x.md 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && grep -q "^stub: the frontmatter of badfm.md does not parse" <<< "$out" && ! grep -q Traceback <<< "$out"; } \
+  && ok "promote stub refuses a broken note with its own prefix and exit 1" || no "stub broken (rc=$rc: $out)"
+rm -f "$T/badfm.md"
+# fences the old reader accepted: an empty block, trailing spaces on the fences
+printf -- '---\n---\nempty fm body\n' > "$T/emptyfm.md"
+km promote --root "$T" empty-fm "$T/emptyfm.md" --folder bms --type note --author X >/dev/null 2>&1
+{ [ "$(grep -c '^---$' "$T/bms/empty-fm.md")" = 2 ] && grep -q '^empty fm body$' "$T/bms/empty-fm.md"; } \
+  && ok "promote takes an empty frontmatter block as none, no stray fences" || no "empty block ($(cat "$T/bms/empty-fm.md" 2>&1))"
+printf -- '--- \ntype: decision\ntitle: Spaced\nauthor: Y\n--- \nspaced body\n' > "$T/spaced.md"
+km promote --root "$T" spaced-fm "$T/spaced.md" --folder bms >/dev/null 2>&1
+{ grep -q '^type: decision' "$T/bms/spaced-fm.md" && ! grep -q 'title: Spaced' <(tail -n +2 "$T/bms/spaced-fm.md" | sed '1,/^---$/d'); } \
+  && ok "promote reads fences with trailing spaces" || no "spaced fences ($(cat "$T/bms/spaced-fm.md" 2>&1))"
+# a list block, a non-UTF-8 note and a missing note are refused, not a traceback
+printf -- '---\n- a\n---\nb\n' > "$T/listfm.md"; printf '\377\376 latin\n' > "$T/latin.md"
+for f in listfm.md latin.md nosuch.md; do
+  out="$(km promote --root "$T" "x-${f%.md}" "$T/$f" --folder bms --type note --author X 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && grep -q REFUSED <<< "$out" && ! grep -q Traceback <<< "$out" && [ ! -e "$T/bms/x-${f%.md}.md" ]; } \
+    && ok "promote refuses $f cleanly" || no "refuse $f (rc=$rc: $out)"
+done
+rm -f "$T/emptyfm.md" "$T/spaced.md" "$T/listfm.md" "$T/latin.md"
+# a note saved on Windows (byte order mark, CRLF) keeps its frontmatter: no doubled header
+printf '\357\273\277---\r\ntype: decision\r\ntitle: Win\r\ntimestamp: 2026-08-26\r\nauthor: Y\r\nstatus: draft\r\ntags: [t]\r\n---\r\nwin body\r\n' > "$T/win.md"
+km promote --root "$T" win-note "$T/win.md" --folder bms >/dev/null 2>&1
+{ grep -q '^type: decision' "$T/bms/win-note.md" && [ "$(grep -c '^---$' "$T/bms/win-note.md")" = 2 ] && ! grep -q 'title: Win' <(sed -n '/^---$/,/^---$/!p' "$T/bms/win-note.md" | tail -n +2); } \
+  && ok "promote reads a note with a BOM and CRLF like any other" || no "bom crlf ($(cat "$T/bms/win-note.md"))"
 km promote --root "$T" "promoted-dec" "$T/srcfm.md" --folder bms >/dev/null 2>&1
 PF="$T/bms/promoted-dec.md"
 { grep -q '^type: decision' "$PF" && [ "$(grep -c '^---$' "$PF")" = "2" ] && grep -q '^status: review' "$PF"; } \
