@@ -59,6 +59,10 @@ fields:
     required: false
     type: list
     format: path_at_hash
+  cites:                  # external files (SharePoint, OneDrive): - url, sha256 of the bytes, retrieved
+    required: false       # (YYYY-MM-DD), optional title, version, ctag; `km cite add --file` writes it
+    type: list
+    format: url_digest
   language:
     required: false
     enum: [en, de]

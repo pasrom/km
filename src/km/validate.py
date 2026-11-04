@@ -43,7 +43,8 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_date, as_list, fresh_run, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_date, as_list, fresh_run, pin_state, tracked_md
+from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
 from km.common import RESERVED as RESERVED_NF
@@ -351,6 +352,36 @@ def _fold(s: str) -> str:
     return _squash(_norm(s))
 
 
+_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
+_OPENS_BLOCK = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\[\^[^\]]+\]:|(?: {4}|\t)")   # list item, footnote, nested
+
+
+def _strip_blocks(s: str) -> str:
+    """Fenced (``` or ~~~, closed by the same character, at least as long) and indented code blocks
+    blanked, line by line. An indented block must follow a blank line whose text before is neither a
+    list item, a footnote nor indented: there it is that item's next paragraph, whose links count.
+    Used for the cite:missing scan; the link checks keep `_strip_code` as it was."""
+    out, blank, last, fence, code = [], True, "", "", False
+    for ln in s.split("\n"):
+        if fence:
+            m = _FENCE.match(ln)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not ln[m.end():].strip():
+                fence = ""
+            out.append("")
+            continue
+        if (m := _FENCE.match(ln)) and not code:
+            fence = m.group(1)
+            out.append("")
+            continue
+        empty, indented = not ln.strip(), ln.startswith(("    ", "\t"))
+        code = (code and (indented or empty)) or (indented and blank and not _OPENS_BLOCK.match(last))
+        out.append("" if code else ln)
+        if not code and not empty:
+            last = ln
+        blank = empty
+    return "\n".join(out)
+
+
 def _strip_code(s: str) -> str:
     s = re.sub(r"<!--.*?-->", " ", s, flags=re.S)   # HTML comments are not links
     s = re.sub(r"```.*?```", " ", s, flags=re.S)
@@ -573,10 +604,18 @@ def main() -> int:
                         warnings.append((f"pin:{field}", rel, f"{v!r} not path.md@hash"))
                     elif fm.get("status") not in RETIRED_STATUS and (_why := pin_problem(field, str(v))):
                         warnings.append((_why[0], rel, _why[1]))
+            if field in fm and spec.get("format") == "url_digest" and isinstance(fm[field], list):
+                errors.extend(("cite:format", rel, p) for p in cite_problems(fm[field]))
             if field in fm and spec.get("ref"):
                 for v in as_list(fm[field]):
                     if v and not resolve_ref(rel, str(v)):
                         warnings.append((f"ref:{field}", rel, f"missing target {v}"))
+
+        if fm.get("status") not in RETIRED_STATUS:   # a SharePoint/OneDrive link should be pinned too
+            for _url in uncited(body_of(text), fm, lambda b: _strip_code(_strip_blocks(b))):
+                warnings.append(("cite:missing", rel, f"links {_url}, a sharing or viewer link that names the file by "
+                                 f"a token: link the file's path URL instead and cite that (`km cite add`)" if cite_opaque(_url)
+                                 else f"links {_url} with no cites: entry (`km cite add`)"))
 
         t = fm.get("type")
         rule = TYPE_RULES.get(t, {}) if isinstance(t, str) else {}

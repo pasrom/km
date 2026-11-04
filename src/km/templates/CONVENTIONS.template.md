@@ -35,6 +35,7 @@ participants: [name1, name2]
 sources: [path.md@abc1234def0]                       # provenance pinning (recommended for type: summary); `km repin` writes it
 language: <en|de>
 translates: <path.md@abc1234def0>                    # linked translation source; `km repin` writes it
+cites: [{url: "https://…", sha256: <hex>, retrieved: 2026-11-04}]  # external files; `km cite add --file` writes it
 ---
 ```
 

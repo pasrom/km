@@ -30,8 +30,9 @@ class Loaded(NamedTuple):
     body: str
 
 
-def load_doc(doc: str, path: Path) -> Loaded | str:
-    """Read a doc of this brain for an in-place edit. Returns it, or why it cannot be edited."""
+def not_a_doc(doc: str, path: Path) -> str:
+    """Why a doc argument is not a doc of this brain (outside it, under skip_prefixes, missing),
+    or '' when it is one."""
     try:
         rel = path.relative_to(ROOT).as_posix()
     except ValueError:
@@ -40,6 +41,14 @@ def load_doc(doc: str, path: Path) -> Loaded | str:
         return f"{rel}: under skip_prefixes (a mounted brain or excluded folder), change it in its own repo"
     if not path.is_file():
         return f"{rel}: no such file"
+    return ""
+
+
+def load_doc(doc: str, path: Path) -> Loaded | str:
+    """Read a doc of this brain for an in-place edit. Returns it, or why it cannot be edited."""
+    if why := not_a_doc(doc, path):
+        return why
+    rel = path.relative_to(ROOT).as_posix()
     old = path.read_bytes()
     try:
         text = old.decode("utf-8-sig").replace("\r\n", "\n")   # strict decode (written back); CRLF like read()

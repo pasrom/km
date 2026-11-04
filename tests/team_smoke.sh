@@ -276,6 +276,9 @@ repin "$S99" v99.0.0 "$V09_SHA" v0.9.0 "$O"/.github/workflows/*.yml "$O/.pre-com
 rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$O" any.md 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.4.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
   && ok "a command the pinned km lacks says to upgrade" || no "command newer than the pin ($rc: $out)"
+rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$O" --cites any.md --dir . 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.8.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
+  && ok "an option the pinned km lacks says to upgrade" || no "option newer than the pin ($rc: $out)"
 repin "$V09_SHA" v0.9.0 "$S99" v99.0.0 "$O"/.github/workflows/*.yml "$O/.pre-commit-config.yaml"
 rm -f "$F/runner-args"; KM_LOCAL=1 KM_PINNED_RUNNER="$F/fake-uvx" km validate --root "$O" >/dev/null 2>&1
 [ ! -e "$F/runner-args" ] && ok "KM_LOCAL=1 keeps this km" || no "KM_LOCAL=1 keeps this km"

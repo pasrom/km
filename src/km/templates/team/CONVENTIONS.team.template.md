@@ -72,6 +72,10 @@ superseded_by: <path.md>
 related: [path1.md, path2.md]                        # repo-root-relative
 sources: [path.md@abc1234def0]                       # `km repin` writes it; required for type: summary
 translates: <path.md@abc1234def0>                    # linked translation source; `km repin` writes it
+cites:                                               # external files (SharePoint, OneDrive); `km cite add` writes it
+- url: https://example.sharepoint.com/sites/Example/Shared%20Documents/report.pdf
+  sha256: <64 hex digits of the file's bytes>
+  retrieved: 2026-11-04
 ---
 ```
 
@@ -127,6 +131,10 @@ draft → review → accepted → superseded | obsolete
   `km repin` it (an accepted doc goes back to review for a new sign-off). `km repin` pins the source's
   content (its blob), which survives a rebase or squash merge; a pin to a commit set on a PR branch
   does not.
+- A SharePoint or OneDrive file a doc relies on goes under `cites:`, written by `km cite add <doc>
+  <url> --file <synced copy>` (the sha256 of the copy, and the date). `km cites check --dir <synced
+  library>` reports a cited file that changed as `stale`: re-review the doc, then `km repin --cites`
+  it (an accepted doc goes back to review). Cite the team-site copy, not a personal OneDrive.
 
 ## What the <BRAIN> is NOT
 

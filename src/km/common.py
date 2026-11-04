@@ -226,10 +226,13 @@ def set_fm_line(raw: str, key: str, value: str) -> str:
     """Set `key: value` in a raw '---' frontmatter block in place: replace the line, or add it last."""
     line = f"{key}: {value}"
     new, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda _m: line, raw, count=1)
-    if n:
-        return new
+    return new if n else append_fm(raw, line)
+
+
+def append_fm(raw: str, text: str) -> str:
+    """`text` (one or more lines) added last to a raw '---' frontmatter block."""
     end = raw.rstrip("\n").rfind("\n---")
-    return raw[:end] + "\n" + line + raw[end:]
+    return raw[:end] + "\n" + text + raw[end:]
 
 
 def demote_raw(raw: str) -> str | None:
@@ -257,7 +260,7 @@ def scalar(value: str) -> str:
     try:
         if yaml.safe_load(f"k: {value}") == {"k": value}:
             return value
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):   # ValueError: a date YAML cannot build (2026-02-30)
         pass
     return json.dumps(value)
 
@@ -292,6 +295,12 @@ def split_frontmatter(text: str) -> tuple[dict | None, str, str]:
     except (yaml.YAMLError, ValueError):   # ValueError: a date YAML cannot build (2026-02-30)
         return None, "", text
     return (fm if isinstance(fm, dict) else None), m.group(1), m.group(3)
+
+
+def body_of(text: str) -> str:
+    """The text after a '---' frontmatter block, the block not parsed; all of it if there is none."""
+    m = _FM.match(text)
+    return m.group(3) if m else text
 
 
 def frontmatter(text: str) -> dict:
