@@ -51,6 +51,12 @@ km serve                    build the per-audience bundle under dist/served/
 km promote ...              move a note into the brain as a review doc
 km approve DOC... --by WHO  sign review docs off; ai:<model> where CONVENTIONS allow an AI sign-off
 km repin DOC...             pin a doc's sources and translates to their current content
+km repin --cites DOC... (--file URL=PATH ... | --dir LOCAL=URLPREFIX ...)
+                            re-pin the external files a doc cites against local copies
+km cite add DOC URL --file COPY [--title T] [--version V]
+                            record an external file (SharePoint, OneDrive) by the sha256 of a local copy
+km cites check [DOC...] (--file URL=PATH ... | --dir LOCAL=URLPREFIX ...)
+                            compare cited files with local copies: current, stale, unchecked
 km init DIR [--team ...]    create a brain from the templates
 km upgrade                  move a brain's km pins to this version
 km doctor [--offline]       check this computer is set up for the brain
@@ -102,7 +108,7 @@ reaches `main` without a merged pull request. `km upgrade` adds whichever a team
 .claude-plugin/        plugin and marketplace manifests
 action.yml             GitHub Action: installs km at the action's version
 .pre-commit-hooks.yaml pre-commit hook km-validate
-src/km/                the package: cli, validate, gen_index, demote, serve, promote, approve, repin, init, upgrade, doctor, list_docs
+src/km/                the package: cli, validate, gen_index, demote, serve, promote, approve, repin, cite, cites, init, upgrade, doctor, list_docs
 src/km/templates/      what `km init` writes
 skills/km/SKILL.md     the skill; skills/km/bin/km runs the package from the installed plugin
 tests/                 smoke tests

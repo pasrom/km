@@ -132,9 +132,11 @@ draft → review → accepted → superseded | obsolete
   content (its blob), which survives a rebase or squash merge; a pin to a commit set on a PR branch
   does not.
 - A SharePoint or OneDrive file a doc relies on goes under `cites:`, written by `km cite add <doc>
-  <url> --file <synced copy>` (the sha256 of the copy, and the date). `km cites check --dir <synced
-  library>` reports a cited file that changed as `stale`: re-review the doc, then `km repin --cites`
-  it (an accepted doc goes back to review). Cite the team-site copy, not a personal OneDrive.
+  <url> --file <synced copy>` (the sha256 of the copy, and the date). `km cites check --dir "<synced
+  library>=https://<host>/sites/<site>/<library>"` maps the library to its URL and reports a cited
+  file that changed as `stale`: re-review the doc, then `km repin --cites`
+  it (an accepted doc goes back to review, as it does when a new file is cited). Cite the team-site
+  copy, not a personal OneDrive. km rewrites the `cites:` block whole: comments inside it are dropped.
 
 ## What the <BRAIN> is NOT
 
