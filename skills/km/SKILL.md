@@ -39,8 +39,8 @@ when `gh auth status --hostname github.com` succeeds; check once per session and
 `pull_request_read` (prefer a read-only one if several are loaded), as in "Reading GitHub through
 MCP". When gh gets HTTP 401, 403 or 404 for a repo, read that repo through MCP for the rest of the
 task and say so in the answer; a network error is no reason to switch. With neither, name what was
-not read under gaps, never guess. Every write (push, fork, PR create or edit, labels, PR comments)
-uses git and gh only, never an MCP write tool; without gh, say the write cannot be done.
+not read under gaps, never guess. Every write (push, fork, PR create or edit, labels, PR comments,
+reviews) uses git and gh only, never an MCP write tool; without gh, say the write cannot be done.
 
 ## Setup check (`/km doctor`, "check my setup")
 
@@ -528,9 +528,9 @@ the last step: report findings, never fix the doc during the review.
    - nothing that belongs elsewhere: a customer, project or person named outside where the brain's
      rules allow it, secrets, machine paths;
    - `owner` and a realistic `review_by` for the sign-off.
-4. **Findings.** Each one names the line, what is wrong and the source that shows it. Blocking:
-   wrong or unsupported facts, contradictions, validate errors, leaks. Not blocking: wording, style,
-   structure preferences; mention them once, briefly, or leave them out.
+4. **Findings.** Each one names the file and line, what is wrong and the source that
+   shows it. Blocking: wrong or unsupported facts, contradictions, validate errors, leaks. Not
+   blocking: wording, style, structure preferences; mention them once, briefly, or leave them out.
 5. **Outcome.** Blocking findings: list them and stop. Otherwise show the user the result, and on
    their OK:
    - a `draft` doc goes to `status: review` first (`km approve` signs off review docs only);
@@ -545,9 +545,9 @@ the last step: report findings, never fix the doc during the review.
 ## Pull request preparation (`/km pr`)
 
 Runs on a brain branch before its first push, and again before pushing new commits to your own open
-PR: steps 1–5 before the push, step 6 once the PR exists. On a PR you did not open, run step 1 only
-and post the findings as a PR comment; never commit to or push their branch. `<base>` is the merge
-base with the brain's default branch.
+PR: steps 1–5 before the push, step 6 once the PR exists. On a PR you did not open, run step 1 and
+the check in step 2 (no fixes), then post one review as below; never commit to or push their
+branch. `<base>` is the merge base with the brain's default branch.
 
 1. **Review, sized to the PR.** The docs are the ones the branch adds or changes since `<base>`, or
    on an open PR since the head the PR body's `Last reviewed:` line records (all of them if that commit
@@ -583,6 +583,30 @@ base with the brain's default branch.
    - `km:blocked`: blocking findings remain.
    The PR body carries a table of doc, level, findings and status, and the pushed head as a line
    `Last reviewed: <full sha>` (replace the earlier one).
+
+### Review of a PR you did not open
+
+`<repo>` is the owner/repo in the PR's URL, `<head>` its `headRefOid`, read when the review starts;
+fetch `pull/<N>/head` and review that tree, so findings carry its line numbers. Step 1 ignores the
+author's `Last reviewed:` line: it covers the docs changed since `<base>`, or on a new head since
+the `commit_id` of your last review there (`gh api repos/<repo>/pulls/<N>/reviews`, `user.login` as
+`gh api user -q .login`; `<base>` if that commit no longer resolves). One review per reviewed head,
+the payload built with `jq -n` (findings quote text), posted with `gh api
+repos/<repo>/pulls/<N>/reviews --method POST --input -`: `{"commit_id": "<head>", "event":
+"COMMENT", "body": "<summary>", "comments": [{"path": "<file>", "line": <n>, "side": "RIGHT",
+"body": "<finding>"}]}`.
+- `comments`: one per finding on a line inside a hunk of `gh pr diff <N> -R <repo>` (with MCP only,
+  the `get_files` patches); `line` is its line number in the file at `<head>`. A removed line takes
+  `side` `LEFT` and its number in the base; a range adds `start_line` and `start_side`.
+- `body`: the verdict with the count of blocking findings, then each finding on no diff line with
+  its file and line. Blocking findings (`/km review` step 4) come first and say so.
+- Never `APPROVE` or `REQUEST_CHANGES`: that is the human reviewer's call; recommend it in chat only.
+- Show the user the full review (body and line comments) and post only on their OK. Where gh cannot
+  write (none, or 401/403 for this repo), post nothing, as in "GitHub access": give the user the
+  payload and the exact `gh api` command. On a 422 for a line, move that comment into `body` and
+  post again.
+- A new head gets a new review without the findings fixed since; never delete or resolve the old
+  comments.
 
 ## Review queue (`/km queue`)
 
