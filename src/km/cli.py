@@ -37,8 +37,10 @@ COMMANDS = {
     "upgrade": ("km.upgrade", "move a brain's km pins to this version; drop km files copied in earlier"),
     "doctor": ("km.doctor", "check this computer is set up for the brain: git, access, plugins, km version"),
     "list": ("km.list_docs", "list docs from their frontmatter: by folder, status, approval, review date (--json)"),
+    "sync": ("km.sync", "bring this copy, a fork and the mounted brains up to the upstream brain (fast-forward only)"),
 }
-NO_PIN_CHECK = {"init", "upgrade", "doctor", "list"}   # they write the pins, check the km that is running, or only read
+# they write the pins, check the km that is running, only read, or act on the clone, not the content
+NO_PIN_CHECK = {"init", "upgrade", "doctor", "list", "sync"}
 SINCE = {"repin": "v1.4.0", "cite": "v1.8.0", "cites": "v1.8.0"}   # commands an older pinned km does not have
 OPTION_SINCE = {("repin", "--cites"): "v1.8.0"}                     # options it does not have
 RUNNER = os.environ.get("KM_PINNED_RUNNER", "uvx")
