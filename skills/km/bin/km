@@ -11,13 +11,13 @@ if [ -n "$uv" ]; then
   exec "$uv" run --quiet --no-project --python '>=3.11' --with pyyaml==6.0.3 python -m km "$@"
 fi
 # Without uv: a Python 3.11+ under any of its usual names (on Windows `python3` is often only the
-# Store's placeholder). `km doctor` needs no PyYAML, so it can say what is missing.
+# Store's placeholder). `km doctor` and `km sync` need no PyYAML, so doctor can say what is missing.
 cmd=""; skip=""
 for a in "$@"; do
   if [ -n "$skip" ]; then skip=""; elif [ "$a" = --root ]; then skip=1; elif [ "${a#--root=}" = "$a" ]; then cmd="$a"; break; fi
 done
 need='import sys; sys.exit(sys.version_info < (3, 11))'
-[ "$cmd" = doctor ] || need="import yaml; $need"
+case "$cmd" in doctor|sync) ;; *) need="import yaml; $need" ;; esac
 for py in python3 python "py -3"; do
   if $py -c "$need" >/dev/null 2>&1; then exec $py -m km "$@"; fi
 done

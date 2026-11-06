@@ -1,6 +1,7 @@
 """Where km looks: the brain it works on, and its own files."""
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 import sys
@@ -35,6 +36,26 @@ def write_text(path: Path, text: str) -> None:
     """Every file km writes: UTF-8 with LF, the bytes the repo holds, also where the default is a code
     page and CRLF (Windows)."""
     path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def git_path(root: Path, name: str) -> Path:
+    """A file in the repository's git dir (the worktree's own, where .git is a file)."""
+    p = Path(git("rev-parse", "--git-path", name, cwd=root).stdout.strip())
+    return p if p.is_absolute() else root / p
+
+
+def rev(root: Path, spec: str) -> str:
+    """The commit `spec` names, or '' when it names none here."""
+    return git("rev-parse", "-q", "--verify", f"{spec}^{{commit}}", cwd=root).stdout.strip()
+
+
+@functools.cache
+def ahead_behind(root: Path, mine: str, theirs: str) -> tuple[int, int] | None:
+    """(commits only mine has, commits only theirs has); None when one of them is not in this
+    repository. (0, 0): the same content; (0, n): mine can fast-forward; (n, 0): mine has
+    everything theirs has; both: diverged."""
+    out = git("rev-list", "--left-right", "--count", f"{mine}...{theirs}", cwd=root).stdout.split()
+    return (int(out[0]), int(out[1])) if len(out) == 2 and all(x.isdigit() for x in out) else None
 
 
 def submodule_config(root: Path, key: str) -> dict[str, str]:
