@@ -28,6 +28,7 @@ jobs:
       - run: bash tests/pins_smoke.sh
       - run: bash tests/cites_smoke.sh
       - run: bash tests/doctor_smoke.sh
+      - run: bash tests/sync_smoke.sh
       - run: bash tests/list_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
@@ -84,10 +85,10 @@ jobs:
           source tests/lib.sh
           windows_like "" || { echo "::error::the runner's encoding is UTF-8, this job tests nothing"; exit 1; }
           with_env "" bash tests/encoding_smoke.sh    # as checked: UTF-8 mode off
-      - name: km doctor on Windows
+      - name: km doctor and km sync on Windows
         env:
           PYTHON: python
-        run: bash tests/doctor_smoke.sh
+        run: bash tests/doctor_smoke.sh && bash tests/sync_smoke.sh
 
   # Merging a version bump is the release: once main is green, tag v<__version__> if that tag is new.
   # Brains pin these tags, and `km init` writes the tag of the km that runs it.
