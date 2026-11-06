@@ -33,6 +33,22 @@ it runs that commit through `uvx`, so results match CI (`KM_LOCAL=1` keeps the p
 offline, for a pin to a movable tag, or when the workflows disagree, it runs the plugin's km and warns;
 `/km upgrade` the brain then.
 
+**Keeping the copy current.** A copy of the brain goes stale: answers then come from old knowledge
+and new work starts on an old base. `km sync` fetches the upstream brain (the remote `upstream`,
+else a fork's parent, else origin) and only ever fast-forwards: the checked-out default branch on a
+clean tree, a fork's default branch on the host, and the mounted brains to the commit the brain
+pins (a pin moves only through the host's automation and a reviewed PR). Everything else it only
+reports, with how far behind. The plugin runs it when a session starts in a brain, and its lines
+are then in your context. Before answering a question from the brain, run
+`km sync --quiet --max-age 15m` (nothing happens within 15 minutes of the last run; it prints only
+what changed or needs attention). Before creating a page or a branch, run `km sync`, so the work
+starts from the current upstream. When it reports `branch <X> is <N> commits behind upstream
+<default>; rebase it when you are ready`, tell the user and offer the rebase; run
+`git rebase upstream/<default>` (`origin/<default>` without a fork) only on their OK and on a
+clean tree (`git status --porcelain --ignore-submodules=all` prints nothing), never a reset or a
+force. A default branch with commits of its own, a dirty tree, a mount with changes of its own or
+a diverged fork are the user's call too: pass the note on and do nothing else.
+
 **GitHub access.** Every GitHub step in this skill uses `gh` (with a local clone where one exists)
 when `gh auth status --hostname github.com` succeeds; check once per session and again after a
 `gh auth login`. Only without it, read through any MCP server exposing GitHub tools such as
@@ -54,7 +70,7 @@ language and in plain words, one line per problem, the fix first; no git jargon 
    rights needed): offer to run that command for their system, then run `km doctor` again. km finds
    uv where the installer puts it, so the app need not be restarted first.
 3. Each `FAIL` comes with a fix. Offer to run the ones that change only this computer and are safe
-   (`git submodule update --init`, the `git pull --rebase` it names on a clean tree,
+   (`git submodule update --init`, the `km sync` or `git pull --rebase` it names on a clean tree,
    `git config --global user.name` after asking for the value, `pre-commit install`); hand over the
    ones they must do themselves (signing in, `gh auth login`, installing a plugin or adding a
    marketplace with `/plugin`, asking for access). The re-checkout that fixes CRLF files discards
@@ -129,8 +145,12 @@ Move a brain to the km you run, without touching repo-specific files:
 
 ### Brains (peer knowledge bases)
 
-- Located under `brains/<name>/` (git submodules)
-- Sync: run `git submodule update --remote brains/<name>` when `git rev-parse --git-path modules/brains/<name>/FETCH_HEAD` is >15 min old (that resolves correctly inside a linked worktree too, where `.git` is a file). If the update aborts because the submodule has a dirty or branch-checked-out working tree, do NOT swallow it — report `brains/<name> skipped: dirty (run brain reset <name>)` so the drift stays visible instead of a brain that silently stops syncing
+- Located under `brains/<name>/` (git submodules), read at the commit the brain pins
+- Sync: `km sync --quiet --max-age 15m` before the query (see "Keeping the copy current"); it
+  checks every mount out at its pin and never moves one ahead of it. Pass its notes on: a mount
+  with changes of its own or ahead of its pin is left as it is (`brain reset <name>` puts it
+  back), never a silent skip. Newer content of a mount comes only with a moved pin, through a pull
+  request: the host's Dependabot PR, or the pin-bump PR below when the user asks for it
 
 ### Shared resources (self-describing repos)
 
@@ -138,15 +158,23 @@ Any git submodule **not** under `brains/` is a shared resource. Discover them fr
 
 - On first `@<name>` query in a session, read `<name>/CLAUDE.md` to learn the repo's search scope, file types, commands, and citation format. Cache this for the rest of the session
 - If `<name>/CLAUDE.md` is missing, fall back to recursive `.md` search in `<name>/`
-- Sync: check `.git/modules/<name>/FETCH_HEAD` age before updating. Default threshold: 15 min. The resource's `CLAUDE.md` may specify a different interval
+- Sync: as for brains, `km sync` keeps it at its pin; the pin moves only through a pull request
 
 ### `@all` sync
 
-Before searching, sync all submodules that are stale (FETCH_HEAD older than their threshold):
-1. `git submodule update --remote brains/`; surface any `brains/<name> skipped: dirty (run brain reset <name>)` rather than failing silently
-2. For each shared resource: check FETCH_HEAD age against its threshold, update if stale (report a dirty skip, do not fail silently)
+Before searching, `km sync --quiet --max-age 15m` once: every mount is then at its pin, and a
+mount it could not bring there is named (pass that on, never fail silently). Then search in
+order: current repo → brains → shared resources.
 
-Then search in order: current repo → brains → shared resources.
+### Pin-bump PR (newer content of a mount)
+
+A pin moves only on a branch and through a pull request, never on `main`. When the user wants a
+mount at a newer commit (or km sync reports one ahead of its pin that they want to keep), offer:
+`git switch -c chore/bump-<name>`, `git submodule update --remote -- brains/<name>` (this one
+step may move the checkout past the pin: it is the bump), `git add brains/<name>`, commit
+`chore(brains): bump <name> to <short sha>`, push, `gh pr create`; then `git switch main` and
+`km sync`, which puts the mount back at main's pin until the PR merges. A team brain gets the
+same bump from Dependabot's submodule PRs.
 
 ### Citation format
 
@@ -160,7 +188,7 @@ Then search in order: current repo → brains → shared resources.
 - `brain add <url> [name]` → `git submodule add <url> brains/<name>`, validate CONVENTIONS.md exists, `git config submodule.recurse true`, commit
 - `brain list` → table: name, URL, commit, last updated. Discover shared resources from `.gitmodules` and list them in a separate section
 - `brain remove <name>` → confirm, `git submodule deinit -f` + `git rm -f`, commit
-- `brain reset <name>` → repair a drifted submodule (parent shows `+` / ` m`, or it stopped syncing). (1) `git -C brains/<name> status` and SHOW it; STOP if there are dirty files — they may be unpushed work, never discard them silently. (2) on OK: `git submodule update --init --checkout --force brains/<name>` (back to the pinned commit) and `git -C brains/<name> worktree prune`. (3) delete leftover local `fix/km-*` / `docs/km-*` branches whose PR has merged. With the throwaway-clone `brain fix` below, new drift no longer happens
+- `brain reset <name>` → put a drifted submodule back at its pin (parent shows `+` / ` m`, or km sync reports it ahead or with changes). (1) `git -C brains/<name> status` and SHOW it; STOP if there are dirty files — they may be unpushed work, never discard them silently. (2) on OK: `git submodule update --init --checkout --force brains/<name>` (back to the pinned commit) and `git -C brains/<name> worktree prune`. (3) delete leftover local `fix/km-*` / `docs/km-*` branches whose PR has merged. With the throwaway-clone `brain fix` below, new drift no longer happens
 
 ## Foreign-brain corrections (`brain fix @<name> ...`)
 
@@ -194,7 +222,7 @@ verbatim in every command and delete explicitly at the end.
 ### Hard rules
 
 - Never push to a brain's `main`, never `--force` push; the one exception is `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
-- Never bump the parent's submodule pointer to an unmerged branch — wait for merge, then `git submodule update --remote brains/<name>` from the parent
+- Never bump the parent's submodule pointer to an unmerged branch — wait for merge, then a pin-bump PR in the parent (see "Pin-bump PR")
 - Never edit the mounted `brains/<name>/` working tree; every correction runs in the throwaway clone above (that is what keeps the parent drift-free). If a mounted submodule is already drifted, repair it with `brain reset <name>`
 - Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
 - If the brain has no `CONVENTIONS.md`, ask before editing — rules may live in `README` or `CONTRIBUTING`
@@ -210,9 +238,7 @@ links against it, never write in it.
 - **Contribute without write access** (you have READ on a shared/team brain) → `contribute @<name>` below: the throwaway-clone + PR (fork PR if read-only) flow, with the doc gated by the target brain's rules.
 
 Caveat when a brain you author in **itself mounts brains**: a fresh linked worktree has EMPTY
-submodule dirs until `git submodule update --init`, and the sync-staleness path is
-`git rev-parse --git-path modules/brains/<name>/FETCH_HEAD` (in a linked worktree `.git` is a file,
-so a literal `.git/modules/...` path is wrong).
+submodule dirs until `km sync` (or `git submodule update --init`) checks them out at their pins.
 
 ## Contributing content to a brain (`contribute @<name> ...`)
 
@@ -286,10 +312,12 @@ wait for explicit OK. Then:
 carrying `contribution: "<owner>/<repo>#<N>"` belongs to it (`grep -rl` finds them).
 
 - **Merged:** take each merged path from `.files` (canonical, even if a reviewer renamed or changed it
-  on the branch), `git submodule update --remote brains/<name>` to pin the brain to the merged state,
-  then for each source `km promote stub <source> --to brains/<name>/<merged-path>`.
-  It rewrites the source into a gated `superseded` redirect stub and drops `contribution:`; after the
-  sync `superseded_by` resolves. Commit the stubs plus the bumped submodule pointer.
+  on the branch). On a branch (`git switch -c chore/bump-<name>`), `git submodule update --remote --
+  brains/<name>` to pin the brain to the merged state, then for each source
+  `km promote stub <source> --to brains/<name>/<merged-path>`. It rewrites the source into a gated
+  `superseded` redirect stub and drops `contribution:`; after the bump `superseded_by` resolves.
+  Commit the stubs plus the bumped submodule pointer and open the PR (see "Pin-bump PR"); the
+  stubs resolve once it merges and `km sync` brings main there.
 - **Closed unmerged:** delete the `contribution:` line; the doc is an ordinary doc of your brain again.
 
 ### Hard rules
