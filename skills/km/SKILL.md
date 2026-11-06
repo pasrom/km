@@ -29,7 +29,8 @@ Read `CONVENTIONS.md` in the repo root. If missing, offer to initialize (`/km in
 below; `km --help` lists the commands, and all take `--root DIR`. Brains carry no km code: CI and
 the pre-commit hook install the km release the brain pins, by its commit (`pasrom/km@<sha> # vX.Y.Z`,
 so a moved tag cannot change what runs), and so does `km` here: in a brain that pins another version
-it runs that commit through `uvx`, so results match CI (`KM_LOCAL=1` keeps the plugin's). Without uv,
+it runs that commit through `uvx`, so results match CI (`KM_LOCAL=1` keeps the plugin's; `init`,
+`upgrade`, `doctor`, `list` and `sync` always run the plugin's km, so `km upgrade` needs no `KM_LOCAL`). Without uv,
 offline, for a pin to a movable tag, or when the workflows disagree, it runs the plugin's km and warns;
 `/km upgrade` the brain then.
 
