@@ -14,19 +14,15 @@ import argparse
 import importlib.util
 import json
 import os
-import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 from km import KM_REF
-from km.paths import git, repo_root, sets_no_eol
+from km.paths import git, repo_root, sets_no_eol, submodule_config
 from km.pins import read_pins, version_key
+from km.remotes import gh, github_repo, no_network, remote, shown
 
-TIMEOUT = 15                      # seconds per network check
-OFFLINE = ("could not resolve host", "failed to connect", "connection timed out", "network is unreachable",
-           "could not connect", "operation timed out", "connection refused", "no answer within")
 UV_DOCS = "https://docs.astral.sh/uv/getting-started/installation/"
 results: list[tuple[str, str, str]] = []
 
@@ -40,31 +36,10 @@ def as_dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def shown(url: str) -> str:
-    """A URL fit to print: without a user or token in it (https://user:token@host/...)."""
-    return re.sub(r"(?<=://)[^/@]+@", "", url)
-
-
-def remote(*args: str, cwd: Path) -> tuple[int, str, str]:
-    """git against a remote, without prompts: a missing login fails at once instead of waiting for
-    a password, a browser window or an editor's askpass box. English messages, so they can be told
-    apart. (code, stdout, stderr); code -1 when it did not answer in time."""
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "",
-           "SSH_ASKPASS": "", "SSH_ASKPASS_REQUIRE": "never", "LC_ALL": "C"}
-    if "GIT_SSH_COMMAND" not in env and git("config", "--get", "core.sshCommand", cwd=cwd).returncode:
-        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o ConnectTimeout=10"
-    try:
-        res = git("-c", "core.askPass=", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=10",
-                  *args, cwd=cwd, env=env, timeout=TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return -1, "", f"no answer within {TIMEOUT} s"
-    return res.returncode, res.stdout, res.stderr
-
-
 def unreachable(name: str, url: str, err: str) -> None:
     """Report a remote that did not answer: offline, an unknown ssh host key, or no login / no access."""
     first = next((ln.strip() for ln in err.splitlines() if ln.strip()), "no message")
-    if any(s in err.lower() for s in OFFLINE):
+    if no_network(err):
         report("FAIL", f"{name}: {shown(url)} cannot be reached ({first})",
                "check the network or VPN; --offline skips the network checks")
     elif "host key verification failed" in err.lower():
@@ -141,13 +116,6 @@ def check_worktree(root: Path) -> None:
                "commit them, contribute them, or discard them; `git status` lists them")
     else:
         report("ok", "no uncommitted changes")
-
-
-def submodule_config(root: Path, key: str) -> dict[str, str]:
-    """{name: value} of submodule.<name>.<key> in .gitmodules; names may hold spaces and dots."""
-    res = git("config", "-f", ".gitmodules", "-z", "--get-regexp", rf"^submodule\..*\.{key}$", cwd=root)
-    pairs = (rec.partition("\n") for rec in res.stdout.split("\0") if rec)
-    return {k[len("submodule."):-len(key) - 1]: v for k, _, v in pairs}
 
 
 def resolve_url(url: str, origin: str) -> str:
@@ -327,23 +295,6 @@ def check_line_endings(root: Path) -> None:
                "for LF here too, on a clean tree: `git rm -rq --cached .`, then `git reset -q --hard`")
     else:
         report("ok", "text files have LF line endings")
-
-def github_repo(url: str) -> tuple[str, str] | None:
-    """(owner, name) of a github.com URL in https or ssh form, else None."""
-    m = re.match(r"(?:https://(?:[^/@]+@)?github\.com/|(?:ssh://)?git@github\.com[:/])([^/]+)/([^/]+?)(?:\.git)?/?$", url)
-    return (m.group(1), m.group(2)) if m else None
-
-
-def gh(*args: str) -> tuple[int, str]:
-    """The GitHub CLI without prompts, with a time limit. (code, stdout); -1 when it did not answer."""
-    env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
-    try:
-        res = subprocess.run(["gh", *args], capture_output=True, stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
-                             env=env, timeout=TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return -1, ""
-    return res.returncode, res.stdout.strip()
-
 
 # Your forks with their parents, in one call: a fork can carry another name than its parent.
 FORKS = ("query { viewer { repositories(isFork: true, first: 100, ownerAffiliations: OWNER) "
