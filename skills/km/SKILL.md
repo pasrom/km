@@ -536,7 +536,8 @@ the last step: report findings, never fix the doc during the review.
    - a `draft` doc goes to `status: review` first (`km approve` signs off review docs only);
    - `km repin <doc>` where a pin is stale or has no hash, so the approval covers the sources just
      checked (run after `km approve`, it would take the approval back); no `pin:` warning is left;
-   - level `ai`: `km approve <doc> --by ai:<model> [--review-by YYYY-MM-DD]`, then commit;
+   - level `ai`: `km approve <doc> --by ai:<model> [--review-by YYYY-MM-DD]`, then commit it on its
+     own, on top of the content commits (see "Approval");
    - level `human`: add `"ai:<model> <date>"` to `reviewed_by`, so the approver sees that an AI
      review ran, commit, and name who should sign off.
    Never change `audience`, `approval` or `type` to make a sign-off pass; `km approve` refuses what
@@ -662,6 +663,10 @@ new date.
   (`human` when absent). An AI sign-off needs a doc marked `audience: internal` that is not a
   `verbatim-block`; customer-facing docs, any other audience and docs without one need a person.
   `km validate` enforces it on signed-off docs (metadata, not authentication).
+- **Commit:** commit the approval on its own, on top of the content commits, as
+  `docs(<scope>): approve <doc> (<approver>)`, never folded into them: the history then shows apart
+  what was written and who signed it off. `km approve` only edits the files; it does not commit.
+  This holds however the sign-off was started, also for a plain `/km approve`.
 - **Pre-reviews:** `reviewed_by` (a list) records them, e.g. a PR bot's model, date and PR; it is not
   an approval. `promote` and `--replace` drop it with the approval; a cross-repo promote also drops
   `approval`, so the target brain decides its own level.
