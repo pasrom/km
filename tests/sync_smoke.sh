@@ -276,6 +276,19 @@ sync >/dev/null; up fourteen; old; hook "$B"
 up fifteen; hook "$B"
 { [ "$rc" = 0 ] && [ -z "$out" ] && [ "$(sha "$B" HEAD)" != "$(sha "$W" HEAD)" ]; } \
   && ok "within 15 minutes the hook does nothing, in silence" || no "hook throttled ($out)"
+# a repository that carries a `km` package of its own: the launcher never runs it (the brain's directory is off sys.path)
+mkdir -p "$B/km" && printf 'open(%s, "w").write("shadowed")\nraise SystemExit(0)\n' "'$T/shadowed'" > "$B/km/__main__.py" && : > "$B/km/__init__.py"
+old; up sixteen; hook "$B"
+{ [ "$rc" = 0 ] && [ ! -e "$T/shadowed" ] && out_has "^km sync: main fast-forwarded" ; } \
+  && ok "a km package in the brain is not what the hook runs" || no "shadowing package via the hook ($out)"
+out="$(cd "$B" && "$REPO/skills/km/bin/km" sync --offline 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$T/shadowed" ] && out_has "ok    branch main has everything the last fetched upstream main (offline) has"; } \
+  && ok "nor what the launcher runs from inside the brain" || no "shadowing package via the launcher ($out)"
+printf 'python-preference = "only-managed"\npython-downloads = "never"\n' > "$B/uv.toml"   # read, this leaves uv no Python to run km with
+mkdir -p "$T/nopy"; out="$(cd "$B" && UV_PYTHON_INSTALL_DIR="$T/nopy" "$REPO/skills/km/bin/km" sync --offline 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "ok    branch main has everything the last fetched upstream main (offline) has"; } \
+  && ok "a uv.toml in the brain does not steer the launcher's uv" || no "uv.toml in the brain ($out)"
+rm -r "$B/km" "$B/uv.toml"
 if [ "$SEP" = ":" ]; then   # a computer with git but nothing to run km with
   mkdir -p "$T/bare" && for c in bash git dirname find; do ln -s "$(command -v $c)" "$T/bare/$c"; done
   old
