@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Runs km from this plugin's own copy, so the skill always uses the km version you installed.
+# The session-start hook runs this in whatever repository a session opens, so nothing from that
+# directory may take part: Python runs with -P (the working directory stays off sys.path, so a
+# `km/` folder in a repository cannot stand in for the package) and uv with --no-config (no
+# uv.toml or [tool.uv] from the repository; an index is given through UV_INDEX_URL where needed).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"   # -P: follow a symlinked skill install
 src="$here/../../../src"
@@ -8,7 +12,7 @@ export PYTHONPATH="$src${PYTHONPATH:+:$PYTHONPATH}"
 uv="$(command -v uv || true)"
 for u in "$HOME/.local/bin/uv" "$HOME/.local/bin/uv.exe"; do [ -n "$uv" ] || { [ -x "$u" ] && uv="$u"; }; done
 if [ -n "$uv" ]; then
-  exec "$uv" run --quiet --no-project --python '>=3.11' --with pyyaml==6.0.3 python -m km "$@"
+  exec "$uv" run --quiet --no-config --no-project --python '>=3.11' --with pyyaml==6.0.3 python -P -m km "$@"
 fi
 # Without uv: a Python 3.11+ under any of its usual names (on Windows `python3` is often only the
 # Store's placeholder). `km doctor` and `km sync` need no PyYAML, so doctor can say what is missing.
@@ -19,7 +23,7 @@ done
 need='import sys; sys.exit(sys.version_info < (3, 11))'
 case "$cmd" in doctor|sync) ;; *) need="import yaml; $need" ;; esac
 for py in python3 python "py -3"; do
-  if $py -c "$need" >/dev/null 2>&1; then exec $py -m km "$@"; fi
+  if $py -c "$need" >/dev/null 2>&1; then exec $py -P -m km "$@"; fi
 done
 # Nothing to run km with: say so in words someone who never used a terminal can act on.
 printf '%s\n' >&2 \
