@@ -19,9 +19,9 @@ import sys
 from pathlib import Path
 
 from km import KM_REF
-from km.paths import git, repo_root, sets_no_eol, submodule_config
+from km.paths import ahead_behind, git, repo_root, rev, sets_no_eol, submodule_config
 from km.pins import read_pins, version_key
-from km.remotes import gh, github_repo, no_network, remote, shown
+from km.remotes import Upstream, find_upstream, first_line, gh, github_repo, no_network, remote, shown
 
 UV_DOCS = "https://docs.astral.sh/uv/getting-started/installation/"
 results: list[tuple[str, str, str]] = []
@@ -38,7 +38,7 @@ def as_dict(value) -> dict:
 
 def unreachable(name: str, url: str, err: str) -> None:
     """Report a remote that did not answer: offline, an unknown ssh host key, or no login / no access."""
-    first = next((ln.strip() for ln in err.splitlines() if ln.strip()), "no message")
+    first = first_line(err)
     if no_network(err):
         report("FAIL", f"{name}: {shown(url)} cannot be reached ({first})",
                "check the network or VPN; --offline skips the network checks")
@@ -78,8 +78,20 @@ def check_uv() -> None:
                        "brain pins when it differs", f"install uv: {UV_DOCS}")
 
 
+def sha_of(listing: str, ref: str) -> str | None:
+    """The commit `ls-remote` lists for `ref`, or None."""
+    return next((sha for sha, _, name in (ln.partition("\t") for ln in listing.splitlines()) if name == ref), None)
+
+
+def has(root: Path, theirs: str, mine: str) -> bool:
+    """Whether `mine` has everything `theirs` has; a commit this clone never fetched counts as not."""
+    return theirs == mine or ((r := ahead_behind(root, mine, theirs)) is not None and r[1] == 0)
+
+
 def check_origin(root: Path, offline: bool) -> str:
-    """Returns the origin URL, "" when there is none."""
+    """Origin answers, and the checked-out branch has everything the brain's upstream has: origin
+    itself, or, for a fork, the upstream brain (then the fork's default branch on the host is
+    checked too). Returns the origin URL, "" when there is none."""
     url = git("remote", "get-url", "origin", cwd=root).stdout.strip()
     if not url:
         report("FAIL", "the brain has no origin to pull from and push to",
@@ -89,24 +101,61 @@ def check_origin(root: Path, offline: bool) -> str:
     if offline:
         report("skip", f"origin {shown(url)} (offline)")
         return url
-    code, out, err = remote("ls-remote", "origin", "HEAD", *([f"refs/heads/{branch}"] if branch else []), cwd=root)
+    up = find_upstream(root)
+    code, out, err = remote("ls-remote", "origin", "HEAD", *({f"refs/heads/{b}" for b in (branch, up.branch) if b}), cwd=root)
     if code != 0:
         unreachable("origin", url, err)
         return url
     report("ok", f"origin {shown(url)} answers")
+    if up.remote != "origin":
+        check_upstream(root, up, branch, out)
+        return url
     if not branch:
         report("skip", "up to date: no branch checked out")
         return url
-    theirs = next((sha for sha, _, ref in (ln.partition("\t") for ln in out.splitlines())
-                   if ref == f"refs/heads/{branch}"), None)
+    theirs = sha_of(out, f"refs/heads/{branch}")
     if theirs is None:
         report("skip", f"up to date: branch {branch} exists only here")
-    elif git("merge-base", "--is-ancestor", theirs, "HEAD", cwd=root).returncode == 0:
+    elif has(root, theirs, rev(root, "HEAD")):
         report("ok", f"branch {branch} has everything origin has")
     else:                             # behind, or diverged: a rebase onto origin's branch fixes both
         report("FAIL", f"branch {branch} lacks changes that are on origin",
-               f"ask Claude to update the brain, or `git pull --rebase origin {branch}`")
+               f"ask Claude to update the brain (`km sync` on a clean {branch}), or `git pull --rebase origin {branch}`")
     return url
+
+
+def check_upstream(root: Path, up: Upstream, branch: str, origin_refs: str) -> None:
+    """There is an upstream beside origin: the checked-out branch, and for a fork its default branch
+    on the host, against the upstream brain's default branch. `km sync` fast-forwards both where it can."""
+    want = f"refs/heads/{up.branch}"
+    code, out, err = remote("ls-remote", up.url, want, cwd=root)
+    if code != 0:
+        unreachable("upstream", up.url, err)
+        return
+    theirs = sha_of(out, want)
+    if theirs is None:
+        report("FAIL", f"upstream {shown(up.url)} has no branch {up.branch}",
+               "`km sync` re-reads the default branch after a rename; otherwise ask the brain's maintainer which it is")
+        return
+    report("ok", f"upstream {shown(up.url)} answers")
+    mine = sha_of(origin_refs, want)
+    if up.fork is None:
+        pass                          # origin is no fork gh knows of: its default branch is not km sync's to move
+    elif mine is not None and has(root, theirs, mine):
+        report("ok", f"your fork's {up.branch} has everything upstream has")
+    else:
+        report("FAIL", f"your fork's {up.branch} lacks changes that are on the upstream brain",
+               "run `km sync` (or ask Claude to sync the brain): it updates the fork when that is a fast-forward")
+    if not branch:
+        report("skip", "up to date: no branch checked out")
+    elif has(root, theirs, rev(root, "HEAD")):
+        report("ok", f"branch {branch} has everything upstream has")
+    elif branch == up.branch:
+        report("FAIL", f"branch {branch} lacks changes that are on the upstream brain",
+               f"run `km sync` (or ask Claude to sync the brain): it fast-forwards a clean {branch}")
+    else:                             # a work branch starts from some commit and is behind by design: not a failure
+        report("note", f"branch {branch} lacks changes that are on the upstream brain",
+               f"run `km sync`, then rebase {branch} onto upstream's {up.branch} when you are ready")
 
 
 def check_worktree(root: Path) -> None:

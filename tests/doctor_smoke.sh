@@ -50,6 +50,24 @@ fix="$(sed -n 's/.*`\(git pull --rebase origin main\)`.*/\1/p' <<< "$out")"
 doctor --offline
 { [ "$rc" = 0 ] && out_has "skip  origin .* (offline)"; } && ok "--offline skips the origin" || no "--offline ($out)"
 
+# origin is a fork: the upstream brain (remote `upstream`) is what the branch and the fork must have
+git -C "$B" push -q origin main && git init -q --bare -b main "$T/up.git" && git -C "$B" push -q "$T/up.git" main && git -C "$B" remote add upstream "$T/up.git"
+doctor
+{ [ "$rc" = 0 ] && out_has "ok    upstream .*up.git answers" && out_has "ok    your fork's main has everything upstream has" \
+  && out_has "ok    branch main has everything upstream has"; } && ok "a fork at upstream passes" || no "fork at upstream ($out)"
+git clone -q "$T/up.git" "$T/upw" && git -C "$T/upw" commit -q --allow-empty -m newer && git -C "$T/upw" push -q origin main
+doctor
+{ [ "$rc" = 1 ] && out_has "FAIL  your fork's main lacks changes that are on the upstream brain" \
+  && out_has "FAIL  branch main lacks changes that are on the upstream brain" && out_has "fix: run .km sync."; } \
+  && ok "a fork behind the upstream brain fails, with km sync as the fix" || no "fork behind upstream ($out)"
+git -C "$B" checkout -q -b topic; doctor
+{ [ "$rc" = 1 ] && out_has "note  branch topic lacks changes that are on the upstream brain" && out_has "then rebase topic onto upstream's main" \
+  && ! out_has "FAIL  branch topic"; } && ok "a work branch behind upstream is a note that names the rebase" || no "work branch behind upstream ($out)"
+git -C "$B" checkout -q main
+{ ( cd "$B" && km sync >/dev/null 2>&1 ) && doctor && [ "$rc" = 0 ] && out_has "ok    your fork's main has everything upstream has"; } \
+  && ok "km sync brings the branch and the fork up to upstream, and doctor passes" || no "km sync fixes it ($out)"
+git -C "$B" branch -q -D topic; git -C "$B" remote remove upstream
+
 git -C "$B" remote set-url origin "file://$T/nope.git"
 start=$SECONDS; doctor
 { [ "$rc" = 1 ] && out_has "FAIL  origin: no access to" && out_has "fix: sign in" && [ $((SECONDS-start)) -lt 20 ]; } \
