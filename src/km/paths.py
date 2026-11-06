@@ -37,6 +37,13 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
+def submodule_config(root: Path, key: str) -> dict[str, str]:
+    """{name: value} of submodule.<name>.<key> in .gitmodules; names may hold spaces and dots."""
+    res = git("config", "-f", ".gitmodules", "-z", "--get-regexp", rf"^submodule\..*\.{key}$", cwd=root)
+    pairs = (rec.partition("\n") for rec in res.stdout.split("\0") if rec)
+    return {k[len("submodule."):-len(key) - 1]: v for k, _, v in pairs}
+
+
 def repo_root() -> Path:
     """The brain km works on: KM_ROOT if set (the CLI sets it from --root), else the git work tree
     containing the current directory, else the current directory."""
