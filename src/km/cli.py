@@ -7,7 +7,8 @@ A brain pins a km release by commit (see km.pins) for CI (its workflows) and its
 When this km is another version, a brain command runs the commit CI runs instead (through uvx), so
 local results match CI; `KM_LOCAL=1` keeps this km. When that is not possible (no uv, offline, a
 movable tag instead of a commit, workflows that disagree) it runs this km and says so. A hook pinned
-apart from CI gets a note.
+apart from CI gets a note. `init`, `upgrade`, `doctor`, `list` and `sync` (NO_PIN_CHECK) always run
+this km: they write the pins, check the km that runs, only read, or act on the clone.
 """
 from __future__ import annotations
 

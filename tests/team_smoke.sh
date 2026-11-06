@@ -279,6 +279,12 @@ rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$
 rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$O" --cites any.md --dir . 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.8.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
   && ok "an option the pinned km lacks says to upgrade" || no "option newer than the pin ($rc: $out)"
+for c in init upgrade doctor list sync; do   # NO_PIN_CHECK in cli.py: they run the km that was started
+  rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km "$c" --root "$O" --help 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && [ ! -e "$F/runner-args" ] && ! echo "$out" | grep -q "running that one"; } \
+    && ok "km $c runs this km, not the older one the brain pins" \
+    || no "km $c with an older pin ($rc: $(cat "$F/runner-args" 2>/dev/null) $out)"
+done
 repin "$V09_SHA" v0.9.0 "$S99" v99.0.0 "$O"/.github/workflows/*.yml "$O/.pre-commit-config.yaml"
 rm -f "$F/runner-args"; KM_LOCAL=1 KM_PINNED_RUNNER="$F/fake-uvx" km validate --root "$O" >/dev/null 2>&1
 [ ! -e "$F/runner-args" ] && ok "KM_LOCAL=1 keeps this km" || no "KM_LOCAL=1 keeps this km"
