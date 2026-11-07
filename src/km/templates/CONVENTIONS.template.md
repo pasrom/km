@@ -4,12 +4,7 @@ This file defines the rules every AI assistant must follow when working with thi
 
 ## Frontmatter Schema
 
-The machine-readable schema is [km's base schema](https://github.com/pasrom/km/blob/<KM_SHA>/src/km/schema.base.yaml) (km <KM_VERSION>), a strict profile of the
-[Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
-that versions with km (`/km upgrade` moves the pin). Repo-specific scope lives in
-[`schema.local.yaml`](schema.local.yaml), merged over the base at runtime. Both are enforced by
-`km validate` (run manually, in CI, or via the pre-commit hook). The block below is the human
-summary; the base schema and `schema.local.yaml` are authoritative.
+The machine-readable schema is [km's base schema](https://github.com/pasrom/km/blob/<KM_SHA>/src/km/schema.base.yaml) (km <KM_VERSION>), a strict profile of the [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) that versions with km (`/km upgrade` moves the pin). Repo-specific scope lives in [`schema.local.yaml`](schema.local.yaml), merged over the base at runtime. Both are enforced by `km validate` (run manually, in CI, or via the pre-commit hook). The block below is the human summary; the base schema and `schema.local.yaml` are authoritative.
 
 Every markdown file (except CLAUDE.md, README.md, CONVENTIONS.md, and SKILL.md files) must have YAML frontmatter:
 
@@ -101,16 +96,12 @@ Each main folder should have an `_index.md` with:
 
 ## Audience
 
-Documents have different audiences. Set the optional `audience:` field to `customer` for
-customer-shippable content; omit it (or set `internal`) otherwise. AI assistants can apply
-stricter rules to `audience: customer` documents (e.g. no internal identifiers, no build-system
-specifics) — define the exact rules for this repository here if needed.
+Documents have different audiences. Set the optional `audience:` field to `customer` for customer-shippable content; omit it (or set `internal`) otherwise. AI assistants can apply stricter rules to `audience: customer` documents (e.g. no internal identifiers, no build-system specifics) — define the exact rules for this repository here if needed.
 
 ## Cross-References
 
 - Use relative markdown links: `[Title](../path/to/file.md)`
-- `related:`, `supersedes:`, `superseded_by:` frontmatter fields use **repo-root-relative** paths
-  (e.g., `concepts/foo.md`), not paths relative to the linking file
+- `related:`, `supersedes:`, `superseded_by:` frontmatter fields use **repo-root-relative** paths (e.g., `concepts/foo.md`), not paths relative to the linking file
 - Never duplicate content — link instead
 
 ## Obsolescence
