@@ -169,10 +169,12 @@ jobs:
           # from the branch, so no pin pushed there by hand is committed under this workflow's
           # name. While a pull request is open and its commit moves such a submodule, the run
           # writes nothing (--hold-if-moved): the move would be lost over a passing failure and
-          # come back the next day. One that fails for good (a private mount of another owner,
-          # say) and that the branch does not move holds nothing back.
+          # come back the next day. Only for a head --branch-prs accepted (seen): a branch someone
+          # pushed more onto is regenerated, the failing submodule at main's pin. One that fails
+          # for good (a private mount of another owner, say) and that the branch does not move
+          # holds nothing back.
           hold=()
-          [ "$open" = true ] && hold=(--hold-if-moved refs/bump/proposed)
+          [ "$open" = true ] && [ "$seen" = true ] && hold=(--hold-if-moved refs/bump/proposed)
           rc=0
           python3 .github/scripts/bump-mounted-pins.py --write "${hold[@]}" \
             --emit-message /tmp/pin-message --emit-body /tmp/pin-body || rc=$?

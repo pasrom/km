@@ -64,8 +64,8 @@ OLD_COPIES = {
 # shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
 # is still one of them is replaced by the current template, an edited one is left with a note.
 SHIPPED = {
-    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65"},
-    "team/bump-mounted-pins.py": {"52f798d7ca2f7d32"},
+    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e"},
+    "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
 }
 USES = re.compile(r"(?m)^([ \t]*(?:-[ \t]+)?uses:[ \t]*([^@\s]+)@)\S+.*$")   # 1: up to the @, 2: the action
 

@@ -50,8 +50,8 @@ PY
 
 # --- the resolve step against a local origin ---
 # A stand-in for the script: --branch-prs prints $PRS ("open seen"), --write sets the gitlink of
-# brains/m to $NEW; $FAILED (paths) could not be resolved, and with --hold-if-moved REF it writes
-# nothing when REF's commit moves one of them, as the script does.
+# brains/m to $NEW; $FAILED (paths) could not be resolved and stay at main's pin, and with
+# --hold-if-moved REF it writes nothing when REF's commit moves one of them, as the script does.
 if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "  skip: the resolve step needs bash 4 or newer (mapfile), this is ${BASH_VERSION}"
 else
@@ -73,7 +73,7 @@ failed = os.environ.get("FAILED", "").split()
 ls = lambda ref, p: subprocess.run(["git", "ls-tree", ref, "--", p], capture_output=True, text=True, check=True).stdout
 hold = "--hold-if-moved" in args and any(ls(args[args.index("--hold-if-moved") + 1], p) != ls(args[args.index("--hold-if-moved") + 1] + "^", p)
                                           for p in failed)
-if os.environ["NEW"] != os.environ["MAIN_PIN"] and not hold:
+if os.environ["NEW"] != os.environ["MAIN_PIN"] and "brains/m" not in failed and not hold:
     subprocess.run(["git", "update-index", "--cacheinfo", f"160000,{os.environ['NEW']},brains/m"], check=True)
     open(args[args.index("--emit-message") + 1], "w").write("move\n")
     open(args[args.index("--emit-body") + 1], "w").write("body\n")
@@ -82,12 +82,17 @@ PY
   A="$(printf 'a%.0s' {1..40})"; B="$(printf 'b%.0s' {1..40})"; C="$(printf 'c%.0s' {1..40})"
   ( cd "$W" && git update-index --add --cacheinfo "160000,$A,brains/m" && git add .gitmodules .github && git "${G[@]}" commit -q -m main \
     && git remote add origin "$O" && git push -q origin main ) && git clone -q "$O" "$T/side"
-  branch_with(){   # the bump branch on origin, proposing pin $1; none: no branch. Made in a clone of its
+  branch_with(){   # the bump branch on origin, its commit setting pin $1 (of brains/m, or PATH=PIN);
+    # none: no branch. Each further pin is a commit pushed by hand on top. Made in a clone of its
     # own, since the step's fetch makes the work tree's repository shallow.
     git -C "$O" update-ref -d refs/heads/chore/bump-mounted-pins
     [ "$1" = none ] && return
-    ( cd "$T/side" && git checkout -q -B tmp origin/main && git update-index --cacheinfo "160000,$1,brains/m" && git "${G[@]}" commit -q -m p \
-      && git push -q -f origin HEAD:refs/heads/chore/bump-mounted-pins )
+    ( cd "$T/side" && git checkout -q -B tmp origin/main || exit
+      for p in "$@"; do
+        [ "$p" = "${p#*=}" ] && p="brains/m=$p"
+        git update-index --add --cacheinfo "160000,${p#*=},${p%%=*}" && git "${G[@]}" commit -q -m "$p" || exit
+      done
+      git push -q -f origin HEAD:refs/heads/chore/bump-mounted-pins )
   }
   step(){   # PRS NEW [FAILED]: run the step, print changed= and problems=
     ( cd "$W" && git reset -q --hard main && : > "$T/out" && rm -f "$T"/pin-* \
@@ -99,9 +104,11 @@ PY
   branch_with none; [ "$(r "false false" "$B")" = "changed=true problems=0" ] && ok "no bump branch: the move is proposed" || no "no branch ($(r "false false" "$B"))"
   branch_with "$B"; [ "$(r "true true" "$B")" = "changed=false problems=0" ] && ok "an open pull request already proposing these pins: nothing is pushed" || no "open PR, same pins ($(r "true true" "$B"))"
   branch_with "$B"; [ "$(r "true true" "$C")" = "changed=true problems=0" ] && ok "an open pull request with older pins is moved on" || no "open PR, newer pins ($(r "true true" "$C"))"
-  branch_with "$B"; [ "$(r "true true" "$C" brains/m)" = "changed=false problems=1" ] && ok "a mount that fails while the open pull request moves it: nothing is pushed, the run fails" || no "open PR moving a failing mount ($(r "true true" "$C" brains/m))"
+  # brains/f fails, brains/m moves on. "true false": --branch-prs rejects the head (a commit pushed onto it).
+  branch_with "brains/f=$B"; [ "$(r "true true" "$C" brains/f)" = "changed=false problems=1" ] && ok "a mount that fails while the open pull request's own commit moves it: nothing is pushed, the run fails" || no "open PR moving a failing mount ($(r "true true" "$C" brains/f))"
+  branch_with "brains/f=$B" "brains/f=$C"; [ "$(r "true false" "$C" brains/f)" = "changed=true problems=1" ] && ok "a commit pushed by hand onto the open pull request, a mount fails that it moves: the branch is regenerated, not held" || no "hand-pushed head, failing mount ($(r "true false" "$C" brains/f))"
   branch_with "$B"; [ "$(r "true true" "$C" brains/x)" = "changed=true problems=1" ] && ok "a mount that fails and the open pull request does not move: the others are still proposed, the run fails" || no "open PR, a failing mount it does not move ($(r "true true" "$C" brains/x))"
-  branch_with none; [ "$(r "false false" "$B" brains/m)" = "changed=true problems=1" ] && ok "a mount that fails with no pull request open: the others are still proposed, the run fails" || no "no PR, a failing mount ($(r "false false" "$B" brains/m))"
+  branch_with none; [ "$(r "false false" "$B" brains/f)" = "changed=true problems=1" ] && ok "a mount that fails with no pull request open: the others are still proposed, the run fails" || no "no PR, a failing mount ($(r "false false" "$B" brains/f))"
   branch_with "$B"; [ "$(r "false false" "$B")" = "changed=true problems=0" ] && ok "a branch whose pull request never opened is pushed again, so the pull request opens" || no "M1 retry ($(r "false false" "$B"))"
   branch_with "$B"; [ "$(r "false true" "$B")" = "changed=false problems=0" ] && ok "a pull request closed on these pins is not proposed again" || no "closed PR ($(r "false true" "$B"))"
   branch_with none; [ "$(r "false false" "$A")" = "changed=false problems=0" ] && ok "nothing to move: no change" || no "nothing to move ($(r "false false" "$A"))"
