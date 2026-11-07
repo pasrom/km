@@ -117,14 +117,21 @@ a brain from the copy-in days into one that pins km.
 
 A team brain also keeps direct pushes off `main`, which the host may not enforce for a private
 repository on a free plan: its pre-commit config adds `no-commit-to-branch` for `main` from
-`pre-commit/pre-commit-hooks`, and a `main-guard` workflow fails and opens an issue when a commit
-reaches `main` without a merged pull request. `km upgrade` adds whichever a team brain lacks.
+`pre-commit/pre-commit-hooks` and a pre-push hook that refuses `git push origin main` (`pre-commit install`
+installs both, the config names both hook types and needs pre-commit 3.2 or newer; pre-commit checks
+the first ref of a push only and skips a push whose commits the remote already has on another ref, so
+a push of several refs at once or a first push of `main` gets past it), and a `main-guard` workflow fails and opens an
+issue when a commit reaches `main` without a merged pull request. `km upgrade` adds whichever a team
+brain lacks. The plugin itself refuses the file-edit tools (Edit, Write, MultiEdit, NotebookEdit) inside
+a mounted brain (a brain checked out as a submodule of a brain, found through git, not by path) and
+in a mount that is not checked out yet: a correction goes through a pull request against that
+brain, in a throwaway clone, as the skill describes; a shell edit is not caught.
 
 ## Layout
 
 ```
 .claude-plugin/        plugin and marketplace manifests
-hooks/                 the plugin's SessionStart hook: km sync in a brain
+hooks/                 the plugin's hooks: km sync when a session starts in a brain, no edit in a mounted brain
 action.yml             GitHub Action: installs km at the action's version
 .pre-commit-hooks.yaml pre-commit hook km-validate
 src/km/                the package: cli, validate, gen_index, demote, serve, promote, approve, repin, cite, cites, init, upgrade, doctor, sync, list_docs
@@ -137,8 +144,10 @@ tests/                 smoke tests
 ## Development
 
 The smoke tests need Python 3.11+, PyYAML and git: `bash tests/gate_smoke.sh`, `index_smoke.sh`,
-`team_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh`, `list_smoke.sh`. CI runs them plus the GitHub Action on every pull request, and
-`encoding_smoke.sh`, `doctor_smoke.sh` and `sync_smoke.sh` on Windows (team_smoke runs the encoding test on macOS under non-UTF-8 locales). A release bumps
+`team_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh`, `list_smoke.sh`, `skill_smoke.sh` (the split of the
+skill lost nothing, against the frozen pre-split SKILL.md) and `hook_smoke.sh` (the plugin's edit guard;
+the pre-push hook too where pre-commit is installed). CI runs them plus the GitHub Action on every pull request, and
+`encoding_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh` and `hook_smoke.sh` on Windows (team_smoke runs the encoding test on macOS under non-UTF-8 locales). A release bumps
 `__version__` in `src/km/__init__.py`, `version` in `.claude-plugin/plugin.json` and the version in
 this README together; merging that to main is the release, CI tags `vX.Y.Z` once main is green.
 

@@ -2,6 +2,7 @@
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })"   # -W: a path Python on Windows reads
 SEP=":"; pwd -W >/dev/null 2>&1 && SEP=";"                                            # PYTHONPATH's separator
 PY="${PYTHON:-python3}"
+G=(-c user.name=t -c user.email=t@t -c commit.gpgsign=false -c protocol.file.allow=always)   # git options for a test repo
 # Any read, write or subprocess call in km that relies on the system's default encoding fails the
 # tests: on Windows that default is cp1252, not UTF-8.
 km(){ PYTHONWARNDEFAULTENCODING=1 PYTHONWARNINGS=error::EncodingWarning \
@@ -15,9 +16,9 @@ out_has(){ LC_ALL=C grep -aq "$1" <<< "$out"; }   # $out may be in a non-UTF-8 e
 # A stand-in for the km repository with release tags, for `km init`/`km upgrade`, which pin a
 # release by its commit: v0.9.0 (lightweight) and this km's version (annotated, as releases may be).
 fake_km_remote(){
-  local d="$1" g=(-c user.name=t -c user.email=t@t)
-  git init -q "$d" && git -C "$d" "${g[@]}" commit -q --allow-empty -m one && git -C "$d" tag v0.9.0
-  git -C "$d" "${g[@]}" commit -q --allow-empty -m two && git -C "$d" "${g[@]}" tag -a -m release "v$(km --version)"
+  local d="$1"
+  git init -q "$d" && git -C "$d" "${G[@]}" commit -q --allow-empty -m one && git -C "$d" tag v0.9.0
+  git -C "$d" "${G[@]}" commit -q --allow-empty -m two && git -C "$d" "${G[@]}" tag -a -m release "v$(km --version)"
 }
 # repin OLD_SHA OLD_VERSION NEW_SHA NEW_VERSION FILE...: rewrite a km pin in both formats (see km.pins)
 repin(){ local f; for f in "${@:5}"; do sed -i.bak "s|$1 # $2|$3 # $4|; s|$1  # frozen: $2|$3  # frozen: $4|" "$f" && rm -f "$f.bak"; done; }

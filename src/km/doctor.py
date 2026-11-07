@@ -14,12 +14,13 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
 
 from km import KM_REF
-from km.paths import ahead_behind, git, repo_root, rev, sets_no_eol, submodule_config
+from km.paths import ahead_behind, git, git_path, repo_root, rev, sets_no_eol, submodule_config
 from km.pins import read_pins, version_key
 from km.remotes import Upstream, find_upstream, first_line, gh, github_repo, no_network, remote, shown
 
@@ -288,31 +289,51 @@ def check_plugins(root: Path) -> None:
                    "or add it in the Claude app under Customize, Plugins; then restart Claude")
 
 
-def check_hook(root: Path) -> None:
-    """The brain's pre-commit config does nothing until `pre-commit install` put it in git's hooks:
-    then km validate (and in a team brain the refusal of a commit on main) never runs locally."""
-    if not (root / ".pre-commit-config.yaml").is_file():
-        return
-    hooks = Path(git("rev-parse", "--git-path", "hooks", cwd=root).stdout.strip())   # honours core.hooksPath
-    hook = (hooks if hooks.is_absolute() else root / hooks) / "pre-commit"
+def _hook_state(hook: Path) -> tuple[bool, bool]:
+    """Whether `hook` is a git hook pre-commit wrote, and whether git can run it (git skips a hook it
+    cannot execute)."""
     try:
         ours = any(m in hook.read_text(encoding="utf-8", errors="replace") for m in ("pre-commit.com", "pre_commit"))
     except OSError:
-        ours = False
-    if ours and (os.name == "nt" or os.access(hook, os.X_OK)):     # git skips a hook it cannot execute
-        report("ok", "the pre-commit hook is installed")
+        return False, False
+    return ours, os.name == "nt" or os.access(hook, os.X_OK)
+
+
+def install_hook_types(config: str) -> list[str]:
+    """The hook types `pre-commit install` writes for this config: its `default_install_hook_types`
+    (a one-line or a block list, items quoted or not), pre-commit alone when it sets none."""
+    m = re.search(r"(?m)^default_install_hook_types:[ \t]*(\[([^\]]*)\]|\n((?:[ \t]+-[^\n]*\n?)+))", config)
+    if not m:
+        return ["pre-commit"]
+    items = m.group(2).split(",") if m.group(2) is not None else re.findall(r"(?m)^[ \t]+-[ \t]*(.*)$", m.group(3))
+    return [t for t in (i.strip().strip("'\"") for i in items) if t]
+
+
+def check_hook(root: Path) -> None:
+    """The brain's pre-commit config does nothing until `pre-commit install` put it in git's hooks:
+    then km validate (and in a team brain the refusal of a commit on main) never runs locally.
+    `pre-commit install` writes one git hook per type in `default_install_hook_types` (pre-commit
+    alone when unset; a team brain names pre-push too), so each of those is checked."""
+    config = root / ".pre-commit-config.yaml"
+    if not config.is_file():
         return
-    if ours:
-        report("FAIL", "the pre-commit hook is there but not executable, so git skips it", f'`chmod +x "{hook}"`')
-    elif git("config", "--get", "core.hooksPath", cwd=root).stdout.strip():
-        report("FAIL", "the pre-commit hook is not installed, and git takes its hooks from core.hooksPath "
-                       "(another hook manager), where `pre-commit install` refuses to write",
-               "run pre-commit from that hook manager, or `git config --unset core.hooksPath` (where it is set) "
-               "and then `pre-commit install`")
-    else:
-        how = "`pre-commit install`" if shutil.which("pre-commit") else "`uv tool install pre-commit`, then `pre-commit install`"
-        report("FAIL", "the pre-commit hook is not installed: the brain's checks do not run when you commit",
-               f"{how} in the brain")
+    hooks = git_path(root, "hooks")                                    # honours core.hooksPath
+    for kind in install_hook_types(config.read_text(encoding="utf-8", errors="replace")):
+        hook = hooks / kind
+        ours, runnable = _hook_state(hook)
+        if ours and runnable:
+            report("ok", f"the {kind} hook is installed")
+        elif ours:
+            report("FAIL", f"the {kind} hook is there but not executable, so git skips it", f'`chmod +x "{hook}"`')
+        elif git("config", "--get", "core.hooksPath", cwd=root).stdout.strip():
+            report("FAIL", f"the {kind} hook is not installed, and git takes its hooks from core.hooksPath "
+                           "(another hook manager), where `pre-commit install` refuses to write",
+                   "run pre-commit from that hook manager, or `git config --unset core.hooksPath` (where it is set) "
+                   "and then `pre-commit install`")
+        else:
+            how = "`pre-commit install`" if shutil.which("pre-commit") else "`uv tool install pre-commit`, then `pre-commit install`"
+            what = "the brain's checks do not run when you commit" if kind == "pre-commit" else "nothing refuses a push to main locally"
+            report("FAIL", f"the {kind} hook is not installed: {what}", f"{how} in the brain")
 
 
 def check_line_endings(root: Path) -> None:
