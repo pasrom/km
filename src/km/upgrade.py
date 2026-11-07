@@ -16,7 +16,8 @@
   - a legacy schema.yaml becomes schema.local.yaml, the overlay it already acts as;
   - a team brain gets the Dependabot config, and the obsolete `team_brain:` line goes.
 - A team brain gets the main-guard workflow and the pre-commit hooks that refuse a commit on main
-  and a push to main, whichever it lacks.
+  and a push to main, whichever it lacks, and its km ci workflow gets the `workflow_dispatch`
+  trigger, so a workflow that opens a pull request with GITHUB_TOKEN can run the check on it.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
 
@@ -30,6 +31,9 @@ import hashlib
 import re
 import shutil
 import sys
+from pathlib import Path
+
+import yaml
 
 from km import KM_REF
 from km.init import ensure_lf, pin_values, template, with_team_hooks
@@ -61,6 +65,40 @@ def fingerprint(text: str) -> str:
     between versions, the content did not)."""
     content = "\n".join(ln.rstrip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#"))
     return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
+def _parse(text: str):
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+
+
+def with_dispatch(text: str) -> str | None:
+    """The workflow with `workflow_dispatch:` added at the end of its `on:` block (unchanged when it
+    has the trigger), or None when the edit cannot be made safely (a one-line `on:`, or a layout this
+    edit does not handle): the result must parse to the same workflow with exactly that trigger added."""
+    before = _parse(text)
+    on = before.get(True, before.get("on")) if isinstance(before, dict) else None   # YAML 1.1 reads a bare `on` as true
+    if isinstance(on, (dict, list, str)) and "workflow_dispatch" in on:
+        return text
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    top = next((i for i, ln in enumerate(lines) if re.match(r"(on|['\"]on['\"]):\s*(#.*)?$", ln)), None)
+    if top is None or not isinstance(on, dict):
+        return None
+    end, pad = top + 1, None             # the `on:` block ends before the next top-level line
+    for i in range(top + 1, len(lines)):
+        ln = lines[i]
+        if ln.strip() and not ln[0].isspace():
+            break
+        if ln.strip() and not ln.lstrip().startswith("#"):
+            pad = pad or ln[:len(ln) - len(ln.lstrip())]
+            end = i + 1
+    out = "".join(lines[:end]) + f"{pad}workflow_dispatch:\n" + "".join(lines[end:])
+    key = True if True in before else "on"
+    return out if pad and _parse(out) == {**before, key: {**on, "workflow_dispatch": None}} else None
 
 
 def main() -> int:
@@ -140,6 +178,14 @@ def main() -> int:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 write_text(p, template(tpl, {}))
                 done.append(f"added {rel}")
+        ci = str(Path(".github/workflows/ci.yml"))              # as read_pins names it, with the OS's separator
+        if ci in pins and (got := with_dispatch(text := (root / ci).read_text(encoding="utf-8"))) != text:   # km's ci workflow
+            if got is None:
+                done.append(f"could not add the workflow_dispatch trigger to {ci}: add `workflow_dispatch:` under its `on:` "
+                            f"by hand, so a pull request a workflow opens can run the check")
+            else:
+                write_text(root / ci, got)
+                done.append(f"added the workflow_dispatch trigger to {ci}")
         hook = root / ".pre-commit-config.yaml"
         if not hook.is_file():
             done.append(f"no {hook.name}: nothing refuses a commit on main or a push to main locally; `km init` writes one")

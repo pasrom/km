@@ -428,6 +428,36 @@ readme = {v for ln in lines for v in re.findall(r"\bv\d+\.\d+\.\d+\b", ln)}
 sys.exit(0 if "v" + json.load(open(f"{repo}/.claude-plugin/plugin.json"))["version"] == ref and readme == {ref} else 1)
 PY
 
+# --- ci.yml takes workflow_dispatch, so a workflow that opens a pull request can run the check on it ---
+on_keys(){ kmpy -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print(" ".join(d.get(True, d.get("on"))))' "$1"; }
+sans_dispatch(){ kmpy -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); d[True].pop("workflow_dispatch", None); print(d)' "$1"; }
+[ "$(on_keys "$T/.github/workflows/ci.yml")" = "push pull_request workflow_dispatch" ] && ok "init writes ci.yml with workflow_dispatch" || no "init ci.yml triggers ($(on_keys "$T/.github/workflows/ci.yml"))"
+[ "$(on_keys "$O/.github/workflows/ci.yml")" = "push pull_request workflow_dispatch" ] && ok "a copied-in ci.yml is rewritten with workflow_dispatch" || no "old ci.yml triggers"
+D="$F/dispatch"; mkdir -p "$D/.github/workflows"; printf 'meta: {profile: d}\n' > "$D/schema.local.yaml"
+grep -v "workflow_dispatch\|GITHUB_TOKEN starts no\|dispatches this one" "$T/.github/workflows/ci.yml" > "$D/.github/workflows/ci.yml"
+printf '  extra:\n    steps: [{run: make}]\n' >> "$D/.github/workflows/ci.yml"     # the brain's own job stays
+before="$(sans_dispatch "$D/.github/workflows/ci.yml")"
+out="$(km upgrade --root "$D" 2>&1)"
+{ [ "$(on_keys "$D/.github/workflows/ci.yml")" = "push pull_request workflow_dispatch" ] && out_has "added the workflow_dispatch trigger" \
+  && [ "$(sans_dispatch "$D/.github/workflows/ci.yml")" = "$before" ]; } \
+  && ok "upgrade adds workflow_dispatch to a km ci.yml without it, and changes nothing else" || no "upgrade adds workflow_dispatch ($out; $(cat "$D/.github/workflows/ci.yml"))"
+cp "$D/.github/workflows/ci.yml" "$F/dispatch.before"; out="$(km upgrade --root "$D" 2>&1)"
+{ cmp -s "$D/.github/workflows/ci.yml" "$F/dispatch.before" && ! out_has "workflow_dispatch"; } && ok "a second upgrade leaves the trigger as it is" || no "dispatch idempotent ($out)"
+printf 'on:\n  pull_request:\n# workflow_dispatch: not yet\njobs:\n  v:\n    steps:\n      - uses: %s\n' "$PINW" > "$D/.github/workflows/ci.yml"
+out="$(km upgrade --root "$D" 2>&1)"
+[ "$(on_keys "$D/.github/workflows/ci.yml")" = "pull_request workflow_dispatch" ] && ok "a comment that names the trigger does not count as the trigger" || no "dispatch behind a comment ($out)"
+printf 'jobs:\n  v:\n    steps:\n      - uses: %s\non:\n  pull_request:' "$PINW" > "$D/.github/workflows/ci.yml"   # on: last, no newline at the end
+out="$(km upgrade --root "$D" 2>&1)"
+[ "$(on_keys "$D/.github/workflows/ci.yml")" = "pull_request workflow_dispatch" ] && ok "an on: block at the end of a file without a final newline gets the trigger" || no "dispatch at the end ($out)"
+printf 'on: [push, pull_request]\njobs:\n  v:\n    steps:\n      - uses: %s\n' "$PINW" > "$D/.github/workflows/ci.yml"
+cp "$D/.github/workflows/ci.yml" "$F/dispatch.before"; out="$(km upgrade --root "$D" 2>&1)"
+{ cmp -s "$D/.github/workflows/ci.yml" "$F/dispatch.before" && out_has "add .workflow_dispatch:. under its .on:. by hand"; } \
+  && ok "a one-line on: is left for a hand edit, with a note" || no "one-line on ($out)"
+cp "$T/.github/workflows/staleness.yml" "$D/.github/workflows/"                   # still a team brain without km in ci.yml
+printf 'on:\n  pull_request:\njobs:\n  v:\n    steps:\n      - run: make\n' > "$D/.github/workflows/ci.yml"
+out="$(km upgrade --root "$D" 2>&1)"
+[ "$(on_keys "$D/.github/workflows/ci.yml")" = "pull_request" ] && ok "a ci.yml that does not install km gets no trigger" || no "own ci.yml gets no trigger ($out)"
+
 # --- main guard: the hook that refuses a commit on main, and the workflow that flags a direct push ---
 hooks_of(){ kmpy -c 'import sys, yaml
 print(" ".join(r["repo"].rsplit("/", 1)[-1] + ":" + h["id"] + ":" + ",".join(h.get("args", []))
