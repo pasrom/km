@@ -106,6 +106,8 @@ generated indexes, a README, and CI that installs km through this repository's G
 - run: km gen-index --check
 ```
 
+The team brain's ci workflow also runs on `workflow_dispatch`: a pull request that a workflow opens with `GITHUB_TOKEN` starts no `pull_request` run, so such a workflow (a pin bump, say) dispatches ci on its branch and the pull request gets its check. `km upgrade` adds the trigger to a km ci workflow that lacks it.
+
 The pre-commit hook works the same way (`repo: https://github.com/pasrom/km`,
 `rev: <commit>  # frozen: v1.9.0`, `id: km-validate`). Every pin names a release by its commit, so a
 tag moved later cannot change what a brain runs; the version rides along as a comment, and
