@@ -1,9 +1,10 @@
 """The skill's core keeps its limits, and its dispatch table and reference files stay consistent.
 
-The core SKILL.md: 500 lines and CORE_BYTES, a description of at most 1024 characters, every
-reference file named by its full `${CLAUDE_SKILL_DIR}/reference/` path and every such path
-resolving, a contents list in a reference file over 100 lines, and a row in the dispatch table (the verb
-opening a code span or a quoted phrase) for every `/km <verb>` the README or the skill's own files mention, `help` included.
+The core SKILL.md: CORE_BYTES, a description of at most 1024 characters, every reference file
+named by its full `${CLAUDE_SKILL_DIR}/reference/` path and every such path resolving, a contents
+list in a reference file over CONTENTS_BYTES, no line over MAX_LINE characters in any Markdown file
+under skills/, and a row in the dispatch table (the verb opening a code span or a quoted phrase) for
+every `/km <verb>` the README or the skill's own files mention, `help` included.
 
     python3 tests/skill_inventory.py [--skill skills/km]
 """
@@ -21,6 +22,19 @@ REF = "${CLAUDE_SKILL_DIR}/reference"
 # table, so 12,000 bytes is about 4,780 tokens, 4 percent under the budget. Re-measure the ratio if
 # the file's character changes a lot.
 CORE_BYTES = 12000
+# The limits below were line counts (500 for the core, a contents list over 100 lines), which meant
+# something while the Markdown was hard-wrapped near 100 columns; with one paragraph per line a file
+# has as many lines as paragraphs. Measured on the hard-wrapped files (4777eb7), the reference files
+# averaged 69 bytes a line and SKILL.md 76, so 500 lines were about 38,000 bytes, three times
+# CORE_BYTES: the core's line limit never bound and goes without a replacement. The 100-line rule
+# split the reference files into github-reads, pins-and-cites and queue (3,433 to 3,702 bytes,
+# under) and setup, validate-and-gate, review-and-pr and brains (8,064 to 13,599 bytes, over); 6,000
+# bytes keeps that split with room on both sides.
+CONTENTS_BYTES = 6000
+# Claude's Read tool cuts a line after 2,000 characters, so the rest of a longer paragraph is never
+# seen. Characters, not bytes, since that is what it counts; 100 under it, so an edit that nears the
+# cut fails here first. All of skills/, not only this skill's files.
+MAX_LINE = 1900
 
 
 def main() -> int:
@@ -32,8 +46,6 @@ def main() -> int:
     files = {p.name if p.parent == skill else f"reference/{p.name}": p.read_text(encoding="utf-8") for p in [skill / "SKILL.md", *refs]}
     core = files["SKILL.md"]
     problems = []
-    if len(core.splitlines()) > 500:
-        problems.append(f"SKILL.md has {len(core.splitlines())} lines, limit 500")
     if (n := len(core.encode("utf-8"))) > CORE_BYTES:
         problems.append(f"SKILL.md is {n} bytes, limit {CORE_BYTES}: a byte proxy for the 5,000 tokens a compaction keeps of a "
                         f"skill (calibrated 2026-11-07 with a one-turn haiku differential, see CORE_BYTES); move text to a reference file")
@@ -42,10 +54,16 @@ def main() -> int:
     if not desc or len(desc) > 1024:
         problems.append(f"description is {len(desc)} chars (limit 1024)")
     for ref in refs:
+        text = files[f"reference/{ref.name}"]
         if f"`{REF}/{ref.name}`" not in core:
             problems.append(f"SKILL.md never names `{REF}/{ref.name}`")
-        if len(files[f"reference/{ref.name}"].splitlines()) > 100 and "## Contents" not in files[f"reference/{ref.name}"]:
-            problems.append(f"{ref.name} is over 100 lines and has no '## Contents' list")
+        if (n := len(text.encode("utf-8"))) > CONTENTS_BYTES and not re.search(r"(?m)^## Contents$", text):
+            problems.append(f"{ref.name} is {n} bytes, over {CONTENTS_BYTES}, and has no '## Contents' list")
+    for md in sorted(skill.parent.rglob("*.md")):
+        for no, line in enumerate(md.read_bytes().decode("utf-8").split("\n"), 1):   # at \n only, as the Read tool splits
+            if len(line) > MAX_LINE:
+                problems.append(f"{md.relative_to(skill.parent.parent)}:{no} is {len(line)} characters, limit {MAX_LINE}: "
+                                f"the Read tool cuts lines at 2000; split the paragraph")
     for name, text in files.items():
         for hit in re.findall(r"\$\{CLAUDE_SKILL_DIR\}/reference/([\w-]+\.md)", text):
             if not (skill / "reference" / hit).is_file():
