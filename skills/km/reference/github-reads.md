@@ -2,8 +2,11 @@
 
 ## Contents
 
+- Reading GitHub
   - Open pull requests
   - Reading GitHub through MCP
+
+## Reading GitHub
 
 ### Open pull requests
 
