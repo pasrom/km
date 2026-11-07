@@ -148,7 +148,7 @@ python3 -c "import json,sys; c=json.load(open('$m'))['counts']; sys.exit(0 if c=
 G checkout -q -- schema.local.yaml process/cust.md
 
 # --- workflows ---
-grep -q "scripts/" "$T"/.github/workflows/*.yml && no "workflows call km, not copied scripts" || ok "workflows call km, not copied scripts"
+grep -h "scripts/" "$T"/.github/workflows/*.yml | grep -qv "\.github/scripts/bump-mounted-pins\.py" && no "workflows call km, not copied scripts" || ok "workflows call km, not copied scripts"
 python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('$T/.github/workflows/*.yml')]" 2>/dev/null \
   && ok "workflows are valid YAML" || no "workflows are valid YAML"
 python3 - "$T/.github/workflows/staleness.yml" <<'PY' && ok "staleness validates after demoting, even after a failed step" || no "staleness validates after demoting"
@@ -383,7 +383,9 @@ def pins(paths):
     return out
 own = pins([f"{repo}/action.yml", *glob.glob(f"{repo}/.github/workflows/*.yml")])
 tpl = pins(glob.glob(f"{repo}/src/km/templates/team/*.yml"))
-sys.exit(0 if all(name in own and shas == own[name] for name, shas in tpl.items()) else 1)
+# Actions only a template uses: no Dependabot here sees them; each brain's own Dependabot moves them.
+TEMPLATE_ONLY = {"actions/create-github-app-token"}
+sys.exit(0 if all(shas == own[name] if name in own else name in TEMPLATE_ONLY for name, shas in tpl.items()) else 1)
 PY
 
 # --- non-ASCII file names on a system whose encoding is not UTF-8 (Windows, cp1252) ---
@@ -457,6 +459,55 @@ cp "$T/.github/workflows/staleness.yml" "$D/.github/workflows/"                 
 printf 'on:\n  pull_request:\njobs:\n  v:\n    steps:\n      - run: make\n' > "$D/.github/workflows/ci.yml"
 out="$(km upgrade --root "$D" 2>&1)"
 [ "$(on_keys "$D/.github/workflows/ci.yml")" = "pull_request" ] && ok "a ci.yml that does not install km gets no trigger" || no "own ci.yml gets no trigger ($out)"
+
+# --- the workflow that moves the mounted pins, and its script ---
+PW=.github/workflows/bump-mounted-pins.yml; PS=.github/scripts/bump-mounted-pins.py
+{ cmp -s "$T/$PW" "$REPO/src/km/templates/team/bump-mounted-pins.yml" && cmp -s "$T/$PS" "$REPO/src/km/templates/team/bump-mounted-pins.py"; } \
+  && ok "a team brain gets the mounted-pins workflow and its script" || no "team brain mounted-pins files"
+{ [ -f "$O/$PW" ] && [ -f "$O/$PS" ]; } && ok "upgrade adds them to a team brain without them" || no "upgrade adds the mounted-pins files"
+[ ! -e "$P/$PW" ] && [ ! -e "$P/$PS" ] && ok "a personal brain does not get them" || no "personal brain has no mounted-pins files"
+kmpy - <<'PY' && ok "SHIPPED lists the current mounted-pins templates" || no "a mounted-pins template changed: add its hash to SHIPPED in upgrade.py"
+import sys, km.upgrade as u
+from km.init import template
+sys.exit(any(u.shipped_hash(template(t, {})) not in h for t, h in u.SHIPPED.items()))
+PY
+kmpy -c 'import km.upgrade as u
+h = u.shipped_hash
+assert h("  - uses: a/b@1 # v1\n") == h("  - uses: a/b@2 # v2\n") and h("    uses: \"a/b@1\"\n") == h("    uses: \"a/b@2\"\n")
+assert h("  - uses: a/b@1\n") != h("  - uses: a/c@1\n")' && ok "an action pin and its comment do not count as an edit, the action does" || no "shipped_hash masking"
+kmpy -c 'import km.upgrade as u
+new = "  - uses: a/b@k # v2.0.0\n  - uses: a/c@k # v2.0.0\n"
+got = u.carry_pins("  - uses: a/b@n # v2.1.0\n  - uses: a/c@o # v1.9.9\n", new)
+assert got == "  - uses: a/b@n # v2.1.0\n  - uses: a/c@k # v2.0.0\n", got' \
+  && ok "an upgrade keeps an action pin the brain moved past the template, and takes the template pin where that is newer" || no "carry_pins direction"
+# an earlier version km shipped is replaced, also after the brain's Dependabot moved its action
+# pins: a stand-in for one (a line ahead of the template), registered as shipped for this run
+MOVE='s/\(uses: actions\/checkout@\)[^ ]*.*/\1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v99/'
+for f in "$PW:bump-mounted-pins.yml" "$PS:bump-mounted-pins.py"; do
+  { echo "# an earlier km version"; sed "$MOVE" "$REPO/src/km/templates/team/${f#*:}"; } > "$O/${f%%:*}"
+done
+upgrade_older(){ out="$(cd "$O" && kmpy - 2>&1 <<'PY'
+import sys, km.upgrade as u
+from km.init import template
+for t, h in u.SHIPPED.items():
+    h.add(u.shipped_hash("# an earlier km version\n" + template(t, {})))
+sys.argv = ["km upgrade"]
+sys.exit(u.main())
+PY
+)"; }
+upgrade_older
+{ cmp -s "$O/$PW" <(sed "$MOVE" "$REPO/src/km/templates/team/bump-mounted-pins.yml") && cmp -s "$O/$PS" "$REPO/src/km/templates/team/bump-mounted-pins.py" \
+  && out_has "updated $PW to this km's version" && out_has "updated $PS to this km's version"; } \
+  && ok "upgrade replaces a copy that is an earlier version km shipped, keeping the action pins its Dependabot moved" || no "upgrade replaces an unchanged earlier copy ($out)"
+sed "$MOVE" "$O/$PW" > "$F/moved.yml" && mv "$F/moved.yml" "$O/$PW"; cp "$O/$PW" "$F/moved.yml"; upgrade_older
+{ cmp -s "$O/$PW" "$F/moved.yml" && ! out_has "mounted-pins"; } \
+  && ok "the current version with pins the brain's Dependabot moved is left as it is" || no "current copy with moved pins ($out)"
+echo "# the brain's edit" >> "$O/$PW"; echo "# the brain's edit" >> "$O/$PS"; out="$(km upgrade --root "$O" 2>&1)"
+{ tail -1 "$O/$PW" | grep -q "the brain's edit" && tail -1 "$O/$PS" | grep -q "the brain's edit" \
+  && out_has "left $PW: the brain changed it" && out_has "left $PS: the brain changed it"; } \
+  && ok "upgrade leaves an edited copy, with a note" || no "upgrade keeps edited mounted-pins files ($out)"
+rm "$O/$PW"; touch "$O/.gitmodules"; out="$(km upgrade --root "$O" 2>&1)"; rm "$O/.gitmodules"
+out_has "create the environment mounted-pins restricted to main" && ok "upgrade adding the workflow to a brain with mounts says to restrict the environment first" || no "environment note on upgrade ($out)"
 
 # --- main guard: the hook that refuses a commit on main, and the workflow that flags a direct push ---
 hooks_of(){ kmpy -c 'import sys, yaml

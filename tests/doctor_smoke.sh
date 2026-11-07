@@ -201,6 +201,8 @@ case "$*" in
   "auth status --hostname github.com") [ -n "$GH_AUTH" ] ;;
   "api --hostname github.com repos/o/r --jq [.permissions.push, .full_name] | @tsv") printf '%s\tO/R\n' "$GH_PUSH" ;;
   "api --hostname github.com graphql -f query="*) [ "$GH_FORK" = me ] && echo me/r-1 ;;
+  "api --hostname github.com repos/O/R/environments/mounted-pins --jq .deployment_branch_policy"*) [ -n "$GH_ENV" ] && echo "$GH_ENV" || exit 1 ;;
+  "api --hostname github.com repos/O/R/environments/mounted-pins/deployment-branch-policies --jq"*) echo "$GH_BRANCHES" ;;
   *) exit 2 ;;
 esac
 SH
@@ -211,8 +213,20 @@ for s, w, f in d.results: print(s, w, "|", f)' 2>&1)"; }
   GH_LOGIN= ghcheck; out_has "FAIL gh is not signed in" && ok "gh without a login fails with gh auth login" || no "gh login ($out)"
   GH_LOGIN= GH_AUTH=1 ghcheck; out_has "FAIL gh is signed in but github.com did not answer" && ok "a network error is not taken for a missing login" || no "gh network ($out)"
   GH_LOGIN=me GH_PUSH=true ghcheck; out_has "ok you can push branches to O/R" && ok "push access is ok" || no "push access ($out)"
+  out="$(GH_LOGIN=me GH_PUSH=false PATH="$G:$PATH" kmpy -c 'import km.doctor as d; print(d.check_github("https://github.com/o/r.git", False))' 2>&1)"
+  [ "$out" = O/R ] && ok "the GitHub check names the repository for the checks that follow, also without push access" || no "check_github returns the repo ($out)"
   GH_LOGIN=me GH_PUSH=false GH_FORK=me ghcheck; out_has "ok you contribute through your fork me/r-1" && ok "a fork is found, also under another name" || no "fork found ($out)"
   GH_LOGIN=me GH_PUSH=false GH_FORK=other ghcheck; out_has "note you can read O/R but not push to it" && ok "no fork yet is a note" || no "no fork ($out)"
+  E="$T/envbrain"; mkdir -p "$E/.github/workflows" && touch "$E/.gitmodules" "$E/.github/workflows/bump-mounted-pins.yml"
+  envcheck(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.doctor as d
+d.check_mounted_pins(pathlib.Path(sys.argv[1]), "O/R")
+for s, w, f in d.results: print(s, w, "|", f)' "$1" 2>&1)"; }
+  GH_ENV= envcheck "$E"; out_has "note O/R has no environment mounted-pins" && ok "a brain with mounts and the pins workflow but no environment gets a note" || no "missing environment ($out)"
+  GH_ENV=open envcheck "$E"; out_has "note the environment mounted-pins of O/R is open to every branch" && ok "an environment open to every branch gets a note" || no "open environment ($out)"
+  GH_ENV=protected envcheck "$E"; out_has "open to every protected branch, not to main alone" && ok "an environment open to protected branches gets a note" || no "protected environment ($out)"
+  GH_ENV=custom GH_BRANCHES="main release" envcheck "$E"; out_has "open to main release, not to main alone" && ok "an environment open to main and another branch gets a note" || no "custom environment ($out)"
+  GH_ENV=custom GH_BRANCHES=main envcheck "$E"; out_has "ok O/R has the environment mounted-pins, restricted to main" && ok "an environment restricted to main is ok" || no "restricted environment ($out)"
+  rm "$E/.gitmodules"; GH_ENV= envcheck "$E"; ! out_has "mounted-pins" && ok "without mounts the environment is not asked for" || no "no mounts, no check ($out)"
   out="$(PATH="$G:$PATH" kmpy -c 'import km.doctor as d
 d.check_github("git@github.com:o/r.git", True); d.check_github("https://gitlab.com/o/r.git", False)
 print(d.results)' 2>&1)"

@@ -96,7 +96,7 @@ without installing: `uvx --from git+https://github.com/pasrom/km@<commit> km val
 
 ## What a brain gets
 
-Brains carry no km code. `km init` writes `CONVENTIONS.md`, `CLAUDE.md`, `schema.local.yaml`,
+Brains carry no km code (the one exception, the script of the mounted-pins workflow, is below). `km init` writes `CONVENTIONS.md`, `CLAUDE.md`, `schema.local.yaml`,
 `inbox/`, a `.gitattributes` that keeps text files LF, and a pre-commit hook pinned to a km version. `km init --team` adds domain folders with
 generated indexes, a README, and CI that installs km through this repository's GitHub Action:
 
@@ -107,6 +107,8 @@ generated indexes, a README, and CI that installs km through this repository's G
 ```
 
 The team brain's ci workflow also runs on `workflow_dispatch`: a pull request that a workflow opens with `GITHUB_TOKEN` starts no `pull_request` run, so such a workflow (a pin bump, say) dispatches ci on its branch and the pull request gets its check. `km upgrade` adds the trigger to a km ci workflow that lacks it.
+
+A team brain also gets `bump-mounted-pins`, a workflow that moves the pins of the mounted brains (submodules) by pull request, in place of Dependabot's submodule updates, which need an organisation-wide grant for private submodules and stop every submodule of a group on one refusal. On weekday mornings it walks each mount's tracked branch (its `branch =`, else the repository's default branch) back from the tip to the newest commit whose CI on that branch did not fail (runs of a side branch or a tag do not count; a commit without a run of its own, such as a bot's, inherits the state of the nearest older commit that has runs; a pin never moves backwards), sets the gitlinks without cloning, force-pushes `chore/bump-mounted-pins` with a lease and opens or updates the pull request, which lists short shas only, and dispatches ci on it. A brain without mounts stops after reading `.gitmodules`. It reads the mounts with a GitHub App (Contents and Actions: read) whose secrets `CI_APP_CLIENT_ID` and `CI_APP_PRIVATE_KEY` live in an environment `mounted-pins` restricted to `main`; the workflow's header says how to set it up, and `km doctor` notes a missing or unrestricted environment. Its script, `.github/scripts/bump-mounted-pins.py`, is the one piece of km code a brain carries: the job that holds the app token installs nothing, so it cannot run the km package. `km upgrade` adds both files when missing and replaces a copy that is still a version km shipped, unchanged but for the action pins its Dependabot moves (a pin moved past the template's version is kept), so later fixes reach the brain; a copy the brain edited is its own, left alone with a note.
 
 The pre-commit hook works the same way (`repo: https://github.com/pasrom/km`,
 `rev: <commit>  # frozen: v1.9.0`, `id: km-validate`). Every pin names a release by its commit, so a
@@ -146,7 +148,7 @@ tests/                 smoke tests
 ## Development
 
 The smoke tests need Python 3.11+, PyYAML and git: `bash tests/gate_smoke.sh`, `index_smoke.sh`,
-`team_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh`, `list_smoke.sh`, `skill_smoke.sh` (the skill's core
+`team_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh`, `list_smoke.sh`, `mounted_pins_smoke.sh` (the mounted-pins workflow and script a team brain gets, against a stand-in GitHub API), `skill_smoke.sh` (the skill's core
 keeps its size limits, its reference paths resolve, every `/km` verb has a dispatch row) and `hook_smoke.sh` (the plugin's edit guard;
 the pre-push hook too where pre-commit is installed). CI runs them plus the GitHub Action on every pull request, and
 `encoding_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh` and `hook_smoke.sh` on Windows (team_smoke runs the encoding test on macOS under non-UTF-8 locales). A release bumps

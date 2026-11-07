@@ -24,7 +24,7 @@
   checks every mount out at its pin and never moves one ahead of it. Pass its notes on: a mount
   with changes of its own or ahead of its pin is left as it is (`brain reset <name>` puts it
   back), never a silent skip. Newer content of a mount comes only with a moved pin, through a pull
-  request: the host's Dependabot PR, or the pin-bump PR below when the user asks for it
+  request: a team brain's bump-mounted-pins PR, or the pin-bump PR below when the user asks for it
 
 ### Shared resources (self-describing repos)
 
@@ -48,7 +48,7 @@ mount at a newer commit (or km sync reports one ahead of its pin that they want 
 step may move the checkout past the pin: it is the bump), `git add brains/<name>`, commit
 `chore(brains): bump <name> to <short sha>`, push, `gh pr create`; then `git switch main` and
 `km sync`, which puts the mount back at main's pin until the PR merges. A team brain gets the
-same bump from Dependabot's submodule PRs.
+same bump from its bump-mounted-pins workflow (`chore/bump-mounted-pins`).
 
 ## Brain management
 

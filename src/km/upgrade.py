@@ -15,9 +15,12 @@
     still runs stays until that workflow is switched to the km command;
   - a legacy schema.yaml becomes schema.local.yaml, the overlay it already acts as;
   - a team brain gets the Dependabot config, and the obsolete `team_brain:` line goes.
-- A team brain gets the main-guard workflow and the pre-commit hooks that refuse a commit on main
-  and a push to main, whichever it lacks, and its km ci workflow gets the `workflow_dispatch`
-  trigger, so a workflow that opens a pull request with GITHUB_TOKEN can run the check on it.
+- A team brain gets the main-guard workflow, the bump-mounted-pins workflow and its script, and the
+  pre-commit hooks that refuse a commit on main and a push to main, whichever it lacks, and its km
+  ci workflow gets the `workflow_dispatch` trigger, so a workflow that opens a pull request with
+  GITHUB_TOKEN can run the check on it. The bump-mounted-pins workflow and script are copies of km
+  code: one that is still a version km shipped (its action pins aside) is replaced by this km's, one
+  the brain changed is left with a note.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
 
@@ -36,7 +39,7 @@ from pathlib import Path
 import yaml
 
 from km import KM_REF
-from km.init import ensure_lf, pin_values, template, with_team_hooks
+from km.init import TEAM, ensure_lf, pin_values, template, with_team_hooks
 from km.paths import repo_root, write_text
 from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
 
@@ -57,6 +60,41 @@ OLD_COPIES = {
     ".github/workflows/staleness.yml": ("team/staleness.yml", {"e9768164f8a03461", "199bf98454e2f922", "fb3fcd7353e99cde"}),
     ".pre-commit-config.yaml": ("pre-commit-config.template.yaml", {"8ef7f1ea977e2308", "d6819c5f6e97baa1"}),
 }
+# The km files a team brain carries as copies (its workflow's token job must not install km) ->
+# shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
+# is still one of them is replaced by the current template, an edited one is left with a note.
+SHIPPED = {
+    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65"},
+    "team/bump-mounted-pins.py": {"52f798d7ca2f7d32"},
+}
+USES = re.compile(r"(?m)^([ \t]*(?:-[ \t]+)?uses:[ \t]*([^@\s]+)@)\S+.*$")   # 1: up to the @, 2: the action
+
+
+def shipped_hash(text: str) -> str:
+    """sha256 prefix of a shipped copy with its action refs masked: the brain's Dependabot moves
+    those, and a moved pin is not an edit of the brain's own."""
+    return hashlib.sha256(USES.sub(r"\1", text).encode()).hexdigest()[:16]
+
+
+def _pinned_version(pin: str) -> tuple[int, ...] | None:
+    """(7, 0, 1) for `<sha> # v7.0.1`, the version comment Dependabot keeps; None without one."""
+    m = re.search(r"#\s*v?(\d+(?:\.\d+)*)\b", pin)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def carry_pins(old: str, new: str) -> str:
+    """`new` with the pin `old` gives an action where its version comment is newer than km's: the
+    brain's Dependabot moved it past the template. Otherwise km's pin, which may be newer and which
+    the new template may need."""
+    pins = {m.group(2): m.group(0)[len(m.group(1)):] for m in USES.finditer(old)}
+
+    def pin(m: re.Match) -> str:
+        ours, theirs = m.group(0)[len(m.group(1)):], pins.get(m.group(2))
+        newer = theirs and (a := _pinned_version(theirs)) and (b := _pinned_version(ours)) and a > b
+        return m.group(1) + (theirs if newer else ours)
+    return USES.sub(pin, new)
+
+
 MARKER = re.compile(r"(?m)^(# Marks a team brain:.*\n)?team_brain:.*\n")
 
 
@@ -173,11 +211,22 @@ def main() -> int:
             write_text(local, new)
             done.append("dropped team_brain from schema.local.yaml (no longer used)")
     if team:
-        for tpl, rel in (("team/dependabot.yml", ".github/dependabot.yml"), ("team/main-guard.yml", ".github/workflows/main-guard.yml")):
-            if not (p := root / rel).exists():
+        for tpl in ("team/dependabot.yml", "team/main-guard.yml", *SHIPPED):
+            new = template(tpl, {})
+            if not (p := root / (rel := TEAM[tpl])).exists():
                 p.parent.mkdir(parents=True, exist_ok=True)
-                write_text(p, template(tpl, {}))
+                write_text(p, new)
                 done.append(f"added {rel}")
+                if tpl == "team/bump-mounted-pins.yml" and (root / ".gitmodules").is_file():
+                    done.append("this brain has mounts: before the workflow's first run, create the environment mounted-pins "
+                                "restricted to main, or GitHub creates it open to every branch (setup in the workflow's header)")
+            elif tpl in SHIPPED and (copy := p.read_text(encoding="utf-8")) != new and (h := shipped_hash(copy)) != shipped_hash(new):
+                if h in SHIPPED[tpl]:
+                    write_text(p, carry_pins(copy, new))
+                    done.append(f"updated {rel} to this km's version (it was an earlier one, unchanged but for its action pins, keeping those newer than km's)")
+                else:
+                    done.append(f"left {rel}: the brain changed it, so it gets no later fixes; "
+                                f"compare it with km's src/km/templates/{tpl}")
         ci = str(Path(".github/workflows/ci.yml"))              # as read_pins names it, with the OS's separator
         if ci in pins and (got := with_dispatch(text := (root / ci).read_text(encoding="utf-8"))) != text:   # km's ci workflow
             if got is None:
