@@ -15,8 +15,8 @@
     still runs stays until that workflow is switched to the km command;
   - a legacy schema.yaml becomes schema.local.yaml, the overlay it already acts as;
   - a team brain gets the Dependabot config, and the obsolete `team_brain:` line goes.
-- A team brain gets the main-guard workflow and the pre-commit hook that refuses a commit on main,
-  whichever it lacks.
+- A team brain gets the main-guard workflow and the pre-commit hooks that refuse a commit on main
+  and a push to main, whichever it lacks.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
 
@@ -32,7 +32,7 @@ import shutil
 import sys
 
 from km import KM_REF
-from km.init import ensure_lf, pin_values, template, with_main_hook
+from km.init import ensure_lf, pin_values, template, with_team_hooks
 from km.paths import repo_root, write_text
 from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
 
@@ -142,13 +142,16 @@ def main() -> int:
                 done.append(f"added {rel}")
         hook = root / ".pre-commit-config.yaml"
         if not hook.is_file():
-            done.append(f"no {hook.name}: nothing refuses a commit on main locally; `km init` writes one")
-        elif (new := with_main_hook(text := hook.read_text(encoding="utf-8"))) is None:
-            done.append(f"could not add the hook that refuses a commit on main to {hook.name}: add `no-commit-to-branch` "
-                        f"with `args: [--branch, main]` from https://github.com/pre-commit/pre-commit-hooks by hand")
-        elif new != text:
-            write_text(hook, new)
-            done.append(f"added the hook that refuses a commit on main to {hook.name}")
+            done.append(f"no {hook.name}: nothing refuses a commit on main or a push to main locally; `km init` writes one")
+        elif (got := with_team_hooks(text := hook.read_text(encoding="utf-8"))) is None:
+            done.append(f"could not add the hooks a team brain carries to {hook.name}: add `no-commit-to-branch` with `args: [--branch, main]` "
+                        f"from https://github.com/pre-commit/pre-commit-hooks, km's `no-push-to-main` hook "
+                        f"(templates/team/no-push-hook.yaml), `default_install_hook_types: [pre-commit, pre-push]` and "
+                        f"`default_stages: [pre-commit]` by hand, whichever it lacks")
+        elif got[0] != text:
+            write_text(hook, got[0])
+            again = "; run `pre-commit install` again so git gets the pre-push hook" if "pre-push in default_install_hook_types" in got[1] else ""
+            done.append(f"added {', '.join(got[1])} to {hook.name}{again}")
     if note := ensure_lf(root):
         done.append(note)
 

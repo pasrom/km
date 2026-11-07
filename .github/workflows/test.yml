@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
-      - run: pip install pyyaml==6.0.3
+      - run: pip install pyyaml==6.0.3 pre-commit==4.6.2
       - name: the package installs with its templates
         run: |
           python -m venv /tmp/wheel && /tmp/wheel/bin/pip install --quiet . && /tmp/wheel/bin/km --version
@@ -31,6 +31,7 @@ jobs:
       - run: bash tests/sync_smoke.sh
       - run: bash tests/list_smoke.sh
       - run: bash tests/skill_smoke.sh
+      - run: bash tests/hook_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
 
@@ -86,10 +87,10 @@ jobs:
           source tests/lib.sh
           windows_like "" || { echo "::error::the runner's encoding is UTF-8, this job tests nothing"; exit 1; }
           with_env "" bash tests/encoding_smoke.sh    # as checked: UTF-8 mode off
-      - name: km doctor and km sync on Windows
+      - name: km doctor, km sync and the plugin's edit guard on Windows
         env:
           PYTHON: python
-        run: bash tests/doctor_smoke.sh && bash tests/sync_smoke.sh
+        run: bash tests/doctor_smoke.sh && bash tests/sync_smoke.sh && bash tests/hook_smoke.sh
 
   # Merging a version bump is the release: once main is green, tag v<__version__> if that tag is new.
   # Brains pin these tags, and `km init` writes the tag of the km that runs it.

@@ -70,47 +70,77 @@ def template(name: str, values: dict[str, str]) -> str:
     return text
 
 
-def _repos(config: str) -> list | None:
-    """The `repos:` list of a pre-commit config, or None when the config does not parse as one."""
+def _load(config: str) -> dict | None:
+    """A pre-commit config as a dict with a `repos:` list, or None when it does not parse as one."""
     try:
         d = yaml.safe_load(config)
     except yaml.YAMLError:
         return None
-    repos = d.get("repos", []) if isinstance(d, dict) else None
-    return repos if isinstance(repos, list) else None
+    return d if isinstance(d, dict) and isinstance(d.get("repos", []), list) else None
 
 
-def guards_main(config: str) -> bool:
-    """Whether a pre-commit config has a no-commit-to-branch hook that covers main (with no branch
-    argument the hook guards main and master)."""
-    for r in _repos(config) or []:
+def _hooks(d: dict):
+    """Every hook dict of a parsed pre-commit config."""
+    for r in d.get("repos") or []:
         for h in (r.get("hooks") or []) if isinstance(r, dict) else []:
-            if not isinstance(h, dict) or h.get("id") != "no-commit-to-branch":
-                continue
-            args, branches = [str(a) for a in h.get("args") or []], []
-            for i, a in enumerate(args):
-                if a in ("--branch", "-b") and i + 1 < len(args):
-                    branches.append(args[i + 1])
-                elif a.startswith("--branch="):
-                    branches.append(a.split("=", 1)[1])
-            if not branches or "main" in branches:
-                return True
+            if isinstance(h, dict):
+                yield h
+
+
+def guards_main(d: dict) -> bool:
+    """Whether a parsed pre-commit config has a no-commit-to-branch hook that covers main (with no
+    branch argument the hook guards main and master)."""
+    for h in _hooks(d):
+        if h.get("id") != "no-commit-to-branch":
+            continue
+        args, branches = [str(a) for a in h.get("args") or []], []
+        for i, a in enumerate(args):
+            if a in ("--branch", "-b") and i + 1 < len(args):
+                branches.append(args[i + 1])
+            elif a.startswith("--branch="):
+                branches.append(a.split("=", 1)[1])
+        if not branches or "main" in branches:
+            return True
     return False
 
 
-def with_main_hook(config: str) -> str | None:
-    """The pre-commit config with the team hook that refuses a commit on main added at the end of its
-    `repos:` list, at the list's own indent; unchanged when a hook already guards main. None when the
-    hook cannot be added safely (a config that does not parse, or a layout this edit does not
-    handle): the result must parse to the same config with exactly that hook more."""
-    before = _repos(config)
-    if before is None:
+# The hooks a team brain's pre-commit config carries: template, whether a config has it, what it does.
+TEAM_HOOKS = (
+    ("team/no-commit-hook.yaml", guards_main, "the hook that refuses a commit on main"),
+    ("team/no-push-hook.yaml", lambda d: any(h.get("id") == "no-push-to-main" for h in _hooks(d)),
+     "the hook that refuses a push to main"),
+)
+INSTALL_TYPES = "default_install_hook_types: [pre-commit, pre-push]\n"   # so `pre-commit install` writes the pre-push hook too
+DEFAULT_STAGES = "default_stages: [pre-commit]\n"    # a hook without `stages:` runs at commit only, not at every push as well
+
+
+def with_team_hooks(config: str) -> tuple[str, list[str]] | None:
+    """The pre-commit config with the team hooks it lacks added at the end of its `repos:` list, at
+    the list's own indent; `default_install_hook_types` with pre-push (added, or pre-push appended to
+    a one-line list) so `pre-commit install` writes the pre-push hook; and, whenever anything is
+    added, `default_stages` where the config sets none, so the hooks without `stages:` keep running
+    at commit only. Returns the config
+    and what was added, in the words of TEAM_HOOKS; None when the edit cannot be made safely (a
+    config that does not parse, a block-style install types list, or a layout this edit does not
+    handle): the result must parse to the same config with exactly those additions."""
+    d = _load(config)
+    if d is None:
         return None
-    if guards_main(config):
-        return config
+    rest = {k: v for k, v in d.items() if k != "repos"}
+    missing = [(tpl, what) for tpl, present, what in TEAM_HOOKS if not present(d)]
+    types = rest.get("default_install_hook_types")
+    push_type = types is None or "pre-push" not in types
+    if not missing and not push_type:
+        return config, []
+    stages = "default_stages" not in rest       # the hooks without `stages:` must not start running at push
     lines = config.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
+    if types is not None and push_type:                    # append to the one-line list, or give up
+        i = next((i for i, ln in enumerate(lines) if ln.startswith("default_install_hook_types:")), None)
+        if i is None or "]" not in lines[i]:
+            return None
+        lines[i] = lines[i].replace("]", ", pre-push]", 1)
     top = next((i for i, ln in enumerate(lines) if ln.startswith("repos:")), None)
     if top is None:
         lines, top = [*lines, "repos:\n"], len(lines)
@@ -124,13 +154,20 @@ def with_main_hook(config: str) -> str | None:
             break
     while end > top + 1 and not lines[end - 1].strip():
         end -= 1                         # keep blank lines before the next key after the block
-    hook = template("team/no-commit-hook.yaml", {})
-    block = "".join((pad if pad is not None else "  ") + ln if ln.strip() else ln for ln in hook.splitlines(keepends=True))
-    out = "".join(lines[:end]) + block + "".join(lines[end:])
-    after, rest = _repos(out), lambda t: {k: v for k, v in (yaml.safe_load(t) or {}).items() if k != "repos"}
-    if after != [*before, *yaml.safe_load(hook)] or rest(out) != rest(config):
+    added = [template(tpl, {}) for tpl, _ in missing]
+    block = "".join((pad if pad is not None else "  ") + ln if ln.strip() else ln
+                    for h in added for ln in h.splitlines(keepends=True))
+    head = (INSTALL_TYPES if types is None else "") + (DEFAULT_STAGES if stages else "")
+    out = "".join(lines[:top]) + head + "".join(lines[top:end]) + block + "".join(lines[end:])
+    want = {**rest, **(yaml.safe_load(INSTALL_TYPES) if types is None else {}), **(yaml.safe_load(DEFAULT_STAGES) if stages else {})}
+    if types is not None and push_type:
+        want["default_install_hook_types"] = [*types, "pre-push"]
+    after = _load(out)
+    if after is None or after.get("repos") != [*(d.get("repos") or []), *(h for a in added for h in yaml.safe_load(a))] \
+            or {k: v for k, v in after.items() if k != "repos"} != want:
         return None
-    return out
+    return out, [what for _, what in missing] + (["pre-push in default_install_hook_types"] if push_type else []) \
+        + (["default_stages"] if stages else [])
 
 
 def ensure_lf(repo: Path) -> str | None:
@@ -182,9 +219,9 @@ def render(a: argparse.Namespace) -> dict[str, str]:
         "<PLACEMENT_RULES>": "\n".join(f"- {r}" for r in rules),
     }
     out = {dst: template(tpl, values) for tpl, dst in TEAM.items()}
-    hooked = with_main_hook(out[".pre-commit-config.yaml"])
-    assert hooked, "km's own pre-commit template takes the main hook"
-    out[".pre-commit-config.yaml"] = hooked
+    hooked = with_team_hooks(out[".pre-commit-config.yaml"])
+    assert hooked, "km's own pre-commit template takes the team hooks"
+    out[".pre-commit-config.yaml"] = hooked[0]
     for n, p in folders:
         out[f"{n}/_index.md"] = template("team/_index.folder.template.md", {**values, "<folder>": n, "<purpose>": p})
     return out
