@@ -129,7 +129,8 @@ action.yml             GitHub Action: installs km at the action's version
 .pre-commit-hooks.yaml pre-commit hook km-validate
 src/km/                the package: cli, validate, gen_index, demote, serve, promote, approve, repin, cite, cites, init, upgrade, doctor, sync, list_docs
 src/km/templates/      what `km init` writes
-skills/km/SKILL.md     the skill; skills/km/bin/km runs the package from the installed plugin
+skills/km/SKILL.md     the skill's core: rules, a dispatch table, what every flow shares
+skills/km/reference/   the flows the core dispatches to, read on demand; skills/km/bin/km runs the package from the installed plugin
 tests/                 smoke tests
 ```
 
