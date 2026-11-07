@@ -8,8 +8,9 @@ description: >-
   them by pull request; review a brain doc or brain PR and sign it off where an AI may; prepare
   a brain PR; the brain's review queue; set up, check, upgrade or sync a brain. Triggers: km,
   brain, knowledge base, "save this", "was steht im brain", "ins brain speichern", "dokumentiere
-  das", "Entscheidung festhalten", "was wissen wir über", "check my setup", "prüfe meine
-  Einrichtung", "review mein Dokument", "PR fürs Brain", "was wartet auf Freigabe".
+  das", "Entscheidung festhalten", Meeting-Notiz, ADR, "was wissen wir über", "check my setup",
+  "prüfe meine Einrichtung", "review mein Dokument", freigeben, "PR fürs Brain", "was wartet auf
+  Freigabe".
 argument-hint: question, content, brain command, help, etc.
 ---
 
@@ -23,40 +24,37 @@ $ARGUMENTS
 - Always cite sources (see "Citation format" below)
 - Prefer current repo over brains in contradictions; prefer newer info; mention conflicts
 - Never hallucinate — say if nothing found
-- Confirm before every write: show the diff or the proposed doc and wait for the user's OK
 - Never push to a brain's default branch and never `--force` push; the one exception is
   `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
-- Never edit a mounted `brains/<name>/` working tree (a hook refuses it): a correction goes through
+- Never edit a mounted `brains/<name>/` working tree (a hook refuses the file-edit tools there; a
+  shell edit is yours to refuse): a correction goes through
   `brain fix` or `contribute` in a throwaway clone; a drifted mount goes back with `brain reset`
 - Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of
   the content commits
 - A doc carrying `contribution:` has an open PR: edit it on the PR head, never in your brain
 - Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
-- Every GitHub write (push, fork, PR, labels, comments, reviews) uses git and gh, never an MCP write tool
 - After a compaction only this file is re-attached and what you read from the reference files is
   gone: before you continue a flow, read its files again
 
 ## What to read for a request
 
-Read every file a row names before you start the flow, in full. The files are in
-`${CLAUDE_SKILL_DIR}/reference/` (forward slashes on every platform).
+Read every file a row names before the flow starts, in full (forward slashes on every platform).
 
 | Request (`/km ...` or in prose) | Read |
 | :- | :- |
-| a question, `@<name> ...`, `@all ...`, "was wissen wir über" | this file: "Search strategy", "Routing"; open PRs as a source: `github-reads.md` |
+| a question, "was wissen wir über" | this file: "Search strategy", "Routing"; open PRs as a source: `${CLAUDE_SKILL_DIR}/reference/github-reads.md` |
+| `@<name> ...`, `@all ...` | as a question, plus `${CLAUDE_SKILL_DIR}/reference/brains.md` (mounts, shared resources, `@all` sync) |
 | content to save, `update <doc>: ...`, a decision, a transcript, archive a page | this file: "Writing content" |
 | `help` | this table, one line per row, then `km --help` for the commands |
-| `doctor`, "check my setup", "prüfe meine Einrichtung" | `setup.md` |
-| `init`, `init --team`, `upgrade` | `setup.md` |
-| `sync` | this file: "Keeping the copy current" |
-| `lint`, `validate`, the gate, `promote`, index completeness | `validate-and-gate.md` |
-| `review <doc>...`, `approve <doc>...` | `review-and-pr.md` |
-| `pr`, review a brain PR | `review-and-pr.md` (without gh also `github-reads.md`) |
-| `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `queue.md`, `github-reads.md`, `review-and-pr.md` |
-| `brain add <url>`, `brain list`, `brain remove`, `brain reset`, a pin-bump PR | `brains.md` |
-| `brain fix @<name> ...`, "fix this in @<name>" | `brains.md`, `review-and-pr.md`, `validate-and-gate.md` |
-| `contribute @<name> ...`, `contribute --finish <PR>` | `brains.md`, `review-and-pr.md`, `validate-and-gate.md` |
-| `repin`, `cite add`, `cites check`, a `pin:` or `cite:` warning | `pins-and-cites.md` |
+| `doctor`, "check my setup", "prüfe meine Einrichtung", `init`, `init --team`, `upgrade` | `${CLAUDE_SKILL_DIR}/reference/setup.md` |
+| `sync` | this file: "Keeping the copy current", then `${CLAUDE_SKILL_DIR}/reference/setup.md` |
+| `lint`, `validate`, the gate, `promote`, index completeness | `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
+| `review <doc>...`, `approve <doc>...` | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` (`pin:` findings) |
+| `pr`, review a brain PR | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` (without gh also `${CLAUDE_SKILL_DIR}/reference/github-reads.md`) |
+| `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `${CLAUDE_SKILL_DIR}/reference/queue.md`, `${CLAUDE_SKILL_DIR}/reference/github-reads.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` |
+| `brain add <url>`, `brain list`, `brain remove`, `brain reset`, a pin-bump PR | `${CLAUDE_SKILL_DIR}/reference/brains.md` |
+| `brain fix @<name> ...`, "fix this in @<name>", `contribute @<name> ...`, `contribute --finish <PR>` | `${CLAUDE_SKILL_DIR}/reference/brains.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
+| `repin`, `cite add`, `cites check`, a `pin:` or `cite:` warning | `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` |
 
 ## Setup
 
@@ -64,12 +62,13 @@ Read `CONVENTIONS.md` in the repo root. If missing, offer to initialize (`/km in
 
 **Running km.** `bin/km` next to this SKILL.md runs km from this installed plugin, written `km`
 below; `km --help` lists the commands, and all take `--root DIR`. In a brain that pins another km
-version it runs that one, so results match CI ("Running km" in `${CLAUDE_SKILL_DIR}/reference/setup.md`).
+version it runs that one ("Running km and keeping the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md`).
 
 **Keeping the copy current.** Before answering a question from the brain, run
-`km sync --quiet --max-age 15m`; before creating a page or a branch, run `km sync`. It only ever
-fast-forwards and reports the rest: pass its notes on, offer the rebase it names only as "Keeping
-the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md` says, and never reset, force or move a mount yourself.
+`km sync --quiet --max-age 15m`; before creating a page or a branch, run `km sync`. Pass on what it
+reports and offer the rebase it names, only on the user's OK and a clean tree; never a reset, a
+force or a moved mount ("Running km and keeping the copy current" in
+`${CLAUDE_SKILL_DIR}/reference/setup.md`).
 
 **GitHub access.** Every GitHub step in this skill uses `gh` (with a local clone where one exists)
 when `gh auth status --hostname github.com` succeeds; check once per session and again after a

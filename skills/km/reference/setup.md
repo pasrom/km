@@ -10,7 +10,7 @@
 
 ## Running km and keeping the copy current
 
-**Running km.** `bin/km` next to this SKILL.md runs km from this installed plugin, written `km`
+**Running km.** `${CLAUDE_SKILL_DIR}/bin/km` (next to SKILL.md) runs km from this installed plugin, written `km`
 below; `km --help` lists the commands, and all take `--root DIR`. Brains carry no km code: CI and
 the pre-commit hook install the km release the brain pins, by its commit (`pasrom/km@<sha> # vX.Y.Z`,
 so a moved tag cannot change what runs), and so does `km` here: in a brain that pins another version
@@ -89,7 +89,8 @@ demotion), domain folders instead of `inbox/`, and the one-merger rules.
 3. `git add -A`, then `km gen-index` (it reads tracked files only, so add first; it fills the root
    and folder lists), `git add -A` and `km validate`: expect **0 errors / 0 warnings**.
 4. Commit: `chore: initialize <name> (team served knowledge base)`.
-5. Tell the user what km does not do: create the repo (private), push `main`, give the team **read**
+5. Tell the user what km does not do: create the repo (private), push `main` (after `pre-commit install` the
+   pre-push hook refuses a push to `main`: the first push of the fresh brain takes `--no-verify`, once), give the team **read**
    access and the maintainer write, and ask members to add the brain to their personal brain with
    `/km brain add <url>`. Branch protection on a private repo needs a paid GitHub plan; without it
    the one-merger rule is held by the permission model alone. Members with read access contribute by fork PR,

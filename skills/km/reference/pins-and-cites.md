@@ -3,6 +3,7 @@
 ## Contents
 
 - Source pins (`km repin`)
+- Cited files (`km cite add`, `km cites check`)
 
 ## Source pins (`km repin`)
 
@@ -22,24 +23,32 @@ unstaged edit is not seen yet (repin says so). `km repin` needs km 1.4.0 in the 
 per-file run (the pre-commit hook) checks only the docs it is given, so a doc whose source changed
 is reported by the whole-repo `km validate` (CI), not when only the source is committed.
 
-When a doc cites a SharePoint or OneDrive file, record it under `cites:` with `km cite add <doc>
-<url> --file <synced copy>`: it stores the https URL, the sha256 of the copy's bytes and the date
-(add `--version` for a SharePoint version label). km makes no network request, so the copy must be
-on disk (a synced library, a download). `km validate` checks the entries' format (`cite:format`, an
-error) and warns about a SharePoint or OneDrive link to a file in the body with no entry
-(`cite:missing`; http or https, a view or sharing query such as `?web=1`, a trailing slash and the
-case of a SharePoint host or path do not make another file, nor does a `/:b:/r/` sharing link that
-carries the path; sites, folders and pages are not files). A sharing link that names the file by a
-token or an id (`/:b:/g/...`, `/:w:/s/<site>/<token>`, 1drv.ms, Office's `Doc.aspx?sourcedoc=`, onedrive.live.com `?id=`) maps to no path: `km cite add` refuses it,
-cite the file's path URL instead. `km cites check` compares each entry with a local copy, given per
-URL (`--file URL=PATH`) or through a synced library mapped to the URL it holds:
+## Cited files (`km cite add`, `km cites check`)
+
+When a doc cites a SharePoint or OneDrive file, record it under `cites:` with
+`km cite add <doc> <url> --file <synced copy>`: it stores the https URL, the sha256 of the copy's
+bytes and the date (add `--version` for a SharePoint version label). km makes no network request, so
+the copy must be on disk (a synced library, a download).
+
+`km validate` checks the entries' format (`cite:format`, an error) and warns about a SharePoint or
+OneDrive link to a file in the body with no entry (`cite:missing`; http or https, a view or sharing
+query such as `?web=1`, a trailing slash and the case of a SharePoint host or path do not make
+another file, nor does a `/:b:/r/` sharing link that carries the path; sites, folders and pages are
+not files). A sharing link that names the file by a token or an id (`/:b:/g/...`,
+`/:w:/s/<site>/<token>`, 1drv.ms, Office's `Doc.aspx?sourcedoc=`, onedrive.live.com `?id=`) maps to
+no path: `km cite add` refuses it, cite the file's path URL instead.
+
+`km cites check` compares each entry with a local copy, given per URL (`--file URL=PATH`) or through
+a synced library mapped to the URL it holds:
 `--dir "<local library>=https://<host>/sites/<site>/<library>"` (repeatable; the most specific
 prefix wins). Below the prefix the URL names exactly one local path (decoded, case-insensitive per
 segment); km does not search by name, so a file of another library or folder never counts. It
 reports `current`, `stale` or `unchecked` (no copy at that path, a URL under no `--dir` prefix, an
-unreadable copy). When a cited file changed, re-review the doc against it, then `km repin --cites
-<doc> --dir "<local library>=<URL prefix>"` (or `--file`): like a source pin, a signed-off doc goes
-back to review. Adding a new cited file
-to a signed-off doc with `km cite add` sends it back too, since the approval never saw it; citing
-the same content again changes nothing. km rewrites the whole `cites:` block, so comments inside it
-are dropped. These commands need km 1.8.0 in the brain's pins.
+unreadable copy).
+
+When a cited file changed, re-review the doc against it, then
+`km repin --cites <doc> --dir "<local library>=<URL prefix>"` (or `--file`): like a source pin, a
+signed-off doc goes back to review. Adding a new cited file to a signed-off doc with `km cite add`
+sends it back too, since the approval never saw it; citing the same content again changes nothing.
+km rewrites the whole `cites:` block, so comments inside it are dropped. These commands need km
+1.8.0 in the brain's pins.

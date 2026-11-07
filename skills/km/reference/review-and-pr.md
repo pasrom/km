@@ -108,7 +108,7 @@ repos/<repo>/pulls/<N>/reviews --method POST --input -`: `{"commit_id": "<head>"
   its file and line. Blocking findings (`/km review` step 4) come first and say so.
 - Never `APPROVE` or `REQUEST_CHANGES`: that is the human reviewer's call; recommend it in chat only.
 - Show the user the full review (body and line comments) and post only on their OK. Where gh cannot
-  write (none, or 401/403 for this repo), post nothing, as in "GitHub access": give the user the
+  write (none, or 401/403 for this repo), post nothing, as in "GitHub access" (SKILL.md): give the user the
   payload and the exact `gh api` command. On a 422 for a line, move that comment into `body` and
   post again.
 - A new head gets a new review without the findings fixed since; never delete or resolve the old

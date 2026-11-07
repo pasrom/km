@@ -2,6 +2,7 @@
 
 ## Contents
 
+- Mounted brains and shared resources
   - Brains (peer knowledge bases)
   - Shared resources (self-describing repos)
   - `@all` sync
@@ -14,10 +15,12 @@
   - `contribute --finish <PR-url>` (after the PR merges)
   - Hard rules
 
+## Mounted brains and shared resources
+
 ### Brains (peer knowledge bases)
 
 - Located under `brains/<name>/` (git submodules), read at the commit the brain pins
-- Sync: `km sync --quiet --max-age 15m` before the query (see "Keeping the copy current" in SKILL.md); it
+- Sync: `km sync --quiet --max-age 15m` before the query (see "Running km and keeping the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md`); it
   checks every mount out at its pin and never moves one ahead of it. Pass its notes on: a mount
   with changes of its own or ahead of its pin is left as it is (`brain reset <name>` puts it
   back), never a silent skip. Newer content of a mount comes only with a moved pin, through a pull
@@ -119,7 +122,7 @@ wait for explicit OK. Then:
    the target itself or the contributor's fork) and skip `gh pr create`.
 3. **Trusted gate.** Run YOUR km against the clone (`--root /tmp/km-contrib-<slug>`), never code from
    the clone: it gates with the target's `schema.local.yaml`, and nothing is copied in. Where the
-   target pins another km version, km runs that one (see "Running km" in SKILL.md), so the PR matches its CI.
+   target pins another km version, km runs that one (see "Running km and keeping the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md`), so the PR matches its CI.
 4. **Terms hand-off.** If the target's `schema.local.yaml` sets `gate.forbidden_terms_file`, that file
    is out of git and the target's maintainer distributes it; put it at the path the target names,
    inside the clone, before promoting. If you cannot get it, STOP — by design, the leak check must not
