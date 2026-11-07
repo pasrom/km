@@ -144,8 +144,8 @@ tests/                 smoke tests
 ## Development
 
 The smoke tests need Python 3.11+, PyYAML and git: `bash tests/gate_smoke.sh`, `index_smoke.sh`,
-`team_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh`, `list_smoke.sh`, `skill_smoke.sh` (the split of the
-skill lost nothing, against the frozen pre-split SKILL.md) and `hook_smoke.sh` (the plugin's edit guard;
+`team_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh`, `list_smoke.sh`, `skill_smoke.sh` (the skill's core
+keeps its size limits, its reference paths resolve, every `/km` verb has a dispatch row) and `hook_smoke.sh` (the plugin's edit guard;
 the pre-push hook too where pre-commit is installed). CI runs them plus the GitHub Action on every pull request, and
 `encoding_smoke.sh`, `doctor_smoke.sh`, `sync_smoke.sh` and `hook_smoke.sh` on Windows (team_smoke runs the encoding test on macOS under non-UTF-8 locales). A release bumps
 `__version__` in `src/km/__init__.py`, `version` in `.claude-plugin/plugin.json` and the version in
