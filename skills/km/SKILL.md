@@ -1,19 +1,15 @@
 ---
 name: km
 description: >-
-  Knowledge management for a markdown knowledge base that follows CONVENTIONS.md:
-  answer a question from it with sources; save a note, decision or meeting
-  transcript with correct frontmatter and folder placement; update or supersede a
-  page; run a consistency lint; manage peer knowledge bases mounted as submodules,
-  with corrections raised as a pull request against their repo, not edited in place.
-  Review a doc and sign it off where an AI review may, and prepare a pull request:
-  review, fold the fixes, label what it still needs. Use it for every write to or
-  lookup in the knowledge base instead of writing a markdown file by hand.
-  Triggers on: km, knowledge base, brain, save this, was steht im brain, ins brain
-  speichern, dokumentiere das, Entscheidung festhalten, Meeting-Notiz, ADR, lint,
-  "speicher das sauber ab", "was wissen wir über", check my setup, "prüfe meine
-  Einrichtung", km review, "review mein Dokument", freigeben, km pr, "PR fürs
-  Brain vorbereiten", km queue, review queue, "was wartet auf Freigabe".
+  Knowledge management for a markdown knowledge base ("brain") that follows CONVENTIONS.md.
+  Use it for every lookup in or write to a brain rather than handling its markdown by hand:
+  answer a question from the brain with sources; save a note, decision or meeting transcript
+  with validated frontmatter; update or supersede a page; lint; mount peer brains and correct
+  them by pull request; review a brain doc or brain PR and sign it off where an AI may; prepare
+  a brain PR; the brain's review queue; set up, check, upgrade or sync a brain. Triggers: km,
+  brain, knowledge base, "save this", "was steht im brain", "ins brain speichern", "dokumentiere
+  das", "Entscheidung festhalten", "was wissen wir über", "check my setup", "prüfe meine
+  Einrichtung", "review mein Dokument", "PR fürs Brain", "was wartet auf Freigabe".
 argument-hint: question, content, brain command, help, etc.
 ---
 
@@ -21,34 +17,59 @@ argument-hint: question, content, brain command, help, etc.
 
 $ARGUMENTS
 
+## Rules
+
+- Respond in the user's language
+- Always cite sources (see "Citation format" below)
+- Prefer current repo over brains in contradictions; prefer newer info; mention conflicts
+- Never hallucinate — say if nothing found
+- Confirm before every write: show the diff or the proposed doc and wait for the user's OK
+- Never push to a brain's default branch and never `--force` push; the one exception is
+  `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
+- Never edit a mounted `brains/<name>/` working tree (a hook refuses it): a correction goes through
+  `brain fix` or `contribute` in a throwaway clone; a drifted mount goes back with `brain reset`
+- Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of
+  the content commits
+- A doc carrying `contribution:` has an open PR: edit it on the PR head, never in your brain
+- Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
+- Every GitHub write (push, fork, PR, labels, comments, reviews) uses git and gh, never an MCP write tool
+- After a compaction only this file is re-attached and what you read from the reference files is
+  gone: before you continue a flow, read its files again
+
+## What to read for a request
+
+Read every file a row names before you start the flow, in full. The files are in
+`${CLAUDE_SKILL_DIR}/reference/` (forward slashes on every platform).
+
+| Request (`/km ...` or in prose) | Read |
+| :- | :- |
+| a question, `@<name> ...`, `@all ...`, "was wissen wir über" | this file: "Search strategy", "Routing"; open PRs as a source: `github-reads.md` |
+| content to save, `update <doc>: ...`, a decision, a transcript, archive a page | this file: "Writing content" |
+| `help` | this table, one line per row, then `km --help` for the commands |
+| `doctor`, "check my setup", "prüfe meine Einrichtung" | `setup.md` |
+| `init`, `init --team`, `upgrade` | `setup.md` |
+| `sync` | this file: "Keeping the copy current" |
+| `lint`, `validate`, the gate, `promote`, index completeness | `validate-and-gate.md` |
+| `review <doc>...`, `approve <doc>...` | `review-and-pr.md` |
+| `pr`, review a brain PR | `review-and-pr.md` (without gh also `github-reads.md`) |
+| `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `queue.md`, `github-reads.md`, `review-and-pr.md` |
+| `brain add <url>`, `brain list`, `brain remove`, `brain reset`, a pin-bump PR | `brains.md` |
+| `brain fix @<name> ...`, "fix this in @<name>" | `brains.md`, `review-and-pr.md`, `validate-and-gate.md` |
+| `contribute @<name> ...`, `contribute --finish <PR>` | `brains.md`, `review-and-pr.md`, `validate-and-gate.md` |
+| `repin`, `cite add`, `cites check`, a `pin:` or `cite:` warning | `pins-and-cites.md` |
+
 ## Setup
 
 Read `CONVENTIONS.md` in the repo root. If missing, offer to initialize (`/km init`).
 
 **Running km.** `bin/km` next to this SKILL.md runs km from this installed plugin, written `km`
-below; `km --help` lists the commands, and all take `--root DIR`. Brains carry no km code: CI and
-the pre-commit hook install the km release the brain pins, by its commit (`pasrom/km@<sha> # vX.Y.Z`,
-so a moved tag cannot change what runs), and so does `km` here: in a brain that pins another version
-it runs that commit through `uvx`, so results match CI (`KM_LOCAL=1` keeps the plugin's; `init`,
-`upgrade`, `doctor`, `list` and `sync` always run the plugin's km, so `km upgrade` needs no `KM_LOCAL`). Without uv,
-offline, for a pin to a movable tag, or when the workflows disagree, it runs the plugin's km and warns;
-`/km upgrade` the brain then.
+below; `km --help` lists the commands, and all take `--root DIR`. In a brain that pins another km
+version it runs that one, so results match CI ("Running km" in `${CLAUDE_SKILL_DIR}/reference/setup.md`).
 
-**Keeping the copy current.** A copy of the brain goes stale: answers then come from old knowledge
-and new work starts on an old base. `km sync` fetches the upstream brain (the remote `upstream`,
-else a fork's parent, else origin) and only ever fast-forwards: the checked-out default branch on a
-clean tree, a fork's default branch on the host, and the mounted brains to the commit the brain
-pins (a pin moves only through the host's automation and a reviewed PR). Everything else it only
-reports, with how far behind. The plugin runs it when a session starts in a brain, and its lines
-are then in your context. Before answering a question from the brain, run
-`km sync --quiet --max-age 15m` (nothing happens within 15 minutes of the last run; it prints only
-what changed or needs attention). Before creating a page or a branch, run `km sync`, so the work
-starts from the current upstream. When it reports `branch <X> is <N> commits behind upstream
-<default>; rebase it when you are ready`, tell the user and offer the rebase; run
-`git rebase upstream/<default>` (`origin/<default>` without a fork) only on their OK and on a
-clean tree (`git status --porcelain --ignore-submodules=all` prints nothing), never a reset or a
-force. A default branch with commits of its own, a dirty tree, a mount with changes of its own or
-a diverged fork are the user's call too: pass the note on and do nothing else.
+**Keeping the copy current.** Before answering a question from the brain, run
+`km sync --quiet --max-age 15m`; before creating a page or a branch, run `km sync`. It only ever
+fast-forwards and reports the rest: pass its notes on, offer the rebase it names only as "Keeping
+the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md` says, and never reset, force or move a mount yourself.
 
 **GitHub access.** Every GitHub step in this skill uses `gh` (with a local clone where one exists)
 when `gh auth status --hostname github.com` succeeds; check once per session and again after a
@@ -128,23 +149,3 @@ After writing the main file, update related pages before committing:
 3. **Confirm:** List all proposed ripple updates and wait for user approval before committing
 
 Ripple is **one level deep** — never cascade into further ripple updates. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added.
-
-## Reference files
-
-The flows below are in reference files, read when a request needs them (paths are relative to this
-skill, forward slashes on every platform):
-
-- `${CLAUDE_SKILL_DIR}/reference/setup.md`: setup check (`/km doctor`, "check my setup"), `/km init`, `/km init --team`, `/km upgrade`
-- `${CLAUDE_SKILL_DIR}/reference/brains.md`: mounted brains and shared resources, pin-bump PR, brain management (`brain add`, `list`, `remove`, `reset`), `brain fix @<name>`, `contribute @<name>` and `contribute --finish`
-- `${CLAUDE_SKILL_DIR}/reference/github-reads.md`: open pull requests as a source, reading GitHub through MCP
-- `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md`: `/km lint`, the gate, `km promote`, index completeness
-- `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`: `/km review`, `/km pr`, review of a PR you did not open, `km approve`
-- `${CLAUDE_SKILL_DIR}/reference/queue.md`: `/km queue`
-- `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md`: `km repin`, `km cite add`, `km cites check`
-
-## Rules
-
-- Respond in the user's language
-- Always cite sources (see "Citation format" above)
-- Prefer current repo over brains in contradictions; prefer newer info; mention conflicts
-- Never hallucinate — say if nothing found

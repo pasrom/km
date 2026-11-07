@@ -2,10 +2,38 @@
 
 ## Contents
 
+- Running km and keeping the copy current
 - Setup check (`/km doctor`, "check my setup")
 - Init (`/km init`)
 - Team brain init (`/km init --team`)
 - Upgrade (`/km upgrade`)
+
+## Running km and keeping the copy current
+
+**Running km.** `bin/km` next to this SKILL.md runs km from this installed plugin, written `km`
+below; `km --help` lists the commands, and all take `--root DIR`. Brains carry no km code: CI and
+the pre-commit hook install the km release the brain pins, by its commit (`pasrom/km@<sha> # vX.Y.Z`,
+so a moved tag cannot change what runs), and so does `km` here: in a brain that pins another version
+it runs that commit through `uvx`, so results match CI (`KM_LOCAL=1` keeps the plugin's; `init`,
+`upgrade`, `doctor`, `list` and `sync` always run the plugin's km, so `km upgrade` needs no `KM_LOCAL`). Without uv,
+offline, for a pin to a movable tag, or when the workflows disagree, it runs the plugin's km and warns;
+`/km upgrade` the brain then.
+
+**Keeping the copy current.** A copy of the brain goes stale: answers then come from old knowledge
+and new work starts on an old base. `km sync` fetches the upstream brain (the remote `upstream`,
+else a fork's parent, else origin) and only ever fast-forwards: the checked-out default branch on a
+clean tree, a fork's default branch on the host, and the mounted brains to the commit the brain
+pins (a pin moves only through the host's automation and a reviewed PR). Everything else it only
+reports, with how far behind. The plugin runs it when a session starts in a brain, and its lines
+are then in your context. Before answering a question from the brain, run
+`km sync --quiet --max-age 15m` (nothing happens within 15 minutes of the last run; it prints only
+what changed or needs attention). Before creating a page or a branch, run `km sync`, so the work
+starts from the current upstream. When it reports `branch <X> is <N> commits behind upstream
+<default>; rebase it when you are ready`, tell the user and offer the rebase; run
+`git rebase upstream/<default>` (`origin/<default>` without a fork) only on their OK and on a
+clean tree (`git status --porcelain --ignore-submodules=all` prints nothing), never a reset or a
+force. A default branch with commits of its own, a dirty tree, a mount with changes of its own or
+a diverged fork are the user's call too: pass the note on and do nothing else.
 
 ## Setup check (`/km doctor`, "check my setup")
 
