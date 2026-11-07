@@ -48,6 +48,7 @@ REWRITES: list[tuple[str, str]] = [
     ('2. **Open PRs.** `<repo>` as in "Open pull requests" step 1,',
      f'2. **Open PRs.** `<repo>` as in "Open pull requests" step 1 (`{REF}/github-reads.md`),'),
     ('the MCP read per "GitHub access" (no minimal output)', 'the MCP read per "GitHub access" (SKILL.md; no minimal output)'),
+    ('(see "Citation format" above)', '(see "Citation format" below)'),       # the rules moved to the top
 ]
 # paragraph prefix -> (how often it may appear, why); without an entry, as often as in the baseline
 DUPLICATES: dict[str, tuple[int, str]] = {}
@@ -182,8 +183,8 @@ def main() -> int:
     if not desc or len(desc) > 1024:
         problems.append(f"description is {len(desc)} chars (limit 1024)")
     for ref in sorted((skill / "reference").glob("*.md")):
-        if f"{REF}/{ref.name}" not in core:
-            problems.append(f"SKILL.md never names {REF}/{ref.name}")
+        if f"`{REF}/`" not in core or f"`{ref.name}`" not in core:
+            problems.append(f"SKILL.md never names {ref.name} (with the {REF}/ directory)")
         if len(ref.read_text(encoding="utf-8").splitlines()) > 100 and "## Contents" not in ref.read_text(encoding="utf-8"):
             problems.append(f"{ref.name} is over 100 lines and has no '## Contents' list")
     for name, text in files.items():
@@ -192,6 +193,16 @@ def main() -> int:
                 problems.append(f"{name} points at a missing reference file: {hit}")
         if "${CLAUDE_SKILL_DIR}/reference/" in text and re.search(r"reference\\|reference/\.\./", text):
             problems.append(f"{name}: reference path not plain forward-slash")
+
+    table = re.search(r"(?ms)^\| Request.*?(?=^## )", core)
+    table = table.group(0) if table else ""
+    readme = (Path(a.skill).parent.parent / "README.md").read_text(encoding="utf-8")
+    for verb in sorted({v for v in re.findall(r"(?<![\w/])/km ([a-z][a-z-]*)", readme + base)}):
+        if not re.search(rf"`{verb}\b|\b{verb}\b", table):
+            problems.append(f"dispatch table has no row for /km {verb}")
+    for name in ("help",):
+        if f"`{name}`" not in table:
+            problems.append(f"dispatch table does not define `{name}`")
 
     for p in problems:
         print(f"  FAIL: {p}")
