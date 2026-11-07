@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A pull request a workflow opens with GITHUB_TOKEN starts no pull_request run; such a workflow
+  # dispatches this one on its branch instead, so the pull request gets its check.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
