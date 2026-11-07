@@ -13,7 +13,9 @@ a version km shipped, unchanged; once this repo edits it, it is this repo's and 
     --emit-message FILE  write a commit message for the change (only when something moves)
     --emit-body FILE     write a pull-request body for it (only when something moves)
     --hold-if-moved REF  write nothing when a submodule that fails is one REF's commit moves (the
-                         open pull request's branch: its move would be lost over a passing failure)
+                         open pull request's branch: its move would be lost over a passing failure).
+                         Pass it only for a head --branch-prs accepted, else a commit pushed there
+                         by hand stays under the pull request while a submodule fails.
 
 Every submodule in .gitmodules is read at run time: its path, its repository (a GitHub URL, or a
 URL relative to this repository's own, `../name.git` or `../../owner/name.git`) and its tracked
