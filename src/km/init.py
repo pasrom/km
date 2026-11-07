@@ -8,8 +8,8 @@ its commit (see km.pins) and runs `km` from there. The release is this km's own,
 
   km init DIR --team --name NAME --desc TEXT --initials XX --folder DIR=PURPOSE [--folder ...]
               [--rule TEXT ...] [--profile SLUG]
-      A team brain: also the root and folder indexes, README, .gitignore, the two workflows and a
-      Dependabot config. Refuses to run if any file it would write already exists.
+      A team brain: also the root and folder indexes, README, .gitignore, its workflows (ci,
+      staleness, main-guard, bump-mounted-pins with its script) and a Dependabot config. Refuses to run if any file it would write already exists.
 
 Both render and check everything before writing anything, and refuse a release whose commit
 cannot be looked up (not released yet, or no network). Files only: git add, the first
@@ -47,6 +47,8 @@ TEAM = {
     "team/staleness.yml": ".github/workflows/staleness.yml",
     "team/main-guard.yml": ".github/workflows/main-guard.yml",
     "team/dependabot.yml": ".github/dependabot.yml",
+    "team/bump-mounted-pins.yml": ".github/workflows/bump-mounted-pins.yml",
+    "team/bump-mounted-pins.py": ".github/scripts/bump-mounted-pins.py",
     "pre-commit-config.template.yaml": ".pre-commit-config.yaml",
 }
 PLACEHOLDERS = ("<BRAIN>", "<TEAM>", "<MAINTAINER>", "<profile>", "<date>", "<FOLDER_ROWS>",

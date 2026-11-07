@@ -371,9 +371,10 @@ FORKS = ("query { viewer { repositories(isFork: true, first: 100, ownerAffiliati
          "{ nodes { nameWithOwner parent { nameWithOwner } } } } }")
 
 
-def check_github(origin: str, offline: bool) -> None:
+def check_github(origin: str, offline: bool) -> str | None:
     """On a GitHub brain, `/km pr`, a contribution and the search of open pull requests run through
-    gh. Without push access to origin, a contribution goes through a fork."""
+    gh. Without push access to origin, a contribution goes through a fork. Returns the repository's
+    owner/name when gh can see it."""
     repo = github_repo(origin)
     if not repo:
         return
@@ -400,7 +401,7 @@ def check_github(origin: str, offline: bool) -> None:
     push, _, full = out.partition("\t")           # full_name: the current name, after a rename or transfer
     if push == "true":
         report("ok", f"you can push branches to {full}")
-        return
+        return full
     _, forks = gh("api", "--hostname", "github.com", "graphql", "-f", f"query={FORKS}", "--jq",
                   f'.data.viewer.repositories.nodes[] | select((.parent.nameWithOwner // "" | ascii_downcase) == '
                   f'"{full.lower()}") | .nameWithOwner')
@@ -409,6 +410,32 @@ def check_github(origin: str, offline: bool) -> None:
     else:
         report("note", f"you can read {full} but not push to it, and have no fork of it yet",
                "a contribution creates one (`gh repo fork --remote=false`); nothing to do before then")
+    return full
+
+
+def check_mounted_pins(root: Path, repo: str) -> None:
+    """A brain with mounts and the bump-mounted-pins workflow needs the environment that holds the
+    workflow's app key, restricted to main (the workflow's header says how to set it up). One call;
+    a note, since only a maintainer can fix it."""
+    if not ((root / ".gitmodules").is_file() and (root / ".github/workflows/bump-mounted-pins.yml").is_file()):
+        return
+    env = f"repos/{repo}/environments/mounted-pins"
+    code, policy = gh("api", "--hostname", "github.com", env, "--jq",
+                      '.deployment_branch_policy | if . == null then "open" elif .custom_branch_policies then "custom" else "protected" end')
+    fix = "Settings, Environments, mounted-pins: deployment branches, selected branches, `main` only"
+    if code != 0:
+        report("note", f"{repo} has no environment mounted-pins (or gh cannot see it): the mounted pins do not move",
+               "a maintainer sets it up as the top of .github/workflows/bump-mounted-pins.yml describes")
+        return
+    names = ""
+    if policy == "custom":                   # a second call only for a list of chosen branches
+        _, names = gh("api", "--hostname", "github.com", f"{env}/deployment-branch-policies", "--jq", "[.branch_policies[].name] | join(\" \")")
+    if names == "main":
+        report("ok", f"{repo} has the environment mounted-pins, restricted to main")
+    else:
+        what = {"open": "every branch", "protected": "every protected branch"}.get(policy, names or "no branch")
+        report("note", f"the environment mounted-pins of {repo} is open to {what}, not to main alone: "
+                       f"a workflow pushed on such a branch can read the app key", fix)
 
 
 def main() -> int:
@@ -428,7 +455,8 @@ def main() -> int:
         check_submodules(root, origin, args.offline)
         check_hook(root)
         check_line_endings(root)
-        check_github(origin, args.offline)
+        if repo := check_github(origin, args.offline):
+            check_mounted_pins(root, repo)
         check_km_version(root)
         check_plugins(root)
     check_uv()

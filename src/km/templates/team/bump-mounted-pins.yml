@@ -1,0 +1,257 @@
+# Written by `km init --team`. `km upgrade` adds it when missing and replaces it while it is a
+# version km shipped, unchanged but for its action pins; once this repo edits it, it is this repo's
+# and upgrade leaves it. Actions and the image are pinned by commit and digest; Dependabot moves the
+# actions, the image digest is moved by hand.
+name: bump-mounted-pins
+
+# The repositories mounted as submodules (.gitmodules) are pinned to a commit, so a change in one of
+# them reaches this brain only when the pin moves. That keeps what the brain reads reproducible and
+# every move a reviewed change. This workflow connects the two events: it looks for newer commits
+# and opens a pull request, so the move stays reviewed instead of becoming automatic.
+#
+# Three jobs: mounts reads .gitmodules (a brain without mounts stops there), resolve holds the read
+# token for the mounted repositories, publish alone can write here.
+#
+# Set up once, before the first mount (until then the workflow does nothing):
+# 1. A GitHub App with the repository permissions Contents: read and Actions: read, installed on
+#    the owner of this brain for the mounted repositories (or all). Generate a private key.
+# 2. Settings, Environments, New environment `mounted-pins`; Deployment branches: selected
+#    branches, `main` only. GitHub creates an environment a workflow names on its first run,
+#    without that restriction, so create it first.
+# 3. In that environment, the secrets CI_APP_CLIENT_ID (the app's client ID) and
+#    CI_APP_PRIVATE_KEY (the private key).
+# 4. Settings, Actions, General: "Allow GitHub Actions to create and approve pull requests".
+# 5. In the ruleset or branch protection of main: "Require approval of the most recent reviewable
+#    push", so a commit someone pushes onto the bump branch needs a review by someone else.
+# Mounted repositories of another owner are not in the token's scope: next to a mount of this
+# brain's owner, a public one still resolves and a private one is reported and fails the run; a
+# brain whose mounts all belong to other owners is not handled (mounts finds none and stops).
+# Submodule paths must not contain spaces. The runner is ubuntu-latest unless the repository
+# variable MOUNTED_PINS_RUNNER names another label.
+on:
+  schedule:
+    # Weekday mornings, 06:25 UTC. Off the hour on purpose: scheduled runs cluster there and are
+    # queued longest.
+    - cron: '25 6 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-mounted-pins
+  cancel-in-progress: false
+
+env:
+  BRANCH: chore/bump-mounted-pins
+
+# In a container job the default shell is sh; the steps use bash arrays and process substitution.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mounts:
+    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || 'ubuntu-latest' }}
+    container: python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 # 3.12-slim
+    outputs:
+      names: ${{ steps.mounted.outputs.names }}
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y --no-install-recommends git
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # actions/checkout registers the workspace as a safe directory in a HOME that exists only for
+      # its own step; later steps run with the real HOME and git then refuses the repository as
+      # dubiously owned.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$PWD"
+
+      # The token resolve gets reads only these repositories: the mounted ones of this brain's
+      # owner. None: no environment, no token, nothing to do.
+      - name: List the mounted repositories
+        id: mounted
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          names=$(python3 .github/scripts/bump-mounted-pins.py --list-repos "$OWNER")
+          [ -n "$names" ] || echo "No repository of $OWNER is mounted (.gitmodules): nothing to move."
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+
+  resolve:
+    needs: mounts
+    if: needs.mounts.outputs.names != ''
+    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || 'ubuntu-latest' }}
+    # The app key lives in this environment, which only main may use. A workflow pushed on another
+    # branch therefore cannot reach the key.
+    environment: mounted-pins
+    container: python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 # 3.12-slim
+    permissions:
+      contents: read
+      pull-requests: read     # is a pull request of the bump branch open, or was one opened for its head
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      proposed: ${{ steps.bump.outputs.proposed }}
+      pins: ${{ steps.bump.outputs.pins }}
+      message: ${{ steps.bump.outputs.message }}
+      body: ${{ steps.bump.outputs.body }}
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y --no-install-recommends git
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trust the workspace          # as in mounts
+        run: git config --global --add safe.directory "$PWD"
+
+      # Not set up yet (see the top): say so and stop, rather than fail every morning.
+      - name: Check the app's secrets
+        id: app
+        env:
+          CLIENT_ID: ${{ secrets.CI_APP_CLIENT_ID }}
+          KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ -n "$KEY" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"
+          else echo "::warning::the environment mounted-pins has no CI_APP_CLIENT_ID and CI_APP_PRIVATE_KEY: no pin moves (see the top of this workflow)"
+          fi
+
+      # A short-lived installation token of the read-only app. Contents to resolve the commits,
+      # actions to check that their CI did not fail. The action revokes the token at the end of
+      # the job.
+      - name: Get a read token for the mounted repositories
+        id: app-token
+        if: steps.app.outputs.ready == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ needs.mounts.outputs.names }}
+          permission-contents: read
+          permission-actions: read
+
+      - name: Look for newer commits
+        id: bump
+        if: steps.app.outputs.ready == 'true'
+        env:
+          # GITHUB_TOKEN is scoped to this repository alone and cannot see the mounted ones.
+          GH_PIN_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The token reaches git through the environment of these calls only, never in argv.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          authgit() {
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+              GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git "$@"
+          }
+          # The pull request branch as it stands, if there is one. Exit 2 is "no such branch"; any
+          # other failure fails the job rather than passing for a missing branch.
+          rc=0
+          authgit ls-remote --exit-code --heads origin "refs/heads/$BRANCH" > /dev/null || rc=$?
+          proposed="" open=false seen=false
+          if [ "$rc" = 0 ]; then
+            authgit fetch -q --depth 2 origin "refs/heads/$BRANCH"   # with its parent, for --hold-if-moved
+            proposed=$(git rev-parse FETCH_HEAD)
+            git update-ref refs/bump/proposed "$proposed"
+            prs=$(python3 .github/scripts/bump-mounted-pins.py --branch-prs "$BRANCH" "$proposed")
+            read -r open seen <<< "$prs"
+          elif [ "$rc" != 2 ]; then
+            echo "::error::git ls-remote failed with exit $rc"; exit 1
+          fi
+          # A submodule that cannot be resolved stays at main's pin and does not hold back the
+          # others; the body names it and the last step fails this job. Nothing is carried over
+          # from the branch, so no pin pushed there by hand is committed under this workflow's
+          # name. While a pull request is open and its commit moves such a submodule, the run
+          # writes nothing (--hold-if-moved): the move would be lost over a passing failure and
+          # come back the next day. One that fails for good (a private mount of another owner,
+          # say) and that the branch does not move holds nothing back.
+          hold=()
+          [ "$open" = true ] && hold=(--hold-if-moved refs/bump/proposed)
+          rc=0
+          python3 .github/scripts/bump-mounted-pins.py --write "${hold[@]}" \
+            --emit-message /tmp/pin-message --emit-body /tmp/pin-body || rc=$?
+          echo "problems=$rc" >> "$GITHUB_OUTPUT"
+          [ -s /tmp/pin-message ] || { echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          # Compared against the bump branch, not only against main: with a pull request open the
+          # pins differ from main every day, and committing them again would force-push each
+          # morning. A pull request closed without merging leaves its branch, so the same pins are
+          # not proposed again; newer commits are. Only when a pull request was opened for the
+          # branch head, though: if opening it failed, the next run tries again. And only while that
+          # head is what publish pushes, one commit on main changing gitlinks only (--branch-prs
+          # checks it): a branch someone pushed more onto is regenerated. The submodules are
+          # `ignore = all`, which would hide every gitlink change from a plain diff.
+          mapfile -t paths < <(git config -f .gitmodules --get-regexp '\.path$' | cut -d' ' -f2)
+          if [ "$seen" = true ] &&
+             git diff --cached --quiet --ignore-submodules=none refs/bump/proposed -- "${paths[@]}"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The pull request branch already proposes exactly these pins."
+            exit 0
+          fi
+          eof="EOF_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "changed=true"
+            echo "proposed=$proposed"
+            echo "pins<<$eof"; git ls-files -s -- "${paths[@]}" | awk '{print $2, $4}'; echo "$eof"
+            echo "message<<$eof"; cat /tmp/pin-message; echo "$eof"
+            echo "body<<$eof"; cat /tmp/pin-body; echo "$eof"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Fail on a submodule that could not be resolved
+        if: steps.app.outputs.ready == 'true' && steps.bump.outputs.problems != '0'
+        run: echo "::error::a submodule could not be resolved, see the step log" && exit 1
+
+  publish:
+    needs: resolve
+    if: ${{ !cancelled() && needs.resolve.outputs.changed == 'true' }}
+    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || 'ubuntu-latest' }}
+    container: python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 # 3.12-slim
+    permissions:
+      contents: write         # push the bump branch
+      pull-requests: write    # open or update the pull request
+      actions: write          # dispatch ci.yml on the bump branch
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y --no-install-recommends git
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trust the workspace          # as in mounts
+        run: git config --global --add safe.directory "$PWD"
+
+      - name: Commit and push the bump branch
+        env:
+          PINS: ${{ needs.resolve.outputs.pins }}
+          MESSAGE: ${{ needs.resolve.outputs.message }}
+          PROPOSED: ${{ needs.resolve.outputs.proposed }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -B "$BRANCH"
+          while read -r sha path; do git update-index --add --cacheinfo "160000,$sha,$path"; done <<< "$PINS"
+          git commit -q -m "$MESSAGE"
+          # Force: the branch is regenerated on every run rather than accumulating one commit per
+          # day, which also drops any commit pushed onto it by hand. The lease holds it to the head
+          # resolve saw (empty: the branch must not exist), so at least a commit pushed while this
+          # run is under way is not lost. The token reaches git for this push only.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          authgit() {
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+              GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git "$@"
+          }
+          authgit push -q --force-with-lease="refs/heads/$BRANCH:$PROPOSED" origin "HEAD:refs/heads/$BRANCH"
+
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ needs.resolve.outputs.body }}
+        run: python3 .github/scripts/bump-mounted-pins.py --open-pr "$BRANCH"

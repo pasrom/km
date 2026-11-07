@@ -1,6 +1,8 @@
 # Keeps the commit-pinned actions in this repository's workflows and in action.yml current. The
 # templates brains get are not watched: a test fails until they pin the same commits, so a
-# Dependabot update here has to be carried into src/km/templates/team/*.yml by hand.
+# Dependabot update here has to be carried into src/km/templates/team/*.yml by hand. An action only a
+# template uses (actions/create-github-app-token, TEMPLATE_ONLY in tests/team_smoke.sh) is watched by
+# no one here: each brain's Dependabot moves it there; bump it in the template by hand.
 version: 2
 updates:
   - package-ecosystem: github-actions

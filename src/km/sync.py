@@ -15,7 +15,7 @@ of a fork, else origin) and origin, then:
 - makes the mounted brains match what the brain pins: `git submodule update --init` for a mount
   that is missing or behind its pin; one with changes of its own, a branch checked out, or ahead
   of or diverged from its pin is left alone and reported. A pin never moves here; that is the
-  host's automation (Dependabot) and a reviewed pull request.
+  host's automation (the bump-mounted-pins workflow) and a reviewed pull request.
 
 A fork's parent that gh found is added once as the remote `upstream` (as `gh repo fork` does), so
 the next run needs no gh and the fetched branch has a ref of its own.
