@@ -30,6 +30,7 @@ jobs:
       - run: bash tests/doctor_smoke.sh
       - run: bash tests/sync_smoke.sh
       - run: bash tests/list_smoke.sh
+      - run: bash tests/skill_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
 
