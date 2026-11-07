@@ -6,9 +6,7 @@
 
 ## How to Contribute
 
-Knowledge management via the `/km` skill ([km](https://github.com/pasrom/km); install the plugin
-once with `/plugin marketplace add pasrom/km` and `/plugin install km@km`), then use natural
-language or explicit commands:
+Knowledge management via the `/km` skill ([km](https://github.com/pasrom/km); install the plugin once with `/plugin marketplace add pasrom/km` and `/plugin install km@km`), then use natural language or explicit commands:
 
 - **Save:** "save this", "save this as a decision", `/km save ...`
 - **Query:** "what do we know about X", `/km what is X`

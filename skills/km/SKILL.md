@@ -24,17 +24,12 @@ $ARGUMENTS
 - Always cite sources (see "Citation format" below)
 - Prefer current repo over brains in contradictions; prefer newer info; mention conflicts
 - Never hallucinate — say if nothing found
-- Never push to a brain's default branch and never `--force` push; the one exception is
-  `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
-- Never edit a mounted `brains/<name>/` working tree (a hook refuses the file-edit tools there; a
-  shell edit is yours to refuse): a correction goes through
-  `brain fix` or `contribute` in a throwaway clone; a drifted mount goes back with `brain reset`
-- Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of
-  the content commits
+- Never push to a brain's default branch and never `--force` push; the one exception is `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
+- Never edit a mounted `brains/<name>/` working tree (a hook refuses the file-edit tools there; a shell edit is yours to refuse): a correction goes through `brain fix` or `contribute` in a throwaway clone; a drifted mount goes back with `brain reset`
+- Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of the content commits
 - A doc carrying `contribution:` has an open PR: edit it on the PR head, never in your brain
 - Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
-- After a compaction only this file is re-attached and what you read from the reference files is
-  gone: before you continue a flow, read its files again
+- After a compaction only this file is re-attached and what you read from the reference files is gone: before you continue a flow, read its files again
 
 ## What to read for a request
 
@@ -60,24 +55,11 @@ Read every file a row names before the flow starts, in full (forward slashes on 
 
 Read `CONVENTIONS.md` in the repo root. If missing, offer to initialize (`/km init`).
 
-**Running km.** `bin/km` next to this SKILL.md runs km from this installed plugin, written `km`
-below; `km --help` lists the commands, and all take `--root DIR`. In a brain that pins another km
-version it runs that one ("Running km and keeping the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md`).
+**Running km.** `bin/km` next to this SKILL.md runs km from this installed plugin, written `km` below; `km --help` lists the commands, and all take `--root DIR`. In a brain that pins another km version it runs that one ("Running km and keeping the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md`).
 
-**Keeping the copy current.** Before answering a question from the brain, run
-`km sync --quiet --max-age 15m`; before creating a page or a branch, run `km sync`. Pass on what it
-reports and offer the rebase it names, only on the user's OK and a clean tree; never a reset, a
-force or a moved mount ("Running km and keeping the copy current" in
-`${CLAUDE_SKILL_DIR}/reference/setup.md`).
+**Keeping the copy current.** Before answering a question from the brain, run `km sync --quiet --max-age 15m`; before creating a page or a branch, run `km sync`. Pass on what it reports and offer the rebase it names, only on the user's OK and a clean tree; never a reset, a force or a moved mount ("Running km and keeping the copy current" in `${CLAUDE_SKILL_DIR}/reference/setup.md`).
 
-**GitHub access.** Every GitHub step in this skill uses `gh` (with a local clone where one exists)
-when `gh auth status --hostname github.com` succeeds; check once per session and again after a
-`gh auth login`. Only without it, read through any MCP server exposing GitHub tools such as
-`pull_request_read` (prefer a read-only one if several are loaded), as in "Reading GitHub through
-MCP" (`${CLAUDE_SKILL_DIR}/reference/github-reads.md`). When gh gets HTTP 401, 403 or 404 for a repo, read that repo through MCP for the rest of the
-task and say so in the answer; a network error is no reason to switch. With neither, name what was
-not read under gaps, never guess. Every write (push, fork, PR create or edit, labels, PR comments,
-reviews) uses git and gh only, never an MCP write tool; without gh, say the write cannot be done.
+**GitHub access.** Every GitHub step in this skill uses `gh` (with a local clone where one exists) when `gh auth status --hostname github.com` succeeds; check once per session and again after a `gh auth login`. Only without it, read through any MCP server exposing GitHub tools such as `pull_request_read` (prefer a read-only one if several are loaded), as in "Reading GitHub through MCP" (`${CLAUDE_SKILL_DIR}/reference/github-reads.md`). When gh gets HTTP 401, 403 or 404 for a repo, read that repo through MCP for the rest of the task and say so in the answer; a network error is no reason to switch. With neither, name what was not read under gaps, never guess. Every write (push, fork, PR create or edit, labels, PR comments, reviews) uses git and gh only, never an MCP write tool; without gh, say the write cannot be done.
 
 ## `@` prefix — brains and shared resources
 
@@ -91,29 +73,22 @@ reviews) uses git and gh only, never an MCP write tool; without gh, say the writ
 
 - Brain sources: `[<name>@<hash>] path/file.md`
 - Shared resource sources: `[<name>] path/file.md` (or as specified in the resource's `CLAUDE.md`)
-- Open pull request sources: `[<owner>/<repo>#<N>, not merged, <author>, <last update>] path/file.md`
-  (see "Open pull requests" in `${CLAUDE_SKILL_DIR}/reference/github-reads.md`)
+- Open pull request sources: `[<owner>/<repo>#<N>, not merged, <author>, <last update>] path/file.md` (see "Open pull requests" in `${CLAUDE_SKILL_DIR}/reference/github-reads.md`)
 
 ## Consuming vs. authoring a mounted brain
 
-A `brains/<name>/` submodule is a **read-only, pinned mirror**: query it, cite it, resolve uphill
-links against it, never write in it.
+A `brains/<name>/` submodule is a **read-only, pinned mirror**: query it, cite it, resolve uphill links against it, never write in it.
 
 - **Read / cite** → the mounted submodule (pinned); a `[name@hash]` citation names a commit everyone can resolve.
 - **Occasional correction** to a foreign brain → the throwaway-clone `brain fix` flow (`${CLAUDE_SKILL_DIR}/reference/brains.md`); the submodule is untouched.
 - **You are a PRIMARY author** of a brain (a team brain you feed regularly) → do NOT author it through a submodule. Keep a **standalone clone** of that brain and work there: `git switch -c <ticket>` for one change, or `git worktree add ../<brain>-<ticket> -b <ticket>` off that clone for two at once. Merges land in the brain's own repo; a personal brain only ever *reads* it (mounted submodule, or just point at the sibling clone).
 - **Contribute without write access** (you have READ on a shared/team brain) → `contribute @<name>` (`${CLAUDE_SKILL_DIR}/reference/brains.md`): the throwaway-clone + PR (fork PR if read-only) flow, with the doc gated by the target brain's rules.
 
-Caveat when a brain you author in **itself mounts brains**: a fresh linked worktree has EMPTY
-submodule dirs until `km sync` (or `git submodule update --init`) checks them out at their pins.
+Caveat when a brain you author in **itself mounts brains**: a fresh linked worktree has EMPTY submodule dirs until `km sync` (or `git submodule update --init`) checks them out at their pins.
 
 ## Search strategy
 
-1. Frontmatter tags (skip `status: obsolete/superseded` unless asked). A question about the docs
-   themselves (what lies in a folder, what waits for sign-off, what is overdue for review) is one
-   `km list` call, not a read of each file: `km list <folder>`; waiting for a person's sign-off:
-   `--status review --signoff human`; overdue: `--status accepted --due today`; also `--tag X`,
-   `--fields path,title,owner`, `--json`. A mounted brain: `km list --root <its folder>`.
+1. Frontmatter tags (skip `status: obsolete/superseded` unless asked). A question about the docs themselves (what lies in a folder, what waits for sign-off, what is overdue for review) is one `km list` call, not a read of each file: `km list <folder>`; waiting for a person's sign-off: `--status review --signoff human`; overdue: `--status accepted --due today`; also `--tag X`, `--fields path,title,owner`, `--json`. A mounted brain: `km list --root <its folder>`.
 2. Folder structure + `_index.md` files
 3. H1/H2 headings scan, read matching files
 4. Full-text grep (only if needed)
@@ -125,8 +100,7 @@ Response: summary, sources (with paths), recency, gaps, related topics.
 
 After answering, check: did the response synthesize information from 3+ sources or establish connections not found in any single file? If yes, offer to save the synthesis as a `type: summary` document. Use the standard save flow (frontmatter, folder placement, ripple update). The `related:` field should list all source files used in the synthesis. Pin them in `sources:` too and run `km repin` on the new doc (see "Source pins" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md`).
 
-Do not offer for simple lookups or single-source answers. Never offer it on content from an open PR, and never base a `brain fix` on one alone: where a PR
-shows a merged doc is wrong, say so and point at the PR.
+Do not offer for simple lookups or single-source answers. Never offer it on content from an open PR, and never base a `brain fix` on one alone: where a PR shows a merged doc is wrong, say so and point at the PR.
 
 ## Writing content
 
