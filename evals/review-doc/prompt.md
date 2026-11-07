@@ -1,0 +1,7 @@
+---
+max_turns: 10
+tags: [batch2]
+allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+---
+
+/km review inbox/thermal-derating.md
