@@ -19,3 +19,4 @@ brains. See README.md for the layout.
   templates pin the tag of the km that wrote them.
 - Run all the smoke tests before pushing; add a case for every behaviour change and check that it
   fails without the change.
+- A change under `skills/km/` runs the plugin evals before merge (CI does not run them, they cost money); `evals/README.md` says which cases and how to report them.
