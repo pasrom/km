@@ -2,7 +2,8 @@
 
 Every expected value comes from the brain itself or from git's and Claude Code's own files, never
 from km: the origin and the mounted brains (.gitmodules) it must reach, the km version it pins, and
-the plugins its `.claude/settings.json` enables. One line per check; a failed one says how to fix
+the plugins its `.claude/settings.json` enables. For a brain on GitHub also gh's login, and for an
+https origin that git pushes with it. One line per check; a failed one says how to fix
 it. Network checks run without prompts and with a time limit, so a missing login fails instead of
 hanging; --offline skips them. Exit 1 when a check failed.
 
@@ -395,6 +396,54 @@ def ask(what: str, *args: str, status: str = "FAIL") -> tuple[int, str] | None:
     return code, out
 
 
+def credential_helpers(root: Path, url: str) -> list[str]:
+    """The credential helpers git calls for `url`, in order: every `credential.helper` and
+    `credential.<pattern>.helper` whose pattern matches (scheme, host in any case, port, a user if
+    the pattern names one, a leading part of the path), in the order git reads its config; an empty
+    value drops the ones before it. Host globs (`*.example.com`) are not matched."""
+    target = urlsplit(url)
+    helpers: list[str] = []
+    out = git("config", "-z", "--get-regexp", r"^credential\..*helper$", cwd=root).stdout
+    for key, _, value in (rec.partition("\n") for rec in out.split("\0") if rec):
+        pattern = key[len("credential."):-len(".helper")]
+        if pattern:
+            p = urlsplit(pattern)
+            path = p.path.rstrip("/")
+            if (p.scheme.lower(), p.hostname, p.port) != (target.scheme.lower(), target.hostname, target.port) \
+                    or (p.username and p.username != target.username) \
+                    or (path and target.path != path and not target.path.startswith(path + "/")):
+                continue
+        if value.strip():
+            helpers.append(value.strip())
+        else:
+            helpers.clear()
+    return helpers
+
+
+def check_git_login(root: Path, origin: str) -> None:
+    """A push to an https URL on GitHub (origin's push URL) logs in through git's credential helpers
+    for that URL; `gh auth setup-git` puts gh's login among them. Another helper may hold a GitHub
+    login too, which km cannot tell, nor whether a login written into the URL is still valid. A push
+    over ssh needs none. The URL is never printed: it may hold a token."""
+    push = git("remote", "get-url", "--push", "origin", cwd=root).stdout.strip() or origin   # after pushurl, pushInsteadOf
+    if not (github_repo(push) and push.lower().startswith("https://") and shutil.which("gh")):
+        return
+    if urlsplit(push).password:
+        report("note", "git pushes to github.com with a login written into origin's URL; km cannot tell whether it is still valid",
+               "`gh auth setup-git`, and origin's URL without the login, so git pushes with gh's login")
+        return
+    helpers = credential_helpers(root, push)
+    fix = "`gh auth setup-git`, so git pushes with gh's login"
+    if any("auth git-credential" in h for h in helpers):    # what `gh auth setup-git` writes, on Windows with gh's full path
+        report("ok", "git pushes to github.com with gh's login")
+    elif helpers:
+        name = (helpers[0].lstrip("!").split() or ["a command"])[0]
+        report("note", f"git pushes to github.com with its own login helper ({printable(name)}); "
+                       "km cannot tell whether it holds your GitHub login", fix)
+    else:
+        report("FAIL", "git has no login for github.com: a push to the brain would ask for a password and fail", fix)
+
+
 # Your forks with their parents, in one call: a fork can carry another name than its parent.
 FORKS = ("query { viewer { repositories(isFork: true, first: 100, ownerAffiliations: OWNER) "
          "{ nodes { nameWithOwner parent { nameWithOwner } } } } }")
@@ -499,6 +548,7 @@ def main() -> int:
         check_line_endings(root)
         if repo := check_github(origin, args.offline):
             check_mounted_pins(root, repo)
+        check_git_login(root, origin)
         check_km_version(root)
         check_plugins(root)
     check_uv()
