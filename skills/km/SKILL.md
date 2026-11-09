@@ -33,7 +33,7 @@ $ARGUMENTS
 
 ## What to read for a request
 
-Read every file a row names before the flow starts, in full (forward slashes on every platform).
+Read every file a row names with the Read tool, in full, before the flow starts (forward slashes on every platform).
 
 | Request (`/km ...` or in prose) | Read |
 | :- | :- |
@@ -46,7 +46,7 @@ Read every file a row names before the flow starts, in full (forward slashes on 
 | `lint`, `validate`, the gate, `promote`, index completeness | `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
 | `review <doc>...`, `approve <doc>...` | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` (`pin:` findings) |
 | `pr`, review a brain PR | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` (without gh also `${CLAUDE_SKILL_DIR}/reference/github-reads.md`) |
-| `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `${CLAUDE_SKILL_DIR}/reference/queue.md`, `${CLAUDE_SKILL_DIR}/reference/github-reads.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` |
+| `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `${CLAUDE_SKILL_DIR}/reference/queue.md` first (it holds the flow), then `${CLAUDE_SKILL_DIR}/reference/github-reads.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` |
 | `brain add <url>`, `brain list`, `brain remove`, `brain reset`, a pin-bump PR | `${CLAUDE_SKILL_DIR}/reference/brains.md` |
 | `brain fix @<name> ...`, "fix this in @<name>", `contribute @<name> ...`, `contribute --finish <PR>` | `${CLAUDE_SKILL_DIR}/reference/brains.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
 | `repin`, `cite add`, `cites check`, a `pin:` or `cite:` warning | `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` |
@@ -88,7 +88,7 @@ Caveat when a brain you author in **itself mounts brains**: a fresh linked workt
 
 ## Search strategy
 
-1. Frontmatter tags (skip `status: obsolete/superseded` unless asked). A question about the docs themselves (what lies in a folder, what waits for sign-off, what is overdue for review) is one `km list` call, not a read of each file: `km list <folder>`; waiting for a person's sign-off: `--status review --signoff human`; overdue: `--status accepted --due today`; also `--tag X`, `--fields path,title,owner`, `--json`. A mounted brain: `km list --root <its folder>`.
+1. Frontmatter tags (skip `status: obsolete/superseded` unless asked). A question about the docs themselves (what lies in a folder, what waits for sign-off, what is overdue for review) is one `km list` call (`/km queue` is its own flow), not a read of each file: `km list <folder>`; waiting for a person's sign-off: `--status review --signoff human`; overdue: `--status accepted --due today`; also `--tag X`, `--fields path,title,owner`, `--json`. A mounted brain: `km list --root <its folder>`.
 2. Folder structure + `_index.md` files
 3. H1/H2 headings scan, read matching files
 4. Full-text grep (only if needed)
