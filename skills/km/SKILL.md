@@ -112,6 +112,7 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript
 - **Update:** Preserve frontmatter, update `date` field, show diff. A doc with `contribution:` is edited on its PR head instead (hard rule under "Contributing content" in `${CLAUDE_SKILL_DIR}/reference/brains.md`)
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
+- **Cites:** a doc linking a SharePoint or OneDrive file: Read (the tool) "Citing while you write" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` and cite each link before the commit
 
 ### Ripple update (after every save/update)
 
