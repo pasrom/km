@@ -12,6 +12,9 @@ fake_km_remote "$F/remote"; export KM_REPO_URL="file://$F/remote"   # km pins re
 KM_SHA="$(git -C "$F/remote" rev-parse "$KM_REF^{commit}")"; V09_SHA="$(git -C "$F/remote" rev-parse v0.9.0)"
 S99="$(printf '9%.0s' {1..40})"; S98="$(printf '8%.0s' {1..40})"           # commits of made-up newer releases
 PINW="pasrom/km@$KM_SHA # $KM_REF"; PINH="rev: $KM_SHA  # frozen: $KM_REF"
+git -C "$F/remote" "${G[@]}" commit -q --allow-empty -m three && git -C "$F/remote" tag v1.99.0   # a release that has the km-gen-index hook
+NEW_SHA="$(git -C "$F/remote" rev-parse v1.99.0)"
+GI="$(kmpy -c 'import km.init as i; print(" km:km-gen-index:" if i.gen_index_hook(i.KM_REF) else "")')"   # whether this km's own pin gets it
 
 G(){ git -C "$T" -c user.name=t -c user.email=t@t "$@"; }
 kt(){ ( cd "$T" && km "$@" 2>&1 ); }
@@ -30,6 +33,8 @@ grep -qx "\* text=auto eol=lf" "$T/.gitattributes" && ok "init writes a .gitattr
 { grep -q "uses: $PINW" "$T/.github/workflows/ci.yml" && grep -q "uses: $PINW" "$T/.github/workflows/staleness.yml" \
   && grep -q "$PINH" "$T/.pre-commit-config.yaml" && [ -f "$T/.github/dependabot.yml" ]; } \
   && ok "workflows and hook pin km $KM_REF by its commit, Dependabot watches them" || no "workflows and hook pin km by commit"
+[ "$(grep -c "km-gen-index" "$T/.pre-commit-config.yaml")" = "$([ -n "$GI" ] && echo 1 || echo 0)" ] \
+  && ok "init --team names km-gen-index exactly when the km it pins has it" || no "init --team km-gen-index vs GI '$GI'"
 grep -rhoE "uses: [^ ]+@[^ ]+" "$T/.github/workflows" | grep -vE "@[0-9a-f]{40}$" && no "every action is pinned by commit" || ok "every action is pinned by commit"
 grep -q "blob/$KM_SHA/src/km/schema.base.yaml" "$T/CONVENTIONS.md" && ok "CONVENTIONS links km's base schema at that commit" || no "CONVENTIONS schema link"
 grep -q '^author: <initials> ' "$T/CONVENTIONS.md" && ok "the schema example keeps its <initials> placeholder" || no "the schema example keeps its <initials> placeholder"
@@ -509,30 +514,31 @@ echo "# the brain's edit" >> "$O/$PW"; echo "# the brain's edit" >> "$O/$PS"; ou
 rm "$O/$PW"; touch "$O/.gitmodules"; out="$(km upgrade --root "$O" 2>&1)"; rm "$O/.gitmodules"
 out_has "create the environment mounted-pins restricted to main" && ok "upgrade adding the workflow to a brain with mounts says to restrict the environment first" || no "environment note on upgrade ($out)"
 
+TEAMH="km:km-validate:$GI pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:"   # a team brain's hooks, as hooks_of prints them
 # --- main guard: the hook that refuses a commit on main, and the workflow that flags a direct push ---
 hooks_of(){ kmpy -c 'import sys, yaml
 print(" ".join(r["repo"].rsplit("/", 1)[-1] + ":" + h["id"] + ":" + ",".join(h.get("args", []))
                for r in yaml.safe_load(open(sys.argv[1]))["repos"] for h in r["hooks"]))' "$1"; }
-{ [ "$(hooks_of "$T/.pre-commit-config.yaml")" = "km:km-validate: pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:" ] && grep -q "^default_install_hook_types: \[pre-commit, pre-push\]$" "$T/.pre-commit-config.yaml" && grep -q "^default_stages: \[pre-commit\]$" "$T/.pre-commit-config.yaml"; } \
+{ [ "$(hooks_of "$T/.pre-commit-config.yaml")" = "$TEAMH" ] && grep -q "^default_install_hook_types: \[pre-commit, pre-push\]$" "$T/.pre-commit-config.yaml" && grep -q "^default_stages: \[pre-commit\]$" "$T/.pre-commit-config.yaml"; } \
   && ok "a team brain's hooks refuse a commit on main and a push to main, both installed by pre-commit install" || no "team hooks ($(hooks_of "$T/.pre-commit-config.yaml"))"
 grep -q "branches: \[main\]" "$T/.github/workflows/main-guard.yml" \
   && ok "a team brain gets the main-guard workflow" || no "team brain main-guard workflow"
 ! grep -q "no-commit-to-branch\|no-push-to-main\|default_install_hook_types\|default_stages" "$P/.pre-commit-config.yaml" && ok "a personal brain keeps committing and pushing on main" || no "personal brain has no main hook"
 { [ -f "$O/.github/workflows/main-guard.yml" ] && [ "$(grep -c '^ *- id: no-commit-to-branch' "$O/.pre-commit-config.yaml")" = 1 ] \
   && [ "$(grep -c '^default_install_hook_types' "$O/.pre-commit-config.yaml")" = 1 ] && [ "$(grep -c '^default_stages' "$O/.pre-commit-config.yaml")" = 1 ] \
-  && [ "$(hooks_of "$O/.pre-commit-config.yaml")" = "km:km-validate: pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:" ]; } \
+  && [ "$(hooks_of "$O/.pre-commit-config.yaml")" = "$TEAMH" ]; } \
   && ok "upgrade adds the guard workflow and both hooks to a team brain, once" || no "upgrade adds the main guard ($(cat "$O/.pre-commit-config.yaml"))"
 Z="$F/zero-indent"; mkdir -p "$Z/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$Z/.github/workflows/"
 printf 'meta: {profile: z}\n' > "$Z/schema.local.yaml"
 printf 'repos:\n- repo: https://github.com/pasrom/km\n  rev: %s  # frozen: %s\n  hooks:\n  - id: km-validate\n' "$KM_SHA" "$KM_REF" > "$Z/.pre-commit-config.yaml"
 out="$(km upgrade --root "$Z" 2>&1)"
-[ "$(hooks_of "$Z/.pre-commit-config.yaml" 2>&1)" = "km:km-validate: pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:" ] \
+[ "$(hooks_of "$Z/.pre-commit-config.yaml" 2>&1)" = "$TEAMH" ] \
   && ok "the added hooks follow the brain's own indent" || no "hook indent ($out; $(cat "$Z/.pre-commit-config.yaml"))"
 W="$F/with-keys"; mkdir -p "$W/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$W/.github/workflows/"
 printf 'meta: {profile: w}\n' > "$W/schema.local.yaml"
 printf 'default_stages: [pre-commit]\nrepos:\n  - repo: https://github.com/pasrom/km\n    rev: %s  # frozen: %s\n    hooks:\n      - id: km-validate\n  - repo: local\n    hooks:\n      - id: no-commit-to-branch\n        name: x\n        entry: x\n        language: system\n        args: [--branch, master]\n\nci:\n  skip:\n  - km-validate\n' "$KM_SHA" "$KM_REF" > "$W/.pre-commit-config.yaml"
 out="$(km upgrade --root "$W" 2>&1)"
-{ [ "$(hooks_of "$W/.pre-commit-config.yaml" 2>&1)" = "km:km-validate: local:no-commit-to-branch:--branch,master pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:" ] \
+{ [ "$(hooks_of "$W/.pre-commit-config.yaml" 2>&1)" = "km:km-validate:$GI local:no-commit-to-branch:--branch,master pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:" ] \
   && kmpy -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); sys.exit(d["ci"] != {"skip": ["km-validate"]} or d["default_stages"] != ["pre-commit"] or d["default_install_hook_types"] != ["pre-commit", "pre-push"])' "$W/.pre-commit-config.yaml"; } \
   && ok "the hooks go into repos: before a later key, a hook guarding another branch does not count, other keys stay" || no "hook placement ($out; $(cat "$W/.pre-commit-config.yaml"))"
 X="$F/types"; mkdir -p "$X/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$X/.github/workflows/"
@@ -543,7 +549,9 @@ out="$(km upgrade --root "$X" 2>&1)"
   && out_has "pre-push in default_install_hook_types"; } && ok "pre-push is appended to a one-line install types list" || no "types list ($out; $(cat "$X/.pre-commit-config.yaml"))"
 printf 'default_install_hook_types:\n  - pre-commit\nrepos:\n  - repo: https://github.com/pasrom/km\n    rev: %s  # frozen: %s\n    hooks:\n      - id: km-validate\n' "$KM_SHA" "$KM_REF" > "$X/.pre-commit-config.yaml"
 cp "$X/.pre-commit-config.yaml" "$F/types.before"; out="$(km upgrade --root "$X" 2>&1)"
-{ cmp -s "$X/.pre-commit-config.yaml" "$F/types.before" && out_has "could not add the hooks"; } && ok "a block-style install types list is left for a hand edit, with a note" || no "block types ($out)"
+d="$(diff "$F/types.before" "$X/.pre-commit-config.yaml" | grep '^[<>]')"
+{ [ "$d" = "${GI:+>       - id: km-gen-index}" ] \
+  && out_has "could not add the hooks"; } && ok "a block-style install types list is left for a hand edit, with a note (km-gen-index goes in all the same)" || no "block types ($out)"
 printf 'default_install_hook_types: [pre-commit, pre-push]\nrepos:\n  - repo: https://github.com/pasrom/km\n    rev: %s  # frozen: %s\n    hooks:\n      - id: km-validate\n' "$KM_SHA" "$KM_REF" > "$X/.pre-commit-config.yaml"
 out="$(km upgrade --root "$X" 2>&1)"
 { grep -q "^default_stages: \[pre-commit\]$" "$X/.pre-commit-config.yaml" && [ "$(grep -c '^default_install_hook_types' "$X/.pre-commit-config.yaml")" = 1 ] && ! out_has "pre-commit install. again"; } \
@@ -561,6 +569,60 @@ printf 'jobs:\n  t:\n    runs-on: x\n    steps:\n      - run: make\n' > "$Q/.git
 km upgrade --root "$Q" >/dev/null 2>&1
 { [ ! -e "$Q/.github/workflows/main-guard.yml" ] && ! grep -q no-commit-to-branch "$Q/.pre-commit-config.yaml"; } \
   && ok "a personal brain with a ci.yml of its own is not taken for a team brain" || no "own ci.yml makes a team brain"
+# --- km-gen-index: the hook that fails a commit with a stale _index.md, in a team brain's km entry ---
+grep -q "km-gen-index" "$P/.pre-commit-config.yaml" && no "a personal brain gets no km-gen-index hook" || ok "a personal brain gets no km-gen-index hook (its CI runs no gen-index --check)"
+NEWH="km:km-validate: km:km-gen-index: pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:"   # pinned to v1.99.0
+km init "$F/t199" --team --name N --desc n --initials NN --folder d=D --pin v1.99.0 >/dev/null
+{ [ "$(hooks_of "$F/t199/.pre-commit-config.yaml")" = "$NEWH" ] && [ "$(grep -c "pasrom/km" "$F/t199/.pre-commit-config.yaml")" = 1 ]; } \
+  && ok "init --team pinning a km with the hook writes it into the km entry: one km pin" || no "init --pin v1.99.0 ($(cat "$F/t199/.pre-commit-config.yaml"))"
+km init "$F/t09" --team --name O --desc o --initials OO --folder d=D --pin v0.9.0 >/dev/null
+{ grep -q "km-validate" "$F/t09/.pre-commit-config.yaml" && ! grep -q "km-gen-index" "$F/t09/.pre-commit-config.yaml"; } \
+  && ok "init --team pinning a km without the hook does not name it (pre-commit would fail on the unknown id)" || no "init --pin v0.9.0 names km-gen-index"
+cp "$F/t09/.pre-commit-config.yaml" "$F/t09.before"; out="$(km upgrade --root "$F/t09" --pin v0.9.0 2>&1)"
+{ cmp -s "$F/t09/.pre-commit-config.yaml" "$F/t09.before" && ! out_has "km-gen-index"; } && ok "upgrade to a km without the hook does not add it" || no "upgrade --pin v0.9.0 adds km-gen-index ($out)"
+out="$(km upgrade --root "$F/t09" --pin v1.99.0 2>&1)"
+{ [ "$(hooks_of "$F/t09/.pre-commit-config.yaml")" = "$NEWH" ] \
+  && grep -q "rev: $NEW_SHA  # frozen: v1.99.0" "$F/t09/.pre-commit-config.yaml" && out_has "added the km-gen-index hook"; } \
+  && ok "upgrade that moves the pin to a km with the hook adds it to the km entry" || no "upgrade adds km-gen-index ($out; $(cat "$F/t09/.pre-commit-config.yaml"))"
+out="$(km upgrade --root "$F/t09" --pin v0.9.0 --force 2>&1)"
+out_has "names the km-gen-index hook, which km v0.9.0 lacks: remove it by hand" && ok "upgrade --force back to a km without the hook says to remove it" || no "downgrade note ($out)"
+I="$F/gen-index"; mkdir -p "$I/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$I/.github/workflows/"; printf 'meta: {profile: i}\n' > "$I/schema.local.yaml"
+cat > "$I/.pre-commit-config.yaml" <<YML
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+repos:
+  - repo: 'https://github.com/pasrom/km.git'
+    hooks:
+      - id: km-validate
+        args: [--strict]
+        # a comment under the hook
+
+    rev: $KM_SHA  # frozen: $KM_REF
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: no-commit-to-branch
+        args: [--branch, main]
+  - repo: local
+    hooks:
+      - id: no-push-to-main
+        name: x
+        entry: x
+        language: system
+YML
+out="$(km upgrade --root "$I" --pin v1.99.0 2>&1)"
+{ [ "$(hooks_of "$I/.pre-commit-config.yaml" 2>&1)" = "km.git:km-validate:--strict km.git:km-gen-index: pre-commit-hooks:no-commit-to-branch:--branch,main local:no-push-to-main:" ] \
+  && grep -q "^    rev: $NEW_SHA  # frozen: v1.99.0$" "$I/.pre-commit-config.yaml" && out_has "added the km-gen-index hook" \
+  && [ "$(kmpy -c 'from pathlib import Path; import sys, km.pins as p; print(len(p.read_pins(Path(sys.argv[1]))[".pre-commit-config.yaml"]))' "$I")" = 1 ]; } \
+  && ok "km-gen-index goes after a hook with args, before a rev that follows hooks:, in a quoted .git entry" || no "gen-index placement ($out; $(cat "$I/.pre-commit-config.yaml"))"
+printf 'repos:\n  - repo: https://github.com/pasrom/km\n    rev: %s  # frozen: %s\n    hooks: [{id: km-validate}]\n' "$KM_SHA" "$KM_REF" > "$I/.pre-commit-config.yaml"
+out="$(km upgrade --root "$I" --pin v1.99.0 2>&1)"
+{ ! grep -q "km-gen-index" "$I/.pre-commit-config.yaml" && out_has "could not add km's km-gen-index hook"; } \
+  && ok "a flow-style km hooks list gets a by-hand note, not a second km entry" || no "flow hooks ($out; $(cat "$I/.pre-commit-config.yaml"))"
+kmpy -c 'import km.init as i
+assert not i.gen_index_hook("v0.9.0") and not i.gen_index_hook("v1.10.1") and i.gen_index_hook("v1.10.2") and i.gen_index_hook("v1.11.0") and not i.gen_index_hook("main")
+assert i.with_gen_index("repos:\n  - repo: local\n    hooks:\n      - id: km-validate\n") is None' \
+  && ok "the hook is named for the releases after v1.10.1 only; a config without a km entry is not touched" || no "gen_index_hook / no km entry"
 # The workflow's check, run with a stand-in gh: a merged PR per commit passes; an unmerged commit or a
 # force push fails and opens an issue.
 SB="$F/stub"; mkdir -p "$SB"

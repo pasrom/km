@@ -7,12 +7,14 @@ the list below it is rewritten deterministically, so parallel PRs never conflict
 the list can never drift from the folder. `--check` exits non-zero if any _index would change
 (for CI); with no flag it writes the updates. A folder with docs or a subfolder index to list but
 no _index.md of its own fails the run in both modes: that index is written by hand, then filled by
-this script.
+this script. The km-gen-index pre-commit hook runs it at every commit, so a rewritten index fails the
+commit until it is staged too.
 
 Run:  km gen-index [--root DIR] [--check]
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from collections import defaultdict
@@ -86,8 +88,9 @@ def main() -> int:
         print("km gen-index: out of date, run `km gen-index`:")
         for c in changed:
             print(f"  - {c}")
-    elif changed:
-        print(f"km gen-index: updated {len(changed)}: {', '.join(changed)}")
+    elif changed:      # run by pre-commit (it sets PRE_COMMIT), the commit fails on the rewrite
+        again = "; stage them and commit again" if os.environ.get("PRE_COMMIT") else ""
+        print(f"km gen-index: updated {len(changed)}: {', '.join(changed)}{again}")
     else:
         print("km gen-index: up to date")
     if unindexed:
