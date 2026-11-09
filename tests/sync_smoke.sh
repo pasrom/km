@@ -147,13 +147,37 @@ git -C "$B" submodule deinit -q -f brains/peer; sync --no-init
 sync; { [ -e "$B/brains/peer/.git" ] && out_has "done  mounted brains/peer checked out"; } && ok "without --no-init it is checked out" || no "init after --no-init ($out)"
 git -C "$T/peer" commit -q --allow-empty -m peer4; git -C "$B" submodule update -q --remote brains/peer 2>/dev/null   # the skill's query-time sync
 ahead="$(sha "$B/brains/peer" HEAD)"; sync
-{ [ "$rc" = 0 ] && out_has "note  mounted brains/peer is ahead of the commit the brain pins; left as it is: .brain reset peer. puts it back, a pull request moves the pin" \
+{ [ "$rc" = 0 ] && out_has "note  mounted brains/peer is ahead of the commit the brain pins; left as it is: .brain reset \"peer\". puts it back, a pull request moves the pin" \
   && [ "$(sha "$B/brains/peer" HEAD)" = "$ahead" ]; } && ok "a mount moved past its pin is never moved back" || no "mount ahead ($out)"
 git -C "$B/brains/peer" checkout -q -b mine; sync
 { out_has "note  mounted brains/peer skipped: it has the branch mine checked out" && [ "$(sha "$B/brains/peer" HEAD)" = "$ahead" ]; } \
   && ok "a mount with a branch checked out is left alone" || no "mount on a branch ($out)"
 git -C "$B/brains/peer" checkout -q --detach && git -C "$B/brains/peer" branch -q -D mine && git -C "$B" submodule update -q --init brains/peer
 sync; out_has "ok    mounted brains/peer is at the commit the brain pins" && ok "back at its pin" || no "back at pin ($out)"
+# a mount this computer leaves out: never checked out by km sync, and quiet about it
+git -C "$B" submodule deinit -q -f brains/peer && git -C "$B" config submodule.brains/peer.update none; sync
+{ [ "$rc" = 0 ] && out_has "skip  mounted brains/peer is skipped here (update = none)" && [ ! -e "$B/brains/peer/.git" ]; } \
+  && ok "a mount with update = none is not checked out" || no "update none ($out)"
+sync --quiet; { [ "$rc" = 0 ] && [ -z "$out" ]; } && ok "--quiet says nothing about a mount left out" || no "update none quiet ($out)"
+git -C "$B" config --unset submodule.brains/peer.update; git -C "$B" config submodule.brains/peer.active false; sync
+{ out_has "skip  mounted brains/peer is skipped here (inactive)" && [ ! -e "$B/brains/peer/.git" ]; } && ok "an inactive mount is not checked out" || no "inactive ($out)"
+git -C "$B" config --unset submodule.brains/peer.active
+# a mount this computer cannot read fails alone: the other mounts are still synced
+git init -q "$T/closed" && git -C "$T/closed" commit -q --allow-empty -m closed
+git -C "$W" submodule add -q "$T/closed" brains/aaa >/dev/null 2>&1 && git -C "$W" commit -q -m "mount closed" && git -C "$W" push -q origin main
+rm -rf "$T/closed"; sync
+{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/aaa could not be checked out (fatal: " && out_has 'leave it out on this computer: .git config "submodule.brains/aaa.update" none.' \
+  && out_has "done  mounted brains/peer checked out at the commit the brain pins" && [ -e "$B/brains/peer/.git" ]; } \
+  && ok "an unreadable mount fails with the skip as a fix, and the other mounts still sync" || no "unreadable mount ($out)"
+git -C "$B" config submodule.brains/aaa.update none; sync
+{ [ "$rc" = 0 ] && out_has "skip  mounted brains/aaa is skipped here (update = none)"; } && ok "the skip it names ends the failure" || no "skip ends failure ($out)"
+git -C "$W" rm -q brains/aaa && git -C "$W" commit -q -m "unmount closed" && git -C "$W" push -q origin main && sync
+# a pin to a commit the mount's host lacks is no question of access: no skip offered
+git -C "$W" submodule update -q --init brains/peer && git -C "$W/brains/peer" "${G[@]}" commit -q --allow-empty -m unpushed
+git -C "$W" commit -q -am "pin an unpushed commit" && git -C "$W" push -q origin main; sync
+{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/peer could not be checked out" && ! out_has "leave it out on this computer"; } \
+  && ok "a pinned commit the host lacks fails without offering the skip" || no "unpushed pin ($out)"
+git -C "$W/brains/peer" push -q origin HEAD:refs/heads/extra; sync   # the host gets the commit: the pin works again
 
 git -C "$B" checkout -q --detach HEAD~1; sync
 { [ "$rc" = 0 ] && out_has "note  the detached HEAD is 1 commit behind upstream main; .git switch main. when you are ready"; } && ok "a detached HEAD is reported" || no "detached ($out)"
