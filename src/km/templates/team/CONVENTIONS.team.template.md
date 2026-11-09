@@ -40,7 +40,7 @@ description: "One-sentence summary."
 owner: <initials>                                    # responsible for keeping it true (staleness)
 review_by: 2027-01-15                                # required once accepted
 approval: <human|ai>                                 # who may sign off; unset = approval_default (see Status lifecycle)
-approved_by: <initials | "ai:<model>">               # set by `km approve`, with approved_at
+approved_by: <initials | "ai:<model>">               # set by `km approve`, with approved_at and approved_digest
 reviewed_by: ["<reviewer or model> <date> (PR #N)"]  # pre-reviews, not an approval
 ticket: ABC-123                                      # provenance to the work item this doc came from
 resource: "https://…"                               # URI of an external asset (datasheet/repo/tracker)
@@ -80,6 +80,7 @@ draft → review → accepted → superseded | obsolete
 
 - `accepted` = reviewed, current, in the served set. Requires `owner` + `review_by`.
 - Sign-off is `km approve <doc> --by <initials>`, after the author's review (`/km review`). With `approval: ai`, or `approval_default: ai` in `schema.local.yaml` and no `approval` field, an AI review alone may sign off (`--by ai:<model>`); otherwise a person must. Only docs marked `audience: internal` can take an AI sign-off: customer-facing docs, any other audience, docs without an audience and verbatim-blocks always need a person.
+- An approval covers the content it saw: `km approve` records a digest of the body and the content fields (title, description, type, audience and the like; not tags, dates, owners, links, pins or cites). A change to that content afterwards fails `km validate`, so the commit that makes it also sends the doc back to review (`km demote <doc>`); the approval follows after review, in a commit of its own (`km approve <doc> --by <initials>`). Quote versions and numbers in those fields (`valid_for: "1.10"`).
 - CI **demotes** an `accepted` doc back to `review` when its `review_by` lapses, so it drops out of the served set automatically. Staleness is prevented, not just warned. An accepted doc that links to a demoted one then fails the gate; the weekly run turns red so the maintainer re-reviews either.
 - Superseded/obsolete docs are **never deleted**; set `superseded_by:` when replacing.
 

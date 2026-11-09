@@ -8,6 +8,7 @@ from __future__ import annotations
 import atexit
 import datetime
 import functools
+import hashlib
 import json
 import re
 import subprocess
@@ -68,7 +69,7 @@ CUSTOMER_AUDIENCE = _gate.get("customer_audience", "customer")
 # a person (for everything else no audience counts as internal, as in `km serve`). An AI approver is
 # written `approved_by: "ai:<model>"`. Metadata, not authentication: it catches slips, not a
 # determined author.
-APPROVAL_FIELDS = ("approved_by", "approved_at")
+APPROVAL_FIELDS = ("approved_by", "approved_at", "approved_digest")
 APPROVAL_LEVELS = ("ai", "human")
 INTERNAL_AUDIENCE = "internal"
 APPROVAL_DEFAULT = "ai" if SCHEMA.get("approval_default") == "ai" else "human"   # a bad value is reported by `km validate`
@@ -116,6 +117,54 @@ def approval_problem(fm: dict, approver=None) -> str | None:
     if not level_ai:
         return "an AI approver needs 'approval: ai' or approval_default: ai"
     return "an AI approver needs 'audience: internal' set explicitly"
+
+
+# An approval vouches for the content it saw: `km approve` records `approved_digest`, a digest of the
+# body and of the frontmatter fields below, and `km validate` reports an accepted doc whose content
+# no longer matches it. A field counts when changing it changes what the approver vouched for: what
+# the doc says (title, description, type, valid_for, evidence, participants, resource, language,
+# license) and whom it is served to (audience, claim_category). The rest is bookkeeping and never
+# makes an approval stale: the lifecycle and sign-off fields (status, approved_*, approval,
+# reviewed_by, review_by, timestamp, owner, author, origin), the links and pins that have their own
+# checks (sources, translates and cites, which `km repin` sends back to review when their content
+# moves; related, supersedes, superseded_by, contribution), classification (tags, project) and any
+# field a brain adds in schema.local.yaml. A doc approved before km recorded the digest has none and
+# is not checked; `km upgrade` records one for its current content.
+DIGEST_FIELDS = ("type", "title", "description", "resource", "audience", "claim_category", "valid_for",
+                 "evidence", "participants", "language", "license")
+
+
+def _plain(v):
+    """A YAML value with every mapping key as a string, so keys of mixed types (a year next to a
+    word, a date) sort; json.dumps(sort_keys=True) refuses them otherwise."""
+    if isinstance(v, dict):
+        return {str(k): _plain(x) for k, x in v.items()}
+    return [_plain(x) for x in v] if isinstance(v, list) else v
+
+
+def unquoted_scalars(fm: dict) -> list[str]:
+    """The content fields holding an unquoted number or boolean: YAML reads `1.10` as 1.1 and `yes`
+    as true, so the digest sees the value, not what was written (`1.10` to `1.1` is no change to
+    it, quoting `yes` is). Quoted, the text is the value."""
+    def typed(v) -> bool:
+        if isinstance(v, dict):
+            return any(map(typed, v.values()))
+        return any(map(typed, v)) if isinstance(v, list) else isinstance(v, (bool, int, float))
+    return [k for k in DIGEST_FIELDS if k in fm and typed(fm[k])]
+
+
+def approved_digest(fm: dict, body: str) -> str:
+    """The digest of a doc's approved content (see DIGEST_FIELDS): sha256 prefix of its content
+    fields, as YAML read them, and its body, line endings (CRLF or a lone CR, which Python's universal
+    newlines turn into LF on a read) and surrounding blank space aside."""
+    fields = {k: _plain(fm[k]) for k in DIGEST_FIELDS if k in fm}
+    text = json.dumps(fields, sort_keys=True, ensure_ascii=False, default=str) + "\n" + body.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def set_digest(raw: str, fm: dict, body: str) -> str:
+    """`raw` with `approved_digest` set to the digest of this content (quoted: all digits reads as a number)."""
+    return set_fm_line(raw, "approved_digest", f'"{approved_digest(fm, body)}"')
 
 
 PIN = re.compile(r"^(.+\.md)@([0-9a-fA-F]{7,40})$")   # a source pin: path.md@<commit or blob>
@@ -239,7 +288,7 @@ def demote_raw(raw: str) -> str | None:
     """A served doc's raw '---' block back at `status: review`, its approval lines dropped; the status
     line edited in place, no YAML round-trip. None if no status line can be rewritten."""
     new, n = re.subn(rf"(?m)^status:[ \t]*['\"]?{re.escape(SERVED_STATUS)}['\"]?[ \t]*(#.*)?$", "status: review", raw)
-    return re.sub(r"(?m)^approved_(?:by|at):.*\n", "", new) if n == 1 else None
+    return re.sub(rf"(?m)^(?:{'|'.join(APPROVAL_FIELDS)}):.*\n", "", new) if n == 1 else None
 
 
 def send_back(fm: dict, raw: str, message: str):

@@ -4,22 +4,49 @@ being served forever. This is the staleness mechanism the model needs; run it on
 
 Dry-run by default (lists what would change, exit 1 if any); `--apply` rewrites the files.
 
+With docs named, it sends those accepted docs back to review now, whatever their date: their
+approval and pre-reviews (`reviewed_by`) dropped, as `km repin` does. That is how a change to an
+accepted doc is committed: the doc goes back to review in the same commit, and its approval follows
+in a commit of its own (`km validate` reports a changed doc that is still accepted as approval-stale).
+
 Run:  km demote [--root DIR] [--apply]
+      km demote [--root DIR] <doc.md>...
 """
 from __future__ import annotations
 
+import argparse
 import datetime
 import sys
 
-from km.common import ROOT, SERVED_STATUS, as_date, demote_raw, is_article, read, split_frontmatter, tracked_md
-from km.edit import load_doc
+from km.common import ROOT, SERVED_STATUS, as_date, demote_raw, is_article, read, send_back, split_frontmatter, tracked_md
+from km.edit import edit_docs, load_doc
 from km.paths import write_text
 
 TODAY = datetime.date.today()
 
 
+def send_back_docs(docs: list[str]) -> int:
+    """Send the named accepted docs back to review; a doc that is not accepted is refused."""
+    def change(fm: dict, raw: str, _body: str):
+        if fm.get("status") != SERVED_STATUS:
+            return f"not {SERVED_STATUS} (status: {fm.get('status')!r}), nothing to send back"
+        return send_back(fm, raw, "sent back")
+    refused = edit_docs(docs, change, "demote")
+    for why in refused:
+        print(f"demote: REFUSED {why}")
+    return 1 if refused else 0
+
+
 def main() -> int:
-    apply = "--apply" in sys.argv[1:]
+    ap = argparse.ArgumentParser(prog="km demote", allow_abbrev=False)
+    ap.add_argument("docs", nargs="*", help="accepted docs to send back to review now")
+    ap.add_argument("--apply", action="store_true", help="demote the docs past review_by (without docs: dry-run)")
+    a = ap.parse_args()
+    if a.docs:
+        if a.apply:
+            ap.error("--apply goes without docs; named docs are always sent back")
+        return send_back_docs(a.docs)
+    apply = a.apply
     stale: list[str] = []
     stuck: list[str] = []
     for rel in tracked_md():

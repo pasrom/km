@@ -353,7 +353,7 @@ km approve --root "$T" "$T/ap/p3.md" --by ai:model-x 2>&1 | grep -q "needs a hum
 km approve --root "$T" "$T/ap/p2.md" --by RPA >/dev/null 2>&1 && grep -q '^approved_by: "RPA"$' "$T/ap/p2.md" \
   && ok "approve: a human signs off a default doc" || no "approve: a human signs off a default doc"
 doc "$T/ap/p4.md" draft ''
-km approve --root "$T" "$T/ap/p4.md" --by RPA 2>&1 | grep -q "only a review doc" && grep -q '^status: draft$' "$T/ap/p4.md" \
+km approve --root "$T" "$T/ap/p4.md" --by RPA 2>&1 | grep -q "only a review or accepted doc" && grep -q '^status: draft$' "$T/ap/p4.md" \
   && ok "approve: a draft is refused" || no "approve: a draft is refused"
 RB= doc "$T/ap/p5.md" review ''; cp "$T/ap/p5.md" "$T/p5.bak"
 km approve --root "$T" "$T/ap/p5.md" --by RPA 2>&1 | grep -q "km validate fails" && cmp -s "$T/ap/p5.md" "$T/p5.bak" \
@@ -418,6 +418,87 @@ sys.argv = ["km validate", bad]; first = v.main()
 sys.argv = ["km validate", good]; print("runs:", first, v.main())' "$T/ap/m2.md" "$T/ap/m1.md" 2>&1)"
 out_has "runs: 1 0$" && ok "validate: a second main() starts with a clean report" || no "validate main twice ($out)"
 rm -f "$T/ap/m1.md" "$T/ap/m2.md"
+# an approval follows the content: km approve records approved_digest, a later content change makes it stale
+doc "$T/ap/s1.md" review 'approval: ai\n'
+km approve --root "$T" "$T/ap/s1.md" --by RPA --at 2026-09-30 >/dev/null 2>&1
+{ grep -q '^approved_digest: "[0-9a-f]\{16\}"$' "$T/ap/s1.md" && V "$T/ap/s1.md"; } \
+  && ok "approve: records the digest of the approved content" || no "approve: records the digest ($(cat "$T/ap/s1.md"))"
+cp "$T/ap/s1.md" "$T/s1.approved"
+sed -i.bak 's/^body$/changed body/' "$T/ap/s1.md" && rm -f "$T/ap/s1.md.bak"
+out="$(km validate --root "$T" "$T/ap/s1.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "approval-stale" && out_has "km demote ap/s1.md" && out_has "km approve ap/s1.md --by" && out_has "or revert the change"; } \
+  && ok "approval: a body change after the approval fails the gate, naming km demote and km approve" || no "approval: body change ($rc: $out)"
+cp "$T/ap/s1.md" "$T/s1.changed"; printf 'reviewed_by: ["model-x 2026-09-29 (PR #1)"]\n' >> "$T/s1.rb"
+sed -i.bak "/^owner: X$/r $T/s1.rb" "$T/ap/s1.md" && rm -f "$T/ap/s1.md.bak" "$T/s1.rb"
+out="$(km demote --root "$T" "$T/ap/s1.md" 2>&1)"
+{ grep -q '^status: review$' "$T/ap/s1.md" && ! grep -q '^approved_\|^reviewed_by' "$T/ap/s1.md" && out_has "back to review" && V "$T/ap/s1.md"; } \
+  && ok "demote DOC: sends a changed accepted doc back to review, approval and reviewed_by dropped" || no "demote DOC ($out; $(cat "$T/ap/s1.md"))"
+km approve --root "$T" "$T/ap/s1.md" --by RPA --at 2026-10-01 >/dev/null 2>&1 && V "$T/ap/s1.md" \
+  && ok "approve: after the send-back, the approval is clean again" || no "approve after demote ($(cat "$T/ap/s1.md"))"
+out="$(km demote --root "$T" "$T/ap/s3x.md" "$T/ap/p4.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "REFUSED ap/p4.md: not accepted" && grep -q '^status: draft$' "$T/ap/p4.md"; } \
+  && ok "demote DOC: a doc that is not accepted is refused" || no "demote DOC on a draft ($rc: $out)"
+cp "$T/s1.changed" "$T/ap/s1.md"; printf 'reviewed_by: ["model-x 2026-09-29 (PR #1)"]\n' >> "$T/ap/s1.rb"
+sed -i.bak "/^owner: X$/r $T/ap/s1.rb" "$T/ap/s1.md" && rm -f "$T/ap/s1.md.bak" "$T/ap/s1.rb"
+out="$(km approve --root "$T" "$T/ap/s1.md" --by RPA --at 2026-10-01 2>&1)"
+{ grep -q '^approved_at: 2026-10-01$' "$T/ap/s1.md" && V "$T/ap/s1.md" && out_has "reviewed_by entries are from before the change"; } \
+  && ok "approve: re-approving the changed doc clears it, and flags reviewed_by from before" || no "approve: re-approve ($out; $(cat "$T/ap/s1.md"))"
+cp "$T/ap/s1.md" "$T/s1.clean"; out="$(km approve --root "$T" "$T/ap/s1.md" --by ai:model-x 2>&1)"
+{ out_has "already approved for this content" && cmp -s "$T/ap/s1.md" "$T/s1.clean"; } \
+  && ok "approve: an accepted doc whose content is unchanged is not approved over" || no "approve: unchanged re-approve ($out)"
+cp "$T/s1.approved" "$T/ap/s1.md"
+sed -i.bak 's/^title: t$/title: another claim/' "$T/ap/s1.md" && rm -f "$T/ap/s1.md.bak"
+km validate --root "$T" "$T/ap/s1.md" 2>&1 | grep -q "approval-stale" \
+  && ok "approval: a title change makes it stale too" || no "approval: a title change makes it stale too"
+cp "$T/s1.approved" "$T/ap/s1.md"
+sed -i.bak 's/^review_by: .*/review_by: 2028-06-30/; s/^tags: \[t\]$/tags: [t, more]/; s/^timestamp: .*/timestamp: 2026-10-02/' "$T/ap/s1.md" && rm -f "$T/ap/s1.md.bak"
+printf 'report\n' > "$T/s1.pdf"; U=https://example.sharepoint.com/sites/x/Shared%20Documents/r.pdf
+H="$(kmpy -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$T/s1.pdf")"
+printf 'reviewed_by: ["model-x 2026-10-02 (PR #2)"]\ncites:\n- url: %s\n  sha256: %s\n  retrieved: 2026-10-02\n' "$U" "$H" > "$T/s1.extra"
+sed -i.bak "/^owner: X$/r $T/s1.extra" "$T/ap/s1.md" && rm -f "$T/ap/s1.md.bak"
+out="$(km cite add --root "$T" "$T/ap/s1.md" "$U" --file "$T/s1.pdf" --title "The report" 2>&1)"
+{ grep -q '^  title: The report$' "$T/ap/s1.md" && grep -q '^status: accepted$' "$T/ap/s1.md" && grep -q '^review_by: 2028-06-30$' "$T/ap/s1.md" \
+  && grep -q '^reviewed_by:' "$T/ap/s1.md" && V "$T/ap/s1.md"; } \
+  && ok "approval: frontmatter bookkeeping (cites, km cite add, review_by, tags, timestamp, reviewed_by) keeps it" || no "approval: bookkeeping edits ($out; $(cat "$T/ap/s1.md"))"
+printf '\n\n' >> "$T/ap/s1.md"
+V "$T/ap/s1.md" && ok "approval: trailing blank lines are not a content change" || no "approval: trailing blank lines"
+doc "$T/ap/s2.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
+sed -i.bak 's/^body$/changed body/' "$T/ap/s2.md" && rm -f "$T/ap/s2.md.bak"
+V "$T/ap/s2.md" && ok "approval: a doc approved before the digest existed is not checked" || no "approval: legacy doc without a digest"
+out="$(km approve --root "$T" "$T/ap/s2.md" --by ai:model-x 2>&1)"
+{ grep -q '^approved_by: RPA$' "$T/ap/s2.md" && grep -q '^approved_at: 2026-09-30$' "$T/ap/s2.md" && grep -q '^approved_digest:' "$T/ap/s2.md" \
+  && out_has "kept as the approval" && V "$T/ap/s2.md"; } \
+  && ok "approve: on a doc approved before the digest it records the content and keeps the approver" || no "approve legacy ($out; $(cat "$T/ap/s2.md"))"
+doc "$T/ap/s6.md" review 'valid_for: {2026: fw, hw: C1, 2026-01-01: x}\n'
+out="$(km approve --root "$T" "$T/ap/s6.md" --by RPA 2>&1)"
+{ grep -q '^approved_digest:' "$T/ap/s6.md" && ! out_has Traceback && V "$T/ap/s6.md"; } \
+  && ok "approval: mapping keys of mixed types are digested" || no "approval: mixed keys ($out)"
+doc "$T/ap/s7.md" review 'valid_for: 1.10\n'; km approve --root "$T" "$T/ap/s7.md" --by RPA >/dev/null 2>&1
+out="$(km validate --root "$T" "$T/ap/s7.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "approval-quote" && out_has "valid_for holds an unquoted number"; } \
+  && ok "approval: an unquoted number in a content field is a warning to quote it" || no "approval: quote warning ($rc: $out)"
+doc "$T/ap/s3.md" review 'approval: ai\n'
+km approve --root "$T" "$T/ap/s3.md" --by ai:model-x --at 2026-09-30 >/dev/null 2>&1
+sed -i.bak 's/^body$/changed body/' "$T/ap/s3.md" && rm -f "$T/ap/s3.md.bak"
+km validate --root "$T" "$T/ap/s3.md" 2>&1 | grep -q "approval-stale" \
+  && ok "approval: an AI approval goes stale the same way" || no "approval: an AI approval goes stale the same way"
+KM_ROOT="$T" kmpy -c 'import sys, km.common as c
+raw = open(sys.argv[1], encoding="utf-8").read().split("\n---\n", 1)[0] + "\n---\n"
+sys.exit("approved_" in c.demote_raw(raw))' "$T/ap/s3.md" \
+  && ok "demote: drops the digest with the approval" || no "demote: drops the digest with the approval"
+V "$T/ap/p9.md" && ok "approval: a CRLF doc approved by km approve validates" || no "approval: a CRLF doc approved by km approve validates"
+doc "$T/ap/s4.md" review ''; printf 'one\rtwo\n' >> "$T/ap/s4.md"
+km approve --root "$T" "$T/ap/s4.md" --by RPA >/dev/null 2>&1 && grep -q '^approved_digest:' "$T/ap/s4.md" && V "$T/ap/s4.md" \
+  && ok "approval: a body with a lone CR validates after km approve" || no "approval: a body with a lone CR validates after km approve"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'fields:\n  description:\n    alias: summary\n' >> "$T/schema.local.yaml"
+doc "$T/ap/s5.md" review 'summary: what it says\n'
+km approve --root "$T" "$T/ap/s5.md" --by RPA >/dev/null 2>&1 && grep -q '^approved_digest:' "$T/ap/s5.md" && V "$T/ap/s5.md" \
+  && ok "approval: a field alias does not make km approve and km validate disagree" || no "approval: field alias ($(km validate --root "$T" "$T/ap/s5.md" 2>&1))"
+printf 'meta: {profile: smoke}\nauthor_default: RPA\n' > "$T/schema.local.yaml"
+out="$(km validate --root "$T" "$T/ap/s3.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "WARNINGS: 1" && out_has "approval-stale"; } \
+  && ok "approval: without the gate (a personal brain) a stale approval is a warning" || no "approval: personal severity ($rc: $out)"
+rm -f "$T/s1.approved" "$T/s1.clean" "$T/s1.changed" "$T/s1.extra" "$T/s1.pdf"; unset U H
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 
 # promote drops reviewed_by (new doc and --replace); a cross-repo promote also drops approval
