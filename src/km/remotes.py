@@ -15,7 +15,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from km.paths import git
+from km.paths import git, printable
 
 TIMEOUT = 15                      # seconds per network call
 OFFLINE = ("could not resolve host", "failed to connect", "connection timed out", "network is unreachable",
@@ -23,8 +23,9 @@ OFFLINE = ("could not resolve host", "failed to connect", "connection timed out"
 
 
 def shown(url: str) -> str:
-    """A URL fit to print: without a user or token in it (https://user:token@host/...)."""
-    return re.sub(r"(?<=://)[^/@]+@", "", url)
+    """A URL fit to print: without a user or token in it (https://user:token@host/...), and without
+    a character that could fake a line or a command (see printable)."""
+    return printable(re.sub(r"(?<=://)[^/@]+@", "", url))
 
 
 def remote(*args: str, cwd: Path, timeout: float = TIMEOUT) -> tuple[int, str, str]:
@@ -54,8 +55,28 @@ def no_network(err: str) -> bool:
     return any(s in err.lower() for s in OFFLINE)
 
 
+LOGIN = ("could not read username", "could not read password", "authentication failed", "invalid username or password",
+         "permission denied (publickey", "host key verification failed")
+NOT_FOUND = ("repository not found", "' not found", "does not exist", "does not appear to be a git repository")   # "repository '<url>' not found"
+
+
+def no_login(err: str) -> bool:
+    """Whether a remote's error says this computer has no (working) login there, or does not know
+    the host's key: something to set up here, not a question of read access."""
+    return any(s in err.lower() for s in LOGIN)
+
+
+def no_access(err: str) -> bool:
+    """Whether a remote's error says the repository cannot be read with this computer's login: no
+    login, or not found (what a host answers for a repository it hides from you). Not the network,
+    and not a commit the remote lacks."""
+    low = err.lower()
+    return no_login(err) or any(s in low for s in NOT_FOUND)
+
+
 def first_line(err: str) -> str:
-    return next((ln.strip() for ln in err.splitlines() if ln.strip()), "no message")
+    """The first line of a message, fit to print (it may quote a URL or path from the repository)."""
+    return printable(next((ln.strip() for ln in err.splitlines() if ln.strip()), "no message"))
 
 
 def gh(*args: str) -> tuple[int, str]:

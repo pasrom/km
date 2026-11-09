@@ -85,14 +85,57 @@ git -C "$B" submodule deinit -q -f brains/peer; doctor
 { [ "$rc" = 0 ] && out_has "note  mounted brains/peer is not checked out" && out_has "submodule update --init \"brains/peer\""; } \
   && ok "a mounted brain not checked out is a note with the command" || no "mounted brain not checked out ($out)"
 git -C "$B" config -f .gitmodules submodule.brains/peer.url "file://$T/gone"; doctor
-{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/peer: no access"; } && ok "a mounted brain that cannot be read fails" || no "unreadable mounted brain ($out)"
+{ [ "$rc" = 0 ] && out_has "note  mounted brains/peer is not initialised here and file://.*/gone does not answer" \
+  && out_has 'fix: sign in to the host once if you have not .*ask the brain.s owner for read access; if not, leave it out here, so km sync does not try to check it out: .git config "submodule.brains/peer.update" none.$'; } \
+  && ok "a mount never initialised that cannot be read is a note naming the login, read access and the skip" || no "unreadable uninitialised mount ($out)"
+# no login or an unknown host key is this computer's to set up: a failure, initialised or not
+printf '#!/bin/sh\necho "$FAKE_SSH" >&2; exit 255\n' > "$T/fakessh"; chmod +x "$T/fakessh"
+git -C "$B" config -f .gitmodules submodule.brains/peer.url "ssh://git@host.invalid/peer.git"
+out="$(cd "$B" && GIT_SSH_COMMAND="$T/fakessh" FAKE_SSH="Host key verification failed." km doctor 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/peer: this computer does not know the host key"; } \
+  && ok "an unknown host key of a mount never initialised fails with the host-key fix" || no "uninitialised mount host key ($out)"
+out="$(cd "$B" && GIT_SSH_COMMAND="$T/fakessh" FAKE_SSH="git@host.invalid: Permission denied (publickey)." km doctor 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/peer: no access to ssh://host.invalid/peer.git" && out_has "fix: sign in to the host once"; } \
+  && ok "no login for a mount never initialised fails with the sign-in fix" || no "uninitialised mount no login ($out)"
+git -C "$B" config -f .gitmodules submodule.brains/peer.url "https://127.0.0.1:9/peer.git"; doctor
+{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/peer: https://127.0.0.1:9/peer.git cannot be reached" && ! out_has "skipped here (not initialised)"; } \
+  && ok "a mount never initialised behind a dead network is a network failure, not a question of access" || no "uninitialised mount offline ($out)"
 git -C "$B" checkout -q .gitmodules
+# a mount some readers of the brain may not read: a failure until this computer leaves it out
+git -C "$B" submodule update -q --init brains/peer && git -C "$B" config submodule.brains/peer.url "file://$T/gone"; doctor
+{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/peer: no access to file://.*/gone" && out_has "ask the owner for read access" \
+  && out_has 'leave it out on this computer: .git config "submodule.brains/peer.update" none. (.git submodule update --init. and km sync then skip it)'; } \
+  && ok "a mounted brain that cannot be read fails, naming read access and the skip" || no "unreadable mounted brain ($out)"
+git -C "$B" config submodule.brains/peer.update none; doctor
+{ [ "$rc" = 0 ] && out_has "note  mounted brains/peer is skipped here (update = none)$" && ! out_has "FAIL  mounted"; } \
+  && ok "an unreadable mount this computer skips (update = none) is a note" || no "skipped mount ($out)"
+git -C "$B" config --unset submodule.brains/peer.update; git -C "$B" config submodule.brains/peer.active false; doctor
+{ [ "$rc" = 0 ] && out_has "note  mounted brains/peer is skipped here (inactive)"; } && ok "an unreadable inactive mount is a note" || no "inactive mount ($out)"
+git -C "$B" config --unset submodule.brains/peer.active; git -C "$B" config submodule.brains/peer.url "$T/peer"
+git -C "$B" submodule deinit -q -f brains/peer && git -C "$B" config submodule.brains/peer.update none; doctor
+{ [ "$rc" = 0 ] && out_has "note  mounted brains/peer is skipped here (update = none)$" && ! out_has "is not checked out"; } \
+  && ok "a readable mount left out on purpose is named as skipped, not as one to check out" || no "skipped readable mount ($out)"
+git -C "$B" config --unset submodule.brains/peer.update
 git init -q "$T/my peer" && git -C "$T/my peer" commit -q --allow-empty -m peer
 git -C "$B" submodule add -q "$T/my peer" "brains/my peer" >/dev/null 2>&1 && git -C "$B" commit -q -m spaces; doctor
 { out_has "ok    mounted brains/my peer answers" && ! out_has "FAIL  mounted"; } && ok "a mounted brain with a space in its path" || no "space in path ($out)"
 git -C "$B" submodule deinit -q -f "brains/my peer"; git -C "$B" config -f .gitmodules "submodule.brains/my peer.url" ../gone.git; doctor
-{ [ "$rc" = 1 ] && out_has "FAIL  mounted brains/my peer: no access to .*/gone.git"; } \
+{ [ "$rc" = 0 ] && out_has "note  mounted brains/my peer is not initialised here and .*/gone.git does not answer" \
+  && out_has '"submodule.brains/my peer.update" none'; } \
   && ok "a relative URL is resolved against origin and checked" || no "relative submodule URL ($out)"
+git -C "$B" checkout -q .gitmodules
+# .gitmodules is whoever edits the brain's: no fix line may carry a name or path a shell would act on
+git -C "$B" config -f .gitmodules 'submodule.x$(touch pwned).path' brains/x
+git -C "$B" config -f .gitmodules 'submodule.x$(touch pwned).url' "file://$T/gone"
+git -C "$B" config -f .gitmodules 'submodule.y.path' 'brains/`touch y`'
+git -C "$B" config -f .gitmodules 'submodule.y.url' "$T/peer"; doctor
+git -C "$B" config -f .gitmodules 'submodule.z.path' "$(printf 'brains/z\n  ok    all fine')"
+git -C "$B" config -f .gitmodules 'submodule.z.url' "file://$T/gone"; doctor
+{ out_has "note  mounted brains/x is not initialised here" && ! out_has 'pwned' && out_has "set its .update. to none in the brain's git config" \
+  && out_has 'fix: check it out with .git submodule update --init.$' && ! out_has 'init "brains/`' \
+  && out_has "note  mounted brains/?touch y? is not checked out" && ! out_has '`touch y`' \
+  && out_has "mounted brains/z?  ok    all fine is not initialised here" && ! out_has "^  ok    all fine"; } \
+  && ok "a mount name or path with shell syntax or a newline gets no command, and cannot fake a line" || no "hostile mount name ($out)"
 git -C "$B" checkout -q .gitmodules
 
 repin "$KM_SHA" "$KM_REF" "$S99" v99.0.0 "$B"/.github/workflows/*.yml "$B/.pre-commit-config.yaml"; doctor

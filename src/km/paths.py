@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +66,36 @@ def submodule_config(root: Path, key: str) -> dict[str, str]:
     return {k[len("submodule."):-len(key) - 1]: v for k, _, v in pairs}
 
 
+_SAFE_ARG = re.compile(r"[A-Za-z0-9._/][A-Za-z0-9._/ -]*")
+
+
+def printable(value: str) -> str:
+    """A name or path from the repository, fit to print in a line km writes: control characters
+    (a `\\n` in git config is a newline) and backticks, which could fake a line or a command in
+    the output, become `?`."""
+    return re.sub(r"[\x00-\x1f\x7f`]", "?", value)
+
+def command(template: str, **values: str) -> str:
+    """A command for a fix line, in backticks, with each value from the repository (a mount's name or
+    path, which whoever edits .gitmodules chooses) in double quotes; "" when a value holds anything
+    beyond letters, digits, `._/ -` (or starts with `-`), so no line km prints runs a name such as
+    `$(...)` when copied into a shell."""
+    if not all(_SAFE_ARG.fullmatch(v) for v in values.values()):
+        return ""
+    return "`" + template.format(**{k: f'"{v}"' for k, v in values.items()}) + "`"
+
+
+def left_out(root: Path, name: str) -> str:
+    """Why this computer leaves the mount `name` out on purpose, "" when it does not: its
+    `submodule.<name>.update` is none, or it is set inactive. `git submodule update --checkout` and
+    a named path would check it out anyway, so km does not ask git to."""
+    if git("config", "--get", f"submodule.{name}.update", cwd=root).stdout.strip() == "none":
+        return "update = none"
+    if git("config", "--type=bool", "--get", f"submodule.{name}.active", cwd=root).stdout.strip() == "false":
+        return "inactive"
+    return ""
+
+
 def repo_root() -> Path:
     """The brain km works on: KM_ROOT if set (the CLI sets it from --root), else the git work tree
     containing the current directory, else the current directory."""
@@ -73,3 +104,8 @@ def repo_root() -> Path:
         return Path(env).resolve()
     res = git("rev-parse", "--show-toplevel")
     return Path(res.stdout.strip()).resolve() if res.returncode == 0 else Path.cwd().resolve()
+
+
+def skip_mount(name: str) -> str:
+    """How to leave the mount `name` out on this computer: the command, where its name is safe to print."""
+    return command("git config {key} none", key=f"submodule.{name}.update") or "set its `update` to none in the brain's git config"

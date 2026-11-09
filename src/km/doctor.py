@@ -18,11 +18,13 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from km import KM_REF
-from km.paths import ahead_behind, git, git_path, repo_root, rev, sets_no_eol, submodule_config
+from km.paths import (ahead_behind, command, git, git_path, left_out, printable, repo_root, rev, sets_no_eol, skip_mount,
+                      submodule_config)
 from km.pins import read_pins, version_key
-from km.remotes import Upstream, find_upstream, first_line, gh, github_repo, no_network, remote, shown
+from km.remotes import Upstream, find_upstream, first_line, gh, github_repo, no_login, no_network, remote, shown
 
 UV_DOCS = "https://docs.astral.sh/uv/getting-started/installation/"
 results: list[tuple[str, str, str]] = []
@@ -37,8 +39,9 @@ def as_dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def unreachable(name: str, url: str, err: str) -> None:
-    """Report a remote that did not answer: offline, an unknown ssh host key, or no login / no access."""
+def unreachable(name: str, url: str, err: str, also: str = "") -> None:
+    """Report a remote that did not answer: offline, an unknown ssh host key, or no login / no access.
+    `also` is a further way out of the last case."""
     first = first_line(err)
     if no_network(err):
         report("FAIL", f"{name}: {shown(url)} cannot be reached ({first})",
@@ -49,7 +52,7 @@ def unreachable(name: str, url: str, err: str) -> None:
     else:
         report("FAIL", f"{name}: no access to {shown(url)} ({first})",
                "sign in to the host once (open the URL in a browser, or `git clone` it in a terminal "
-               "and log in), and ask the owner for read access if that does not help")
+               "and log in), and ask the owner for read access if that does not help" + also)
 
 
 def check_identity(root: Path) -> None:
@@ -182,22 +185,37 @@ def resolve_url(url: str, origin: str) -> str:
 
 
 def check_submodules(root: Path, origin: str, offline: bool) -> None:
+    """Each mount answers and is checked out. A brain may mount a repository some of its readers
+    cannot read: one this computer leaves out (see left_out), or never initialised, is then a
+    note, not a failure."""
     if not (root / ".gitmodules").is_file():
         return
     urls, paths = submodule_config(root, "url"), submodule_config(root, "path")
     if not urls:
         report("note", ".gitmodules lists no mounted brain git can read", "`git config -f .gitmodules --list` shows why")
     for name, url in urls.items():
-        path = paths.get(name, name)
+        path = printable(paths.get(name, name))       # for the text; commands take the raw value, or none
+        if chosen := left_out(root, name):            # this computer leaves it out: whether it answers does not matter
+            report("note", f"mounted {path} is skipped here ({chosen})")
+            continue
         # after `git submodule init` the brain's own config holds the URL in use, relative ones resolved
-        url = git("config", "--get", f"submodule.{name}.url", cwd=root).stdout.strip() or resolve_url(url, origin)
+        own = git("config", "--get", f"submodule.{name}.url", cwd=root).stdout.strip()
+        url = own or resolve_url(url, origin)
         code, err = None, ""
         if not offline and not url.startswith(("./", "../")):
             code, _, err = remote("ls-remote", url, "HEAD", cwd=root)
-        if code not in (None, 0):
-            unreachable(f"mounted {path}", url, err)
-        elif not (root / path / ".git").exists():
-            report("note", f"mounted {path} is not checked out", f"`git submodule update --init \"{path}\"`")
+        there = (root / paths.get(name, name) / ".git").exists()
+        if code not in (None, 0) and not own and not no_network(err) and not no_login(err):
+            report("note", f"mounted {path} is not initialised here and {shown(url)} does not answer ({first_line(err)})",
+                   "sign in to the host once if you have not (open the URL in a browser, or `git clone` it in a "
+                   "terminal); if you need it, ask the brain's owner for read access; if not, leave it out here, "
+                   f"so km sync does not try to check it out: {skip_mount(name)}")
+        elif code not in (None, 0):
+            unreachable(f"mounted {path}", url, err, f"; or, if you do not need it, leave it out on this computer: "
+                        f"{skip_mount(name)} (`git submodule update --init` and km sync then skip it)")
+        elif not there:
+            report("note", f"mounted {path} is not checked out", command("git submodule update --init {path}",
+                   path=paths.get(name, name)) or "check it out with `git submodule update --init`")
         elif code == 0:
             report("ok", f"mounted {path} answers")
         else:
