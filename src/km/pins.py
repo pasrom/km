@@ -63,18 +63,19 @@ def _pin(ref: str, comment: str | None) -> Pin:
     return Pin(ref, comment if SHA.fullmatch(ref) else ref)
 
 
-def _km_rev_lines(lines: list[str]) -> list[int]:
-    """Indexes of the rev lines of km's repo entries in a pre-commit config."""
+def km_entries(lines: list[str]) -> list[tuple[int, int]]:
+    """(start, end) line ranges of km's repo entries in a pre-commit config."""
     items = [(i, len(m.group(1))) for i, ln in enumerate(lines) if (m := ITEM.match(ln))]
     if not items:
         return []
     top = min(indent for _, indent in items)                  # repo entries; deeper ones are hooks
     starts = [i for i, indent in items if indent == top] + [len(lines)]
-    out = []
-    for s, e in zip(starts, starts[1:]):
-        if any(KM_REPO_LINE.match(ln) for ln in lines[s:e]):
-            out += [i for i in range(s, e) if REV_LINE.match(lines[i])]
-    return out
+    return [(s, e) for s, e in zip(starts, starts[1:]) if any(KM_REPO_LINE.match(ln) for ln in lines[s:e])]
+
+
+def _km_rev_lines(lines: list[str]) -> list[int]:
+    """Indexes of the rev lines of km's repo entries in a pre-commit config."""
+    return [i for s, e in km_entries(lines) for i in range(s, e) if REV_LINE.match(lines[i])]
 
 
 def workflow_files(root: Path) -> list[Path]:

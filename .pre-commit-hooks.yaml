@@ -5,3 +5,10 @@
   language: python
   files: '\.md$'
   pass_filenames: true
+- id: km-gen-index
+  name: km gen-index
+  description: Rewrite every '## Documents' list in _index.md; a commit that changed one fails, stage it and commit again.
+  entry: km gen-index
+  language: python
+  always_run: true          # every commit: one that only deletes a doc stages no file pre-commit would pass
+  pass_filenames: false

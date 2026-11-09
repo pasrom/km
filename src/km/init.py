@@ -9,7 +9,9 @@ its commit (see km.pins) and runs `km` from there. The release is this km's own,
   km init DIR --team --name NAME --desc TEXT --initials XX --folder DIR=PURPOSE [--folder ...]
               [--rule TEXT ...] [--profile SLUG]
       A team brain: also the root and folder indexes, README, .gitignore, its workflows (ci,
-      staleness, main-guard, bump-mounted-pins with its script) and a Dependabot config. Refuses to run if any file it would write already exists.
+      staleness, main-guard, bump-mounted-pins with its script), a Dependabot config, and the
+      pre-commit hooks that refuse a commit or push on main and regenerate the indexes (km-gen-index,
+      when the pinned km has it). Refuses to run if any file it would write already exists.
 
 Both render and check everything before writing anything, and refuse a release whose commit
 cannot be looked up (not released yet, or no network). Files only: git add, the first
@@ -27,7 +29,7 @@ import yaml
 
 from km import KM_REF
 from km.paths import TEMPLATES, git, sets_no_eol, write_text
-from km.pins import ITEM, resolve
+from km.pins import ITEM, KM_REPO_LINE, km_entries, resolve, version_key
 
 PERSONAL = {                          # template -> path in the brain (repo-owned after init)
     "CONVENTIONS.template.md": "CONVENTIONS.md",
@@ -114,6 +116,7 @@ TEAM_HOOKS = (
 )
 INSTALL_TYPES = "default_install_hook_types: [pre-commit, pre-push]\n"   # so `pre-commit install` writes the pre-push hook too
 DEFAULT_STAGES = "default_stages: [pre-commit]\n"    # a hook without `stages:` runs at commit only, not at every push as well
+HOOKS_KEY = re.compile(r"^\s*hooks:\s*(#.*)?$")      # a block-style `hooks:` list in a repo entry
 
 
 def with_team_hooks(config: str) -> tuple[str, list[str]] | None:
@@ -172,6 +175,55 @@ def with_team_hooks(config: str) -> tuple[str, list[str]] | None:
         + (["default_stages"] if stages else [])
 
 
+GEN_INDEX = "km-gen-index"   # km's hook that rewrites the `_index.md` lists, so a stale one fails the commit, not CI
+GEN_INDEX_AFTER = (1, 10, 1)  # the last km release without that hook
+
+
+def gen_index_hook(version: str) -> bool:
+    """Whether a brain pinned to km `version` may name the km-gen-index hook: every release after
+    GEN_INDEX_AFTER has it, an older pin would make pre-commit fail on an unknown hook id."""
+    return (version_key(version) or ()) > GEN_INDEX_AFTER
+
+
+def with_gen_index(config: str) -> str | None:
+    """The pre-commit config with the km-gen-index hook appended to the hooks of its km repo entry, at
+    their indent, so there is no second km pin (unchanged when it has the hook). None when the edit
+    cannot be made safely (no km entry, a flow-style hooks list, or a layout this edit does not
+    handle): the result must parse to the same config with exactly that hook added."""
+    d = _load(config)
+    if d is None:
+        return None
+    if any(h.get("id") == GEN_INDEX for h in _hooks(d)):
+        return config
+    lines = config.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    entry = next(iter(km_entries(lines)), None)              # the first km entry, as km's pins find it
+    key = entry and next((i for i in range(*entry) if HOOKS_KEY.match(lines[i])), None)
+    if key is None:
+        return None
+    depth = len(lines[key]) - len(lines[key].lstrip())
+    end, pad = key + 1, None             # the list ends at a line left of `hooks:`, or a key beside it
+    for i in range(key + 1, entry[1]):
+        ln = lines[i]
+        if not ln.strip() or ln.lstrip().startswith("#"):
+            continue
+        if (n := len(ln) - len(ln.lstrip())) < depth or n == depth and not ln.lstrip().startswith("-"):
+            break
+        if pad is None and (m := ITEM.match(ln)):
+            pad = m.group(1)
+        end = i + 1
+    if pad is None:
+        return None
+    out = "".join(lines[:end]) + f"{pad}- id: {GEN_INDEX}\n" + "".join(lines[end:])
+    repos = list(d.get("repos") or [])
+    j = next((j for j, r in enumerate(repos) if isinstance(r, dict) and KM_REPO_LINE.match(f"repo: {r.get('repo')}")), None)
+    if j is None or not isinstance(repos[j].get("hooks"), list):
+        return None
+    repos[j] = {**repos[j], "hooks": [*repos[j]["hooks"], {"id": GEN_INDEX}]}
+    return out if _load(out) == {**d, "repos": repos} else None
+
+
 def ensure_lf(repo: Path) -> str | None:
     """Have git keep the brain's text files LF on every platform: km's .gitattributes where there is
     none. One the brain has stays as it is; when git says it sets no line ending, a note says so.
@@ -224,6 +276,10 @@ def render(a: argparse.Namespace) -> dict[str, str]:
     hooked = with_team_hooks(out[".pre-commit-config.yaml"])
     assert hooked, "km's own pre-commit template takes the team hooks"
     out[".pre-commit-config.yaml"] = hooked[0]
+    if gen_index_hook(a.pin):                     # a stale index fails the commit, as it fails CI
+        gen = with_gen_index(hooked[0])
+        assert gen, "km's own pre-commit template takes the km-gen-index hook"
+        out[".pre-commit-config.yaml"] = gen
     for n, p in folders:
         out[f"{n}/_index.md"] = template("team/_index.folder.template.md", {**values, "<folder>": n, "<purpose>": p})
     return out

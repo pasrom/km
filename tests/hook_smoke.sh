@@ -97,7 +97,34 @@ if command -v pre-commit >/dev/null 2>&1; then
   sed -i.bak '/^default_stages/d' "$P/.pre-commit-config.yaml" && rm -f "$P/.pre-commit-config.yaml.bak" && git -C "$P" "${G[@]}" commit -q --no-verify -am "no default_stages"
   out="$(git -C "$P" "${G[@]}" push origin HEAD:feature 2>&1)"; rc=$?
   { [ "$rc" != 0 ] && out_has "stageless ran"; } && ok "without default_stages the hook without stages runs at push: that is why km writes it" || no "stageless without default_stages (rc $rc: $out)"
+
+  # km's km-gen-index hook, installed by pre-commit from a snapshot of this checkout (its working tree,
+  # so the uncommitted .pre-commit-hooks.yaml counts): a commit that leaves an _index.md stale fails
+  # with the index rewritten, and goes through once that is staged
+  K="$F/km"; mkdir -p "$K" && (cd "$REPO" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | tar xf - -C "$K"
+  git -C "$K" init -q && git -C "$K" "${G[@]}" add -A && git -C "$K" "${G[@]}" commit -q -m snapshot
+  B="$F/gi"; mkdir -p "$B/d"; git init -q -b work "$B"
+  printf 'repos:\n  - repo: %s\n    rev: %s\n    hooks:\n      - id: km-gen-index\n' "$K" "$(git -C "$K" rev-parse HEAD)" > "$B/.pre-commit-config.yaml"
+  printf -- '---\ntitle: D\n---\n\n## Documents\n' > "$B/d/_index.md"; printf -- '---\ntitle: One\ndescription: first\n---\nx\n' > "$B/d/a.md"
+  git -C "$B" add -A && (cd "$B" && km gen-index >/dev/null) && git -C "$B" "${G[@]}" add -A && git -C "$B" "${G[@]}" commit -q --no-verify -m init
+  export PRE_COMMIT_HOME="$F/pre-commit-home"; (cd "$B" && pre-commit install >/dev/null 2>&1)
+  sed -i.bak 's/title: One/title: Two/' "$B/d/a.md" && rm -f "$B/d/a.md.bak" && git -C "$B" add d/a.md
+  out="$(git -C "$B" "${G[@]}" commit -m retitle 2>&1)"; rc=$?
+  { [ "$rc" != 0 ] && out_has "files were modified by this hook" && out_has "updated 1: d/_index.md; stage them and commit again" \
+    && grep -q '^- \[Two\](a.md): first$' "$B/d/_index.md" && [ "$(git -C "$B" rev-list --count HEAD)" = 1 ]; } \
+    && ok "km-gen-index fails a commit that changes a title, rewrites the index and says to stage it" || no "km-gen-index on a stale index (rc $rc: $out)"
+  git -C "$B" add d/_index.md; out="$(git -C "$B" "${G[@]}" commit -q -m retitle 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && [ "$(git -C "$B" rev-list --count HEAD)" = 2 ] && (cd "$B" && km gen-index --check >/dev/null); } \
+    && ok "staged again, the commit goes through with the index CI checks" || no "km-gen-index after staging (rc $rc: $out)"
+  printf -- '---\ntitle: New\n---\ny\n' > "$B/d/b.md"; git -C "$B" add d/b.md
+  out="$(git -C "$B" "${G[@]}" commit -q -m add 2>&1)"; rc=$?
+  { [ "$rc" != 0 ] && grep -q '(b.md)' "$B/d/_index.md"; } && ok "a newly staged doc is listed: pre-commit's run sees it as tracked" || no "km-gen-index new doc (rc $rc: $out)"
+  git -C "$B" add -A && git -C "$B" "${G[@]}" commit -q -m add >/dev/null 2>&1
+  git -C "$B" rm -q d/b.md; out="$(git -C "$B" "${G[@]}" commit -q -m drop 2>&1)"; rc=$?
+  { [ "$rc" != 0 ] && ! grep -q '(b.md)' "$B/d/_index.md"; } \
+    && ok "a commit that only deletes a doc fails too (always_run: pre-commit passes no deleted file)" || no "pure delete (rc $rc: $out)"
+  unset PRE_COMMIT_HOME
 else
-  echo "  skip: pre-commit is not installed, the pre-push hook is not exercised"
+  echo "  skip: pre-commit is not installed, the pre-push and km-gen-index hooks are not exercised"
 fi
 summary hook_smoke
