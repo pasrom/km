@@ -9,6 +9,9 @@ Two modes: whole repo (git ls-files, TRACKED .md only) or per-file args (pre-com
 Exit code 0 if no errors, 1 otherwise. Warnings never fail the build.
 Run:  km validate [--root DIR] [FILE ...]
 
+A served doc whose content changed since its approval (`approved_digest`, see km.common.DIGEST_FIELDS)
+is `approval-stale`: an ERROR with the gate on (a team brain), a WARNING without it.
+
 --- km GATE (opt-in, ADVISORY — a metadata lint, not an enforcement boundary) ---
 When `schema.local.yaml` sets `gate.enabled: true`, extra checks run, keyed per concern:
   * secret   (ERROR)   AWS/GitHub keys, private-key headers in ANY tracked doc (incl. exempt/reserved,
@@ -43,7 +46,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, as_date, as_list, fresh_run, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_date, as_list, fresh_run, pin_state, tracked_md
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
@@ -581,6 +584,9 @@ def main() -> int:
             errors.append(("non-mapping", rel, "frontmatter is not a key:value mapping"))
             continue
 
+        body = body_of(text)
+        # the digest as km approve computes it: before the aliases below change the frontmatter
+        digest = approved_digest(fm, body) if fm.get("approved_digest") else None
         # apply field aliases declared in the schema (e.g. date -> timestamp)
         for _field, _spec in FIELDS.items():
             _alias = _spec.get("alias")
@@ -612,7 +618,7 @@ def main() -> int:
                         warnings.append((f"ref:{field}", rel, f"missing target {v}"))
 
         if fm.get("status") not in RETIRED_STATUS:   # a SharePoint/OneDrive link should be pinned too
-            for _url in uncited(body_of(text), fm, lambda b: _strip_code(_strip_blocks(b))):
+            for _url in uncited(body, fm, lambda b: _strip_code(_strip_blocks(b))):
                 warnings.append(("cite:missing", rel, f"links {_url}, a sharing or viewer link that names the file by "
                                  f"a token: link the file's path URL instead and cite that (`km cite add`)" if cite_opaque(_url)
                                  else f"links {_url} with no cites: entry (`km cite add`)"))
@@ -642,6 +648,15 @@ def main() -> int:
         _why = approval_problem(fm, None if st == SERVED_STATUS else "")
         if _why:
             errors.append(("approval", rel, _why))
+        # an approval vouches for the content it saw; a doc approved before the digest existed has none
+        if st == SERVED_STATUS and (_dg := fm.get("approved_digest")) and str(_dg) != digest:
+            (errors if GATE_ON else warnings).append((
+                "approval-stale", rel, f"content changed since approved_by {fm.get('approved_by')} signed it off on "
+                f"{fm.get('approved_at')}: send it back to review in the same commit (`km demote {rel}`), then approve "
+                f"it after review in a commit of its own (`km approve {rel} --by <approver>`); or revert the change"))
+        if st == SERVED_STATUS and (_typed := unquoted_scalars(fm)):
+            warnings.append(("approval-quote", rel, f"{', '.join(_typed)} holds an unquoted number or yes/no, which YAML "
+                             f"changes (1.10 reads as 1.1): quote it, so the approval covers the text as written"))
 
         # --- km GATE (opt-in, advisory) — leak / bergab / freshness (secrets are a separate pass) ---
         if GATE_ON:

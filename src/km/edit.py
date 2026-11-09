@@ -61,7 +61,7 @@ def load_doc(doc: str, path: Path) -> Loaded | str:
 
 
 def edit_docs(docs: list[str], change, prog: str) -> list[str]:
-    """Edit the docs' frontmatter in place, then gate them with `km validate`. `change(fm, raw)`
+    """Edit the docs' frontmatter in place, then gate them with `km validate`. `change(fm, raw, body)`
     returns the refusal as a string, or `(new_raw, message)`: the raw '---' block to write and what
     `prog` prints after the doc's path once it passed. All docs are written before the gate runs, so
     docs linking to each other pass together; a doc that fails is restored byte for byte, which can
@@ -76,7 +76,7 @@ def edit_docs(docs: list[str], change, prog: str) -> list[str]:
         if isinstance(d, str):
             refused.append(d)
             continue
-        res = change(d.fm, d.raw)
+        res = change(d.fm, d.raw, d.body)
         if isinstance(res, str):
             refused.append(f"{d.rel}: {res}")
         elif res[0] == d.raw:

@@ -1,8 +1,10 @@
-"""Sign review docs off: `status: accepted` plus `approved_by` and `approved_at`.
+"""Sign review docs off: `status: accepted` plus `approved_by`, `approved_at` and `approved_digest`,
+the digest of the content approved (see km.common.DIGEST_FIELDS).
 
-Who may sign off is the doc's `approval` level (see km.common.approval_problem); only a doc in
-`status: review` can be approved. Each doc is edited in place (those three lines, no YAML round-trip,
-like `km demote`) and then gated by `km validate`; a doc that fails is restored unchanged.
+Who may sign off is the doc's `approval` level (see km.common.approval_problem); a doc in
+`status: review` can be approved, and an accepted one approved again, after a change to its content
+(which `km validate` reports as a stale approval). Each doc is edited in place (those lines, no YAML
+round-trip, like `km demote`) and then gated by `km validate`; a doc that fails is restored unchanged.
 
 A doc whose `review_by` has already passed is refused unless `--review-by` sets a new date, or
 the next `km demote` would take the approval straight back.
@@ -15,15 +17,22 @@ import argparse
 import datetime
 import sys
 
-from km.common import SERVED_STATUS, approval_problem, as_date, set_fm_line
+from km.common import SERVED_STATUS, approval_problem, approved_digest, as_date, set_digest, set_fm_line
 from km.edit import edit_docs
 
 
 def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.date | None) -> list[str]:
     """Sign the docs off together. Returns why each refused doc was refused."""
-    def change(fm: dict, raw: str):
-        if fm.get("status") != "review":
-            return f"only a review doc can be approved (status: {fm.get('status')!r})"
+    def change(fm: dict, raw: str, body: str):
+        if fm.get("status") not in ("review", SERVED_STATUS):
+            return f"only a review or {SERVED_STATUS} doc can be approved (status: {fm.get('status')!r})"
+        if fm.get("status") == SERVED_STATUS:
+            if "approved_digest" not in fm:   # signed off before km recorded the content: keep that sign-off
+                return set_digest(raw, fm, body), (
+                    f"recorded the content approved_by {fm.get('approved_by')} signed off on {fm.get('approved_at')}, "
+                    f"kept as the approval; if it changed since, `km demote` it and approve it after review")
+            if str(fm["approved_digest"]) == approved_digest(fm, body):
+                return "already approved for this content; approve it again after a change to its content"
         if why := approval_problem(fm, by):
             return why
         if review_by is None:
@@ -37,7 +46,9 @@ def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.dat
             lines.append(("review_by", review_by.isoformat()))
         for key, value in lines:
             raw = set_fm_line(raw, key, value)
-        return raw, f"accepted, approved_by {by} on {at.isoformat()}"
+        note = ("; its reviewed_by entries are from before the change, drop those that did not see this text"
+                if fm.get("status") == SERVED_STATUS and fm.get("reviewed_by") else "")
+        return set_digest(raw, fm, body), f"accepted, approved_by {by} on {at.isoformat()}" + note
     return edit_docs(docs, change, "approve")
 
 

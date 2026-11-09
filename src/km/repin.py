@@ -33,7 +33,7 @@ ABBREV = 12   # hex digits of a written pin: unambiguous in any brain, short eno
 PINNED = [f for f, spec in SCHEMA["fields"].items() if spec.get("format") == "path_at_hash"]
 
 
-def change(fm: dict, raw: str):
+def change(fm: dict, raw: str, _body: str):
     """Re-pin one doc's frontmatter: the refusal, or `(new_raw, message)` for `edit_docs`."""
     before, changed, missing, uncompared, seen = raw, [], [], [], set()
     for field in PINNED:
@@ -77,7 +77,7 @@ def change(fm: dict, raw: str):
 
 def change_cites(copies: Copies, today: datetime.date):
     """Re-pin the cited files that changed, against their local copies: `change` for `edit_docs`."""
-    def change(fm: dict, raw: str):
+    def change(fm: dict, raw: str, _body: str):
         if isinstance(items := editable(fm), str):
             return items
         changed, unclear, labelled, uncopied = [], [], [], []

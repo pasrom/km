@@ -79,6 +79,8 @@ fields:
   approved_at:            # when sign-off happened (audit-grade record inside the repo)
     required: false
     format: iso8601
+  approved_digest:        # digest of the content approved, written by `km approve`; a change to the body or
+    required: false       # a content field (km.common.DIGEST_FIELDS) makes the approval stale
   approval:               # who may sign off: ai or human; unset = approval_default; rules in km.common
     required: false
     enum: [ai, human]

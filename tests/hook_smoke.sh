@@ -123,6 +123,26 @@ if command -v pre-commit >/dev/null 2>&1; then
   git -C "$B" rm -q d/b.md; out="$(git -C "$B" "${G[@]}" commit -q -m drop 2>&1)"; rc=$?
   { [ "$rc" != 0 ] && ! grep -q '(b.md)' "$B/d/_index.md"; } \
     && ok "a commit that only deletes a doc fails too (always_run: pre-commit passes no deleted file)" || no "pure delete (rc $rc: $out)"
+
+  # km-validate in a brain with the gate on: an edit to an accepted doc goes back to review in the same
+  # commit, its approval follows in a commit of its own
+  A="$F/ap"; mkdir -p "$A/d"; git init -q -b work "$A"
+  printf 'repos:\n  - repo: %s\n    rev: %s\n    hooks:\n      - id: km-validate\n' "$K" "$(git -C "$K" rev-parse HEAD)" > "$A/.pre-commit-config.yaml"
+  printf 'meta: {profile: t}\ngate:\n  enabled: true\n' > "$A/schema.local.yaml"
+  printf -- '---\ntype: note\ntitle: A\ntimestamp: 2026-01-15\nauthor: X\nstatus: review\ntags: [t]\n---\nfirst\n' > "$A/d/a.md"
+  git -C "$A" add -A && git -C "$A" "${G[@]}" commit -q --no-verify -m init && (cd "$A" && km approve d/a.md --by X >/dev/null) \
+    && git -C "$A" "${G[@]}" commit -q --no-verify -am approve
+  export PRE_COMMIT_HOME="$F/pre-commit-home"; (cd "$A" && pre-commit install >/dev/null 2>&1)
+  sed -i.bak 's/^first$/second/' "$A/d/a.md" && rm -f "$A/d/a.md.bak"
+  out="$(git -C "$A" "${G[@]}" commit -qam edit 2>&1)"; rc=$?
+  { [ "$rc" != 0 ] && out_has "approval-stale" && out_has "km demote d/a.md"; } \
+    && ok "km-validate refuses the commit of an edited accepted doc, naming km demote" || no "km-validate on a stale approval (rc $rc: $out)"
+  (cd "$A" && km demote d/a.md >/dev/null); out="$(git -C "$A" "${G[@]}" commit -qam edit 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && git -C "$A" show HEAD:d/a.md | grep -q '^status: review$'; } \
+    && ok "sent back to review in the same commit, the edit commits" || no "commit after demote (rc $rc: $out)"
+  (cd "$A" && km approve d/a.md --by X >/dev/null); out="$(git -C "$A" "${G[@]}" commit -qam approve 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && [ "$(git -C "$A" rev-list --count HEAD)" = 4 ]; } \
+    && ok "the approval then commits on its own" || no "approval commit (rc $rc: $out)"
   unset PRE_COMMIT_HOME
 else
   echo "  skip: pre-commit is not installed, the pre-push and km-gen-index hooks are not exercised"

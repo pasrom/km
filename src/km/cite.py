@@ -22,7 +22,7 @@ from km.edit import edit_docs
 
 
 def change_for(url: str, digest: str, title: str | None, version: str | None, today: datetime.date):
-    def change(fm: dict, raw: str):
+    def change(fm: dict, raw: str, _body: str):
         if isinstance(items := editable(fm), str):
             return items
         old = next((e for e in items if same_url(e["url"]) == same_url(url)), None)
