@@ -290,6 +290,34 @@ for s, w, f in d.results: print(s, w, "|", f)' "$1" 2>&1)"; }
   GH_ENV=custom GH_BRANCHES="main release" envcheck "$E"; out_has "open to main release, not to main alone" && ok "an environment open to main and another branch gets a note" || no "custom environment ($out)"
   GH_ENV=custom GH_BRANCHES=main envcheck "$E"; out_has "ok O/R has the environment mounted-pins, restricted to main" && ok "an environment restricted to main is ok" || no "restricted environment ($out)"
   rm "$E/.gitmodules"; GH_ENV= envcheck "$E"; ! out_has "mounted-pins" && ok "without mounts the environment is not asked for" || no "no mounts, no check ($out)"
+  C="$T/cred"; git init -q "$C"
+  login(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.doctor as d
+d.check_git_login(pathlib.Path(sys.argv[1]), sys.argv[2])
+for s, w, f in d.results: print(s, w, "|", f)' "$C" "${1:-https://github.com/o/r.git}" 2>&1)"; }
+  login; { out_has "FAIL git has no login for github.com" && out_has "gh auth setup-git"; } \
+    && ok "an https GitHub origin without a credential helper fails with gh auth setup-git" || no "no credential helper ($out)"
+  git -C "$C" config credential.helper store; login
+  { out_has "note git pushes to github.com with its own login helper (store)" && out_has "gh auth setup-git"; } \
+    && ok "another credential helper is a note" || no "other credential helper ($out)"
+  git -C "$C" config credential.https://github.com.helper '' && git -C "$C" config --add credential.https://github.com.helper '!/usr/bin/gh auth git-credential'; login
+  out_has "ok git pushes to github.com with gh's login" && ok "the helper gh auth setup-git writes is ok" || no "gh credential helper ($out)"
+  git -C "$C" config --unset-all credential.https://github.com.helper; login git@github.com:o/r.git
+  [ -z "$out" ] && ok "an ssh GitHub origin needs no credential helper" || no "ssh origin and credential helper ($out)"
+  git -C "$C" remote add origin https://github.com/o/r.git && git -C "$C" config url.git@github.com:.pushInsteadOf https://github.com/; login
+  [ -z "$out" ] && ok "an https origin that pushes over ssh (pushInsteadOf) needs no credential helper" || no "pushInsteadOf ($out)"
+  git -C "$C" config --unset url.git@github.com:.pushInsteadOf; git -C "$C" config credential.https://github.com/o.helper '!gh auth git-credential'; login
+  out_has "ok git pushes to github.com with gh's login" && ok "a helper scoped to the owner's path counts" || no "path-scoped helper ($out)"
+  git -C "$C" config --unset-all credential.https://github.com/o.helper; git -C "$C" config --unset credential.helper
+  printf '[credential "https://github.com"]\n\thelper =\n' >> "$GIT_CONFIG_GLOBAL"; git -C "$C" config credential.helper '!'; login
+  { out_has "note git pushes to github.com with its own login helper (a command)" && ! out_has Traceback; } \
+    && ok "a reset for github.com followed by a later helper counts, as git calls it; a bare ! is no crash" || no "helper list ($out)"
+  git -C "$C" config --unset credential.helper; git -C "$C" config credential.https://github.com/other.helper store; login
+  out_has "FAIL git has no login" && ok "a helper for another path on the host does not count" || no "other path helper ($out)"
+  git -C "$C" config --unset credential.https://github.com/other.helper
+  git -C "$C" remote set-url origin https://me:t0ken@github.com/o/r.git; login
+  { out_has "note git pushes to github.com with a login written into origin's URL" && ! out_has t0ken; } \
+    && ok "a login in origin's URL is a note, its token not shown" || no "token in push URL ($out)"
+  git -C "$C" remote set-url origin https://github.com/o/r.git
   out="$(PATH="$G:$PATH" kmpy -c 'import km.doctor as d
 d.check_github("git@github.com:o/r.git", True); d.check_github("https://gitlab.com/o/r.git", False)
 print(d.results)' 2>&1)"
