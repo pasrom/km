@@ -79,6 +79,7 @@ Checks, keyed per concern (so an internal `accepted` doc may legitimately name a
 - **leak** (ERROR) — forbidden terms + external emails only in an `audience: customer` doc. `term_scan_prefixes` term-scans every doc under those folders too, and with `project_prefix` a project code (a tracked subfolder name) outside its own folder is an error; files directly in the project folder, such as its `_index.md`, may list every code. Both run over any tracked doc, `_index.md` and README included, frontmatter too (a `project:` value or a `related:` path naming a project folder counts), and the code check needs no terms file, so it also runs in CI where that file is absent.
 - **bergab** (ERROR) — a served doc links to an unfinished (`draft`/`review`) doc; a link to `superseded`/`obsolete` is a WARNING. Reuses the `status`/`audience` frontmatter, no new fields.
 - **freshness** (WARNING) — a served doc past its `review_by`.
+- **approval-stale** (ERROR; a WARNING with the gate off): a served doc whose body or content fields changed since `km approve` recorded `approved_digest`; send it back to review in the same commit (`km demote <doc>`) and approve it in a commit of its own, or revert the change.
 
 Findings are redacted. The link scan strips code fences; the secret/leak scans see the whole document (stricter, so a forbidden term inside a code sample still fails). A configured-but-missing `forbidden_terms_file` is a WARNING, not silent. Malformed OR unknown `gate:` config fails fast.
 
