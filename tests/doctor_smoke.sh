@@ -239,6 +239,11 @@ if [ "$SEP" = ":" ]; then   # a stand-in gh on the PATH
   G="$T/ghstub"; mkdir -p "$G"
   cat > "$G/gh" <<'SH'
 #!/bin/sh
+[ "$GH_SLOW" = all ] && exec sleep 3                  # a network that does not answer
+case "$*" in
+  *deployment-branch-policies*) [ "$GH_SLOW" = some ] || [ "$GH_SLOW" = policies ] && exec sleep 3 ;;
+  *graphql*|*mounted-pins*) [ "$GH_SLOW" = some ] && exec sleep 3 ;;
+esac
 case "$*" in
   "api --hostname github.com user --jq .login") [ -n "$GH_LOGIN" ] && echo "$GH_LOGIN" || exit 1 ;;
   "auth status --hostname github.com") [ -n "$GH_AUTH" ] ;;
@@ -261,6 +266,21 @@ for s, w, f in d.results: print(s, w, "|", f)' 2>&1)"; }
   GH_LOGIN=me GH_PUSH=false GH_FORK=me ghcheck; out_has "ok you contribute through your fork me/r-1" && ok "a fork is found, also under another name" || no "fork found ($out)"
   GH_LOGIN=me GH_PUSH=false GH_FORK=other ghcheck; out_has "note you can read O/R but not push to it" && ok "no fork yet is a note" || no "no fork ($out)"
   E="$T/envbrain"; mkdir -p "$E/.github/workflows" && touch "$E/.gitmodules" "$E/.github/workflows/bump-mounted-pins.yml"
+  # gh with a time limit of 1 s, against a gh that does not answer
+  slow(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.remotes, km.doctor as d
+km.remotes.TIMEOUT = 1
+d.check_github("https://github.com/o/r.git", False); d.check_mounted_pins(pathlib.Path(sys.argv[1]), "O/R")
+for s, w, f in d.results: print(s, w, "|", f)' "$E" 2>&1)"; }
+  start=$SECONDS; GH_SLOW=all slow
+  { out_has "FAIL gh gave no answer within 1 s for the login | check the network" && ! out_has "not signed in" && [ $((SECONDS-start)) -lt 3 ]; } \
+    && ok "gh that does not answer is cut off and reported as the network, not as a missing login" || no "gh timeout ($out)"
+  GH_SLOW=some GH_LOGIN=me GH_PUSH=false slow
+  { out_has "note gh gave no answer within 1 s for your forks of O/R" && ! out_has "no fork of it yet" \
+    && out_has "note gh gave no answer within 1 s for the environment mounted-pins of O/R" && ! out_has "has no environment"; } \
+    && ok "a gh call that times out later is a skip of that check, not a wrong answer" || no "gh later timeout ($out)"
+  GH_SLOW=policies GH_ENV=custom GH_LOGIN=me GH_PUSH=true slow
+  { out_has "note gh gave no answer within 1 s for the environment mounted-pins of O/R" && ! out_has "open to no branch"; } \
+    && ok "a timeout on the environment's branch list is no answer, not an environment open to no branch" || no "branch policies timeout ($out)"
   envcheck(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.doctor as d
 d.check_mounted_pins(pathlib.Path(sys.argv[1]), "O/R")
 for s, w, f in d.results: print(s, w, "|", f)' "$1" 2>&1)"; }
