@@ -26,7 +26,7 @@ $ARGUMENTS
 - Never hallucinate — say if nothing found
 - Never push to a brain's default branch and never `--force` push; the one exception is `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
 - Never edit a mounted `brains/<name>/` working tree (a hook refuses the file-edit tools there; a shell edit is yours to refuse): a correction goes through `brain fix` or `contribute` in a throwaway clone; a drifted mount goes back with `brain reset`
-- Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of the content commits
+- Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of the content commits; an edit to an accepted doc sends it back to review in the same commit (`km demote <doc>`)
 - A doc carrying `contribution:` has an open PR: edit it on the PR head, never in your brain
 - Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
 - After a compaction only this file is re-attached and what you read from the reference files is gone: before you continue a flow, read its files again
