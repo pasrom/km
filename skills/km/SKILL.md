@@ -26,7 +26,7 @@ $ARGUMENTS
 - Never hallucinate — say if nothing found
 - Never push to a brain's default branch and never `--force` push; the one exception is `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
 - Never edit a mounted `brains/<name>/` working tree (a hook refuses the file-edit tools there; a shell edit is yours to refuse): a correction goes through `brain fix` or `contribute` in a throwaway clone; a drifted mount goes back with `brain reset`
-- Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of the content commits; an edit to an accepted doc sends it back to review in the same commit (`km demote <doc>`)
+- Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of the content commits; an edited accepted doc goes back to review in the same commit (`km demote <doc>`)
 - A doc carrying `contribution:` has an open PR: edit it on the PR head, never in your brain
 - Never include parent-repo private content (memory, internal notes) verbatim in a brain PR
 - After a compaction only this file is re-attached and what you read from the reference files is gone: before you continue a flow, read its files again
@@ -46,7 +46,7 @@ Read every file a row names with the Read tool, in full, before the flow starts 
 | `lint`, `validate`, the gate, `promote`, index completeness | `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
 | `review <doc>...`, `approve <doc>...` | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` (`pin:` findings) |
 | `pr`, review a brain PR | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` (without gh also `${CLAUDE_SKILL_DIR}/reference/github-reads.md`) |
-| `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `${CLAUDE_SKILL_DIR}/reference/queue.md` first (it holds the flow), then `${CLAUDE_SKILL_DIR}/reference/github-reads.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` |
+| `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `${CLAUDE_SKILL_DIR}/reference/queue.md` first, then `${CLAUDE_SKILL_DIR}/reference/github-reads.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` |
 | `brain add <url>`, `brain list`, `brain remove`, `brain reset`, a pin-bump PR | `${CLAUDE_SKILL_DIR}/reference/brains.md` |
 | `brain fix @<name> ...`, "fix this in @<name>", `contribute @<name> ...`, `contribute --finish <PR>` | `${CLAUDE_SKILL_DIR}/reference/brains.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
 | `repin`, `cite add`, `cites check`, a `pin:` or `cite:` warning | `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` |
@@ -112,14 +112,14 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript
 - **Update:** Preserve frontmatter, update `date` field, show diff. A doc with `contribution:` is edited on its PR head instead (hard rule under "Contributing content" in `${CLAUDE_SKILL_DIR}/reference/brains.md`)
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
-- **Cites:** a doc linking a SharePoint or OneDrive file: Read (the tool) "Citing while you write" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` and cite each link before the commit
+- **Cites:** a doc linking SharePoint or OneDrive files: Read (the tool) "Citing while you write" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` and cite each link before the commit
 
 ### Ripple update (after every save/update)
 
 After writing the main file, update related pages before committing:
 
 1. **Cross-reference:** Find up to 5 related files (ranked by: shared `project:` > shared tags > same folder). Add the new file's repo-root-relative path to their `related:` frontmatter (create the field if absent). Only add genuinely useful links. When the brain sets `gate.project_prefix`, never add a path under a project folder to a doc outside that folder, nor rank by a `project:` code there: the gate reports a project code outside its own folder, frontmatter included. Project notes link up to neutral docs, not the other way
-2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist — do not create new `_index.md`). A `## Documents` list is generated: whenever a doc is added, moved or removed or its `title` or `description` changes, stage the doc, run `km gen-index` and commit the `_index.md` files it changed with it (a team brain's CI and pre-commit hook fail on a stale list)
+2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist — do not create new `_index.md`). A `## Documents` list is generated: after adding, moving or removing a doc or changing its `title` or `description`, stage it, run `km gen-index` and commit the changed `_index.md` files (a team brain's CI and hook fail on a stale list)
 3. **Confirm:** List all proposed ripple updates and wait for user approval before committing
 
-Ripple is **one level deep** — never cascade into further ripple updates. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added; `km gen-index` (step 2) still runs after a `title` or `description` change.
+Ripple is **one level deep** — never cascade into further ripple updates. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added; step 2's `km gen-index` still runs.
