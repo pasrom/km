@@ -118,7 +118,7 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 After writing the main file, update related pages before committing:
 
 1. **Cross-reference:** Find up to 5 related files (ranked by: shared `project:` > shared tags > same folder). Add the new file's repo-root-relative path to their `related:` frontmatter (create the field if absent). Only add genuinely useful links. When the brain sets `gate.project_prefix`, never add a path under a project folder to a doc outside that folder, nor rank by a `project:` code there: the gate reports a project code outside its own folder, frontmatter included. Project notes link up to neutral docs, not the other way
-2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist — do not create new `_index.md`)
+2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist — do not create new `_index.md`). A `## Documents` list is generated: whenever a doc is added, moved or removed or its `title` or `description` changes, stage the doc, run `km gen-index` and commit the `_index.md` files it changed with it (a team brain's CI and pre-commit hook fail on a stale list)
 3. **Confirm:** List all proposed ripple updates and wait for user approval before committing
 
-Ripple is **one level deep** — never cascade into further ripple updates. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added.
+Ripple is **one level deep** — never cascade into further ripple updates. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added; `km gen-index` (step 2) still runs after a `title` or `description` change.
