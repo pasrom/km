@@ -22,6 +22,11 @@
   GITHUB_TOKEN can run the check on it. The bump-mounted-pins workflow and script are copies of km
   code: one that is still a version km shipped (its action pins aside) is replaced by this km's, one
   the brain changed is left with a note.
+- Each accepted doc approved before km recorded what an approval covers (`approved_by` set, no
+  `approved_digest`) gets the digest of its current content, once: when the brain moves from a km
+  that did not check it to one that does. This takes the current text as the approved one, so
+  review `git diff` before committing. From then on `km validate` reports a change to its content as
+  a stale approval (see km.common), and a later upgrade records nothing.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
 
@@ -41,7 +46,7 @@ import yaml
 
 from km import KM_REF
 from km.init import GEN_INDEX, TEAM, ensure_lf, gen_index_hook, pin_values, template, with_gen_index, with_team_hooks
-from km.paths import repo_root, write_text
+from km.paths import git, repo_root, write_text
 from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
 
 COPIED = {                            # a file km copied in -> text only km's copy of it carries
@@ -68,6 +73,46 @@ SHIPPED = {
     "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
 }
+DIGEST_AFTER = (1, 10, 1)   # the last km release that does not record or check approved_digest
+
+
+def record_digests() -> tuple[list[str], list[str]]:
+    """Give each accepted doc that has an approver but no approved_digest the digest of its current
+    content: (the docs given one, the docs left without one, with why). Left out is a doc whose
+    content nobody approved yet: with uncommitted changes, or, where history has it, one that differs
+    from the doc as committed with its last `approved_at` change (a shallow clone without that commit
+    takes the text as it is). Imported here, not at the top: km.common reads the schema overlay,
+    which this upgrade may have just renamed."""
+    from km.common import ROOT, SERVED_STATUS, approved_digest, is_article, set_digest, split_frontmatter, tracked_md
+    from km.edit import load_doc
+    if git("rev-parse", "--is-inside-work-tree", cwd=ROOT).returncode:
+        return [], []                 # not a git work tree: no tracked docs to look at (tracked_md would exit)
+    dirty = set(git("diff", "HEAD", "--name-only", "--relative", "-z", cwd=ROOT).stdout.split("\0"))
+
+    def approved_then(rel: str) -> str | None:
+        """The digest of the doc as committed when its approved_at line last changed, or None."""
+        sha = git("log", "-1", "--format=%H", "-G", "^approved_at:", "--", rel, cwd=ROOT).stdout.strip()
+        then = git("show", f"{sha}:./{rel}", cwd=ROOT) if sha else None
+        if not then or then.returncode:
+            return None
+        fm, _, body = split_frontmatter(then.stdout.lstrip("\ufeff").replace("\r\n", "\n"))
+        return approved_digest(fm, body) if fm is not None else None
+
+    done, left = [], []
+    for rel in filter(is_article, tracked_md()):
+        if isinstance(d := load_doc(rel, ROOT / rel), str):
+            continue                  # no frontmatter or not UTF-8: no approval to record, validate reports it
+        if d.fm.get("status") == SERVED_STATUS and d.fm.get("approved_by") and "approved_digest" not in d.fm:
+            if rel in dirty:
+                left.append(f"{rel} (uncommitted changes)")
+            elif (then := approved_then(rel)) and then != approved_digest(d.fm, d.body):
+                left.append(f"{rel} (changed since its approval)")
+            else:
+                write_text(d.path, set_digest(d.raw, d.fm, d.body) + d.body)
+                done.append(rel)
+    return done, left
+
+
 USES = re.compile(r"(?m)^([ \t]*(?:-[ \t]+)?uses:[ \t]*([^@\s]+)@)\S+.*$")   # 1: up to the @, 2: the action
 
 
@@ -157,6 +202,7 @@ def main() -> int:
     rewrites = {rel: tpl for rel, (tpl, known) in OLD_COPIES.items()
                 if (root / rel).is_file() and fingerprint((root / rel).read_text(encoding="utf-8")) in known}
     current = all(p.is_commit and p.version == target for ps in pins.values() for p in ps)
+    crossing = any((k := version_key(p.version)) and k <= DIGEST_AFTER for ps in pins.values() for p in ps)
     if rewrites or not current:               # decided before any write, so a failed lookup changes nothing
         values = pin_values(target)
     else:                                      # already on the release: still check it is the release's commit
@@ -264,6 +310,15 @@ def main() -> int:
                 write_text(hook, new)
     if note := ensure_lf(root):
         done.append(note)
+    # once, when the brain crosses to a km that checks the digest: a later upgrade never takes text as approved
+    if (version_key(target) or ()) > DIGEST_AFTER and crossing:
+        signed, left = record_digests()
+        if signed:
+            done.append(f"recorded approved_digest for the current content of {len(signed)} accepted doc(s), taking "
+                        f"that text as the approved one (check `git diff`): {', '.join(signed)}")
+        if left:
+            done.append(f"recorded no approved_digest for {', '.join(left)}: nobody approved that text; send each back to "
+                        f"review (`km demote <doc>`) and approve it after review, or revert the change")
 
     if values and (not current or stray):
         sha = values["<KM_SHA>"]

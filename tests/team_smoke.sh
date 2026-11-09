@@ -641,4 +641,39 @@ rm -f "$F/gh.log"; ! guard false '["good1","bad2"]' && grep -q "Direct push to m
 rm -f "$F/gh.log"; ! guard true '["good1"]' && grep -q "issue" "$F/gh.log" && ok "main-guard fails on a force push" || no "main-guard flags a force push"
 rm -f "$F/gh.log"; ! guard false '["good1","down2"]' && [ ! -f "$F/gh.log" ] && ok "a failed lookup fails main-guard without a false issue" || no "main-guard on a failed lookup"
 
+# --- upgrade records approved_digest for docs approved before km recorded it ---
+D="$F/digest"; km init "$D" --team --name D --desc d --initials DD --folder d=D --pin v0.9.0 >/dev/null
+acc_doc(){ printf -- '---\ntype: concept\ntitle: %s\ntimestamp: 2026-01-15\nauthor: DD\nstatus: %s\naudience: internal\nlanguage: en\ntags: [t]\nowner: DD\nreview_by: 2099-01-01\n%b---\nbody\n' "$2" "$3" "${4:-}" > "$1"; }
+acc_doc "$D/d/legacy.md" legacy accepted 'approved_by: DD\napproved_at: 2026-01-15\n'
+acc_doc "$D/d/open.md" open review
+acc_doc "$D/d/edited.md" edited accepted 'approved_by: DD\napproved_at: 2026-01-15\n'
+acc_doc "$D/d/drift.md" drift accepted 'approved_by: DD\napproved_at: 2026-01-15\n'
+git -C "$D" init -q && git -C "$D" add -A && git -C "$D" "${G[@]}" commit -qm init
+sed -i.bak 's/^body$/changed after the approval/; s/^tags: \[t\]$/tags: [t, u]/' "$D/d/drift.md" && rm -f "$D/d/drift.md.bak"
+sed -i.bak 's/^tags: \[t\]$/tags: [t, u]/' "$D/d/legacy.md" && rm -f "$D/d/legacy.md.bak"
+git -C "$D" "${G[@]}" commit -qam "edit after the approval"
+sed -i.bak 's/^body$/edited, not approved/' "$D/d/edited.md" && rm -f "$D/d/edited.md.bak"
+out="$(km upgrade --root "$D" --pin v0.9.0 2>&1)"
+{ ! grep -q approved_digest "$D/d/legacy.md" && ! out_has "approved_digest"; } \
+  && ok "upgrade to a km that does not check the digest records none" || no "upgrade --pin v0.9.0 records a digest ($out)"
+out="$(km upgrade --root "$D" --pin v1.99.0 2>&1)"
+{ grep -q '^approved_digest: "[0-9a-f]\{16\}"$' "$D/d/legacy.md" && ! grep -q approved_digest "$D/d/open.md" \
+  && out_has "recorded approved_digest for the current content of 1 accepted doc(s), taking that text as the approved one" && out_has "d/legacy.md"; } \
+  && ok "upgrade records the digest of each accepted doc's current content, and says so" || no "upgrade records digests ($out; $(cat "$D/d/legacy.md"))"
+{ ! grep -q approved_digest "$D/d/edited.md" && out_has "d/edited.md (uncommitted changes)"; } \
+  && ok "upgrade takes no uncommitted text as approved" || no "upgrade and an edited doc ($out)"
+{ ! grep -q approved_digest "$D/d/drift.md" && out_has "recorded no approved_digest for d/drift.md (changed since its approval)"; } \
+  && ok "upgrade takes no text committed after the approval as approved (a tags-only commit is fine)" || no "upgrade and a drifted doc ($out)"
+out="$(KM_LOCAL=1 km validate --root "$D" "$D/d/legacy.md" 2>&1)" && ok "a doc given its digest by upgrade validates" || no "validate after upgrade ($out)"
+sed -i.bak 's/^body$/changed body/' "$D/d/legacy.md" && rm -f "$D/d/legacy.md.bak"
+out="$(KM_LOCAL=1 km validate --root "$D" "$D/d/legacy.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "approval-stale"; } && ok "after the upgrade, a content change fails a team brain's gate" || no "stale after upgrade ($rc: $out)"
+cp "$D/d/legacy.md" "$F/legacy.before"; out="$(km upgrade --root "$D" --pin v1.99.0 2>&1)"
+{ cmp -s "$D/d/legacy.md" "$F/legacy.before" && ! out_has "approved_digest"; } \
+  && ok "a second upgrade keeps the recorded digest (never takes a changed text as approved)" || no "second upgrade ($out)"
+acc_doc "$D/d/byhand.md" byhand accepted 'approved_by: DD\napproved_at: 2026-01-15\n'; git -C "$D" add -A && git -C "$D" "${G[@]}" commit -qam byhand
+out="$(km upgrade --root "$D" --pin v1.99.0 --force 2>&1)"
+{ ! grep -q approved_digest "$D/d/byhand.md" && ! out_has "approved_digest"; } \
+  && ok "an upgrade on a brain already past the digest release records none (records once, on the crossing)" || no "upgrade after the crossing ($out)"
+
 summary team-smoke || exit 1
