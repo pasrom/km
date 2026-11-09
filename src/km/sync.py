@@ -14,7 +14,8 @@ of a fork, else origin) and origin, then:
   forces one); nothing where gh says origin is no fork, or refuses to sync it;
 - makes the mounted brains match what the brain pins: `git submodule update --init` for a mount
   that is missing or behind its pin; one with changes of its own, a branch checked out, or ahead
-  of or diverged from its pin is left alone and reported. A pin never moves here; that is the
+  of or diverged from its pin is left alone and reported; one this computer leaves out
+  (`submodule.<name>.update` none, or inactive) is skipped. A pin never moves here; that is the
   host's automation (the bump-mounted-pins workflow) and a reviewed pull request.
 
 A fork's parent that gh found is added once as the remote `upstream` (as `gh repo fork` does), so
@@ -40,8 +41,8 @@ import sys
 import time
 from pathlib import Path
 
-from km.paths import ahead_behind, git, git_path, repo_root, rev, submodule_config
-from km.remotes import Upstream, find_upstream, first_line, gh, no_network, remote, shown
+from km.paths import ahead_behind, command, git, git_path, left_out, printable, repo_root, rev, skip_mount, submodule_config
+from km.remotes import Upstream, find_upstream, first_line, gh, no_access, no_network, remote, shown
 
 FETCH_TIMEOUT = 30                # seconds per fetch; a brain is small, a stall is not waited out
 CLONE_TIMEOUT = 120               # the first checkout of a mounted brain is a clone, with history
@@ -187,23 +188,29 @@ def sync_fork(root: Path, up: Upstream, theirs: str, mine: str, net: bool, stale
 def sync_mounts(root: Path, net: bool, init: bool) -> None:
     """Every mounted brain at the commit the brain pins; one with changes of its own is left alone.
     Without `init` a mount that is not checked out is only named, with the command."""
-    paths = list(submodule_config(root, "path").values()) if (root / ".gitmodules").is_file() else []
-    if not paths:
+    names = {p: n for n, p in submodule_config(root, "path").items()} if (root / ".gitmodules").is_file() else {}
+    if not names:
         return
     pinned = {}                                   # mount -> the commit the brain pins: `160000 commit <sha>\t<path>`
-    for rec in git("ls-tree", "-z", "HEAD", "--", *paths, cwd=root).stdout.split("\0"):
+    for rec in git("ls-tree", "-z", "HEAD", "--", *names, cwd=root).stdout.split("\0"):
         info, _, path = rec.partition("\t")
         if info.startswith("160000 "):
             pinned[path] = info.split()[-1]
-    for path, sha in pinned.items():
-        sub = root / path
+    for raw, sha in pinned.items():
+        path = printable(raw)                         # for the text; git and commands take the raw value
+        if reason := left_out(root, names.get(raw, raw)):     # this computer leaves it out: not km sync's to touch
+            say("skip", f"mounted {path} is skipped here ({reason})")
+            continue
+        sub = root / raw
         there = (sub / ".git").exists()
-        name = path.split("/")[-1]
+        name = raw.split("/")[-1]
+        reset = command("brain reset {name}", name=name) or "`brain reset` with its name"
+        checkout = command("git submodule update --init --checkout {path}", path=raw) or "`git submodule update --init --checkout`"
         if there and git("status", "--porcelain", cwd=sub).stdout.strip():
-            say("note", f"mounted {path} skipped: it has changes of its own (`brain reset {name}`)")
+            say("note", f"mounted {path} skipped: it has changes of its own ({reset})")
             continue
         if there and (branch := git("symbolic-ref", "-q", "--short", "HEAD", cwd=sub).stdout.strip()):
-            say("note", f"mounted {path} skipped: it has the branch {branch} checked out (`brain reset {name}`)")
+            say("note", f"mounted {path} skipped: it has the branch {printable(branch)} checked out ({reset})")
             continue
         head = rev(sub, "HEAD") if there else ""
         if head == sha:
@@ -211,17 +218,22 @@ def sync_mounts(root: Path, net: bool, init: bool) -> None:
             continue
         if head and (counts := ahead_behind(sub, head, sha)) and counts[0]:
             say("note", f"mounted {path} is {'ahead of' if not counts[1] else 'diverged from'} the commit the brain pins; "
-                        f"left as it is: `brain reset {name}` puts it back, a pull request moves the pin")
+                        f"left as it is: {reset} puts it back, a pull request moves the pin")
             continue
         if not there and not init:
-            say("note", f"mounted {path} is not checked out; `git submodule update --init --checkout \"{path}\"` "
+            say("note", f"mounted {path} is not checked out; {checkout} "
                         "in the brain, or km sync without --no-init")
         elif not net:
             say("skip", f"mounted {path} is not at the commit the brain pins (offline)")
-        elif (res := remote("submodule", "update", "--init", "--checkout", "--", path, cwd=root,
+        elif (res := remote("submodule", "update", "--init", "--checkout", "--", raw, cwd=root,
                             timeout=FETCH_TIMEOUT if there else CLONE_TIMEOUT))[0] != 0 or rev(sub, "HEAD") != sha:
-            say("FAIL", f"mounted {path} could not be checked out ({first_line(res[2]) or 'not at the pin afterwards'}); "
-                        f"`git submodule update --init --checkout \"{path}\"` in the brain shows more")
+            err = res[2]
+            leave = "" if not no_access(err) else (
+                f"; without read access, ask for it, or leave it out on this computer: "
+                + skip_mount(names.get(raw, raw)))
+            why = printable(next((ln.strip() for ln in err.splitlines() if ln.startswith(("fatal:", "error:"))), first_line(err) if err else ""))
+            say("FAIL", f"mounted {path} could not be checked out ({why or 'not at the pin afterwards'}); "
+                        f"{checkout} in the brain shows more{leave}")
         else:
             say("done", f"mounted {path} checked out at the commit the brain pins ({sha[:7]})")
 
