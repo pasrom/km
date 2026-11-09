@@ -24,9 +24,11 @@ from km import KM_REF
 from km.paths import (ahead_behind, command, git, git_path, left_out, printable, repo_root, rev, sets_no_eol, skip_mount,
                       submodule_config)
 from km.pins import read_pins, version_key
+from km import remotes
 from km.remotes import Upstream, find_upstream, first_line, gh, github_repo, no_login, no_network, remote, shown
 
 UV_DOCS = "https://docs.astral.sh/uv/getting-started/installation/"
+NETWORK_FIX = "check the network or VPN; --offline skips the network checks"
 results: list[tuple[str, str, str]] = []
 
 
@@ -44,8 +46,7 @@ def unreachable(name: str, url: str, err: str, also: str = "") -> None:
     `also` is a further way out of the last case."""
     first = first_line(err)
     if no_network(err):
-        report("FAIL", f"{name}: {shown(url)} cannot be reached ({first})",
-               "check the network or VPN; --offline skips the network checks")
+        report("FAIL", f"{name}: {shown(url)} cannot be reached ({first})", NETWORK_FIX)
     elif "host key verification failed" in err.lower():
         report("FAIL", f"{name}: this computer does not know the host key of {shown(url)}",
                "connect once in a terminal (`git ls-remote` with that URL) and confirm the host key")
@@ -384,6 +385,16 @@ def check_line_endings(root: Path) -> None:
     else:
         report("ok", "text files have LF line endings")
 
+def ask(what: str, *args: str, status: str = "FAIL") -> tuple[int, str] | None:
+    """gh, found on the PATH; None, reported, when it gave no answer in time: a slow or missing
+    network, not a missing login or access."""
+    code, out = gh(*args)
+    if code == -1:
+        report(status, f"gh gave no answer within {remotes.TIMEOUT:g} s {what}", NETWORK_FIX)
+        return None
+    return code, out
+
+
 # Your forks with their parents, in one call: a fork can carry another name than its parent.
 FORKS = ("query { viewer { repositories(isFork: true, first: 100, ownerAffiliations: OWNER) "
          "{ nodes { nameWithOwner parent { nameWithOwner } } } } }")
@@ -403,16 +414,23 @@ def check_github(origin: str, offline: bool) -> str | None:
     if offline:
         report("skip", "gh login and access (offline)")
         return
-    code, login = gh("api", "--hostname", "github.com", "user", "--jq", ".login")
+    if (res := ask("for the login", "api", "--hostname", "github.com", "user", "--jq", ".login")) is None:
+        return
+    code, login = res
     if code != 0 or not login:
-        if gh("auth", "status", "--hostname", "github.com")[0] != 0:
+        if (res := ask("for the login", "auth", "status", "--hostname", "github.com")) is None:
+            return
+        if res[0] != 0:
             report("FAIL", "gh is not signed in to github.com",
                    "`gh auth login` (choose github.com, HTTPS, and sign in in the browser)")
         else:
             report("FAIL", "gh is signed in but github.com did not answer", "check the network or VPN; --offline skips this")
         return
     report("ok", f"gh is signed in as {login}")
-    code, out = gh("api", "--hostname", "github.com", f"repos/{'/'.join(repo)}", "--jq", "[.permissions.push, .full_name] | @tsv")
+    if (res := ask(f"for {'/'.join(repo)}", "api", "--hostname", "github.com", f"repos/{'/'.join(repo)}",
+                   "--jq", "[.permissions.push, .full_name] | @tsv")) is None:
+        return
+    code, out = res
     if code != 0:
         report("FAIL", f"gh cannot see {'/'.join(repo)} as {login}", "ask the brain's owner for read access")
         return
@@ -420,12 +438,12 @@ def check_github(origin: str, offline: bool) -> str | None:
     if push == "true":
         report("ok", f"you can push branches to {full}")
         return full
-    _, forks = gh("api", "--hostname", "github.com", "graphql", "-f", f"query={FORKS}", "--jq",
-                  f'.data.viewer.repositories.nodes[] | select((.parent.nameWithOwner // "" | ascii_downcase) == '
-                  f'"{full.lower()}") | .nameWithOwner')
-    if forks:
-        report("ok", f"you contribute through your fork {forks.split()[0]}")
-    else:
+    res = ask(f"for your forks of {full}", "api", "--hostname", "github.com", "graphql", "-f", f"query={FORKS}", "--jq",
+              f'.data.viewer.repositories.nodes[] | select((.parent.nameWithOwner // "" | ascii_downcase) == '
+              f'"{full.lower()}") | .nameWithOwner', status="note")
+    if res and res[1]:
+        report("ok", f"you contribute through your fork {res[1].split()[0]}")
+    elif res:
         report("note", f"you can read {full} but not push to it, and have no fork of it yet",
                "a contribution creates one (`gh repo fork --remote=false`); nothing to do before then")
     return full
@@ -438,8 +456,11 @@ def check_mounted_pins(root: Path, repo: str) -> None:
     if not ((root / ".gitmodules").is_file() and (root / ".github/workflows/bump-mounted-pins.yml").is_file()):
         return
     env = f"repos/{repo}/environments/mounted-pins"
-    code, policy = gh("api", "--hostname", "github.com", env, "--jq",
-                      '.deployment_branch_policy | if . == null then "open" elif .custom_branch_policies then "custom" else "protected" end')
+    what = f"for the environment mounted-pins of {repo}"
+    if (res := ask(what, "api", "--hostname", "github.com", env, "--jq", '.deployment_branch_policy | if . == null '
+                   'then "open" elif .custom_branch_policies then "custom" else "protected" end', status="note")) is None:
+        return
+    code, policy = res
     fix = "Settings, Environments, mounted-pins: deployment branches, selected branches, `main` only"
     if code != 0:
         report("note", f"{repo} has no environment mounted-pins (or gh cannot see it): the mounted pins do not move",
@@ -447,7 +468,10 @@ def check_mounted_pins(root: Path, repo: str) -> None:
         return
     names = ""
     if policy == "custom":                   # a second call only for a list of chosen branches
-        _, names = gh("api", "--hostname", "github.com", f"{env}/deployment-branch-policies", "--jq", "[.branch_policies[].name] | join(\" \")")
+        if (res := ask(what, "api", "--hostname", "github.com", f"{env}/deployment-branch-policies", "--jq",
+                       "[.branch_policies[].name] | join(\" \")", status="note")) is None:
+            return
+        names = res[1]
     if names == "main":
         report("ok", f"{repo} has the environment mounted-pins, restricted to main")
     else:
