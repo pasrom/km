@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from km.common import ROOT, SKIP, split_frontmatter
+from km.common import ROOT, SERVED_STATUS, SKIP, frontmatter, sent_back_left, split_frontmatter
 from km.paths import write_text
 
 
@@ -109,3 +109,27 @@ def edit_docs(docs: list[str], change, prog: str) -> list[str]:
     for d, message in accepted:
         print(f"{prog}: {d.rel} {message}")
     return refused
+
+
+def edit_sending_back(docs: list[str], change, prog: str) -> int:
+    """edit_docs for an edit that may send an accepted doc back to review (km.common.send_back):
+    prints why each refused doc was refused, and how many docs it sent back still carry a key km
+    cannot find (quoted) for a person to drop. Such a doc is written all the same, so it leaves the
+    served set, but the run fails, as `km demote --apply` does. The exit code: 1 if either, else 0."""
+    left: set[str] = set()   # the blocks written back to review with a key left in
+
+    def sending(fm: dict, raw: str, body: str):
+        res = change(fm, raw, body)
+        if (not isinstance(res, str) and fm.get("status") == SERVED_STATUS and sent_back_left(res[0])
+                and frontmatter(res[0]).get("status") != SERVED_STATUS):   # not a relabel that keeps it accepted
+            left.add(res[0])
+        return res
+    refused = edit_docs(docs, sending, prog)
+    for why in refused:
+        print(f"{prog}: REFUSED {why}")
+    # counted from what is on disk now: a doc the gate refused was restored, still accepted
+    partial = sum(not isinstance(d := load_doc(p, p), str) and d.raw in left
+                  for p in {Path(doc).resolve() for doc in docs}) if left else 0
+    if partial:
+        print(f"km {prog}: {partial} doc(s) sent back still carry a key km cannot find (quoted?); drop it by hand")
+    return 1 if refused or partial else 0

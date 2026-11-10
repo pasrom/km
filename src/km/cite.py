@@ -5,7 +5,7 @@ download) and today's date. km downloads nothing: the copy must be on disk.
 The `cites:` block is rewritten, the rest of the frontmatter is kept byte for byte, and the doc is
 then gated by `km validate` and restored unchanged if that fails. A new file, or new content for a
 cited one, sends a signed-off doc back to review, as `km repin --cites` does: the approval never saw
-it. Replacing an entry keeps its title and drops its version label and ctag, which named the old
+it (an approval key it cannot find, quoted, stays, named, and the run exits 1). Replacing an entry keeps its title and drops its version label and ctag, which named the old
 content. The same content again changes nothing (only a different --title or --version is written).
 
 Run:  km cite add [--root DIR] <doc.md> <https URL> --file <local copy> [--title T] [--version V]
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from km.cites import editable, is_https, opaque, same_url, sha256_file, write
-from km.edit import edit_docs
+from km.edit import edit_sending_back
 
 
 def change_for(url: str, digest: str, title: str | None, version: str | None, today: datetime.date):
@@ -67,10 +67,7 @@ def main() -> int:
     except OSError as e:
         print(f"km cite: --file {a.file}: {e.strerror or e}", file=sys.stderr)
         return 2
-    refused = edit_docs([a.doc], change_for(a.url, digest, a.title, a.version, datetime.date.today()), "cite")
-    for why in refused:
-        print(f"cite: REFUSED {why}")
-    return 1 if refused else 0
+    return edit_sending_back([a.doc], change_for(a.url, digest, a.title, a.version, datetime.date.today()), "cite")
 
 
 if __name__ == "__main__":

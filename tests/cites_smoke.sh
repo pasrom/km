@@ -415,6 +415,19 @@ run cite add rp6.md "$SITE/new%20source.pdf" --file "$C/report.pdf"
 { [ "$rc" = 0 ] && grep -q "^status: review" "$T/rp6.md" && out_has "back to review"; } \
   && ok "cite add of a new file sends a signed-off doc back to review" || no "new cite demotion ($rc: $out)"
 
+# an approval key it cannot find (quoted): sent back all the same, the key named, exit 1 (as km demote)
+for c in "repin --cites" "cite add"; do
+  f="q${c%% *}.md"; acc "$f"; sed -i.bak 's/^approved_by:/"approved_by":/' "$T/$f" && rm -f "$T/$f.bak"; git -C "$T" add "$f"
+  if [ "$c" = "cite add" ]; then run cite add "$f" "$URL" --file "$C/report2.pdf"; else run repin --cites "$f" --file "$URL=$C/report2.pdf"; fi
+  { [ "$rc" = 1 ] && out_has "drop its approved_by by hand" && out_has "1 doc(s) sent back still carry a key" \
+    && grep -q "^status: review" "$T/$f" && grep -q '^"approved_by"' "$T/$f"; } \
+    && ok "$c sends back a doc with a quoted approved_by, names the key and exits 1" || no "$c quoted approved_by ($rc: $out; $(cat "$T/$f"))"
+done
+acc qr.md; sed -i.bak 's/^approved_by:/"approved_by":/' "$T/qr.md" && rm -f "$T/qr.md.bak"; git -C "$T" add qr.md
+run cite add qr.md "$URL" --file "$C/report.pdf" --version 4.0
+{ [ "$rc" = 0 ] && grep -q "^status: accepted" "$T/qr.md" && ! out_has "still carry"; } \
+  && ok "cite add that only relabels a signed-off doc with a quoted approved_by sends nothing back, exit 0" || no "relabel quoted ($rc: $out)"
+
 # --dir maps a library to its URL prefix, 1:1: a doc citing the HR library's A/Datasheet.pdf is
 # never checked against the Eng library's A/Datasheet.pdf, even when only Eng is synced
 mkdir -p "$C/Eng - Docs/A" "$C/HR - Docs/A"

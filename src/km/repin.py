@@ -5,7 +5,8 @@
 A blob pin depends only on the file's content, so unlike a commit pin it survives a rebase or squash
 merge. Run it when a doc is written, and after re-reviewing it when `km validate` reports a stale
 pin. An approval vouches for the sources it saw: a signed-off doc whose pins change goes back to
-`status: review` without its approval and pre-reviews (`reviewed_by`), to be approved again. Only
+`status: review` without its approval and pre-reviews (`reviewed_by`), to be approved again; a key it
+cannot find (quoted) stays, named, and the run exits 1, as `km demote` does. Only
 the pinned fields are rewritten, as plain YAML; the doc is then gated by `km validate` and restored unchanged if that fails.
 
 With `--cites`, it re-pins the external files the doc cites instead (`cites:`, see km.cites): each
@@ -27,7 +28,7 @@ import sys
 
 from km.common import PIN, SCHEMA, as_list, pin_state, scalar, send_back, set_fm_block, staged_blob, unstaged
 from km.cites import Copies, add_copy_args, copies_from, editable, read_copies, write
-from km.edit import edit_docs
+from km.edit import edit_sending_back
 
 ABBREV = 12   # hex digits of a written pin: unambiguous in any brain, short enough to read
 PINNED = [f for f, spec in SCHEMA["fields"].items() if spec.get("format") == "path_at_hash"]
@@ -121,16 +122,13 @@ def main() -> int:
     if a.cites:
         if isinstance(copies := copies_from(a), str):
             ap.error(copies)
-        refused = edit_docs(a.docs, change_cites(copies, datetime.date.today()), "repin")
+        code = edit_sending_back(a.docs, change_cites(copies, datetime.date.today()), "repin")
         for url in sorted(set(copies.files) - copies.used):
             print(f"repin: no doc given cites {url}", file=sys.stderr)
         if hint := copies.hint():
             print(f"repin: {hint}", file=sys.stderr)
-    else:
-        refused = edit_docs(a.docs, change, "repin")
-    for why in refused:
-        print(f"repin: REFUSED {why}")
-    return 1 if refused else 0
+        return code
+    return edit_sending_back(a.docs, change, "repin")
 
 
 if __name__ == "__main__":
