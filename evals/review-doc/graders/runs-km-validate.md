@@ -1,5 +1,5 @@
 ---
-type: tool_used
-tool: Bash
-input_match: 'km validate'
+type: regex
+target: trace
+pattern: '"tool_use_result":(?:\{"stdout":)?"(?:(?:(?!left unchanged:|left untouched:|nothing written:)(?:[^"\\]|\\.))*?\\n)?(?:ERRORS|WARNINGS): \d+'
 ---
