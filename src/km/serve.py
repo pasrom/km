@@ -24,7 +24,8 @@ ALLOWED_AUDIENCE = {INTERNAL_AUDIENCE, CUSTOMER_AUDIENCE}
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
-    write_text(path, "".join(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n" for r in records))
+    # default=str: a value YAML reads as a date (`tags: [2026-11-10]`, `ticket: 2026-11-10`) as its text
+    write_text(path, "".join(json.dumps(r, ensure_ascii=False, sort_keys=True, default=str) + "\n" for r in records))
 
 
 def main() -> int:
@@ -43,7 +44,7 @@ def main() -> int:
             continue
         accepted.append({
             "path": rel,
-            "title": fm.get("title"),
+            "title": None if fm.get("title") is None else str(fm["title"]),   # YAML reads `title: 2026-11-10` as a date, which JSON refuses
             "type": fm.get("type"),
             "tags": fm.get("tags") or [],
             "audience": audience,

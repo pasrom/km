@@ -29,8 +29,11 @@ _NEXT_H2 = re.compile(r"(?m)^## ")
 
 def _entry(path: str, link: str, fallback: str) -> str:
     fm = frontmatter(read(path))
-    title = (fm.get("title") or fallback).replace("[", " ").replace("]", " ")
-    desc = fm.get("description")
+    # As text: YAML reads `title: 2024` as a number, `2026-11-10` as a date, and km validate takes both;
+    # a block scalar has line breaks, which would split the list entry.
+    title, desc = (" ".join(str(v).splitlines()) for v in (fm.get("title"), fm.get("description")))   # None reads "None"
+    title = (fallback if fm.get("title") in (None, "") else title).replace("[", " ").replace("]", " ")
+    desc = "" if fm.get("description") is None else desc
     return f"- [{title}]({link})" + (f": {desc}" if desc else "")
 
 
