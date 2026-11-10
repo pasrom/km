@@ -44,8 +44,9 @@ from pathlib import Path
 
 import yaml
 
-from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, brain_path, default_review_by, known_file, md_named,
-                       review_by_default_problem, submodule_prefixes, under, unportable, unportable_part, yaml_reason)
+from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, brain_path, default_review_by, known_file,
+                       md_named, resolve_slug, review_by_default_problem, submodule_prefixes, under, unportable,
+                       unportable_part, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
 
@@ -172,20 +173,20 @@ def _strip_code(s: str) -> str:
 def _resolves_in_repo(target_dir: Path, raw: str, wiki: bool) -> bool:
     """Does a link target resolve to a file inside ROOT that a clone of it has (km.common.known_file:
     a gitignored doc is none)? Doc-relative then root-relative (containment checked); a bare [[slug]]
-    also by name, wherever in the brain (km.common.md_named). A scheme URL or empty target counts as
-    external."""
+    also by name, as `km validate` resolves it (km.common.resolve_slug: not under skip_prefixes). A
+    scheme URL or empty target counts as external."""
     t = str(raw).strip()
     if t.startswith("<") and t.endswith(">"):
         t = t[1:-1].strip()
-    parts = t.split()
-    t = (parts[0] if parts else "").split("#", 1)[0].split("?", 1)[0].strip()
+    if not wiki:   # a Markdown link may carry a title after its target; a wiki name may hold spaces
+        t = (t.split() or [""])[0]
+    t = t.split("#", 1)[0].split("?", 1)[0].strip()
     if not t or _SCHEME.match(t):
         return True
-    if wiki and not t.endswith(".md"):
-        t = t + ".md"
-    if any((r := brain_path(cand)) and known_file(r) for cand in (target_dir / t, ROOT / t.lstrip("/"))):
+    probe = t if t.endswith(".md") or not wiki else t + ".md"
+    if any((r := brain_path(cand)) and known_file(r) for cand in (target_dir / probe, ROOT / probe.lstrip("/"))):
         return True
-    return wiki and "/" not in t and bool(md_named(t))
+    return wiki and resolve_slug(t) is not None
 
 
 def outward_links(body: str, target_dir: Path) -> list[str]:

@@ -57,7 +57,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, md_named, pin_state, tracked_md, unportable_part
+from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, tracked_md, unportable_part
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -341,16 +341,6 @@ def resolve_path(rel: str, target: str) -> str | None:
     return None
 
 
-def resolve_slug(nm: str) -> str | None:
-    """A bare [[slug]]: the first, in sorted order and outside skip_prefixes, of the files named
-    `slug.md` that km.common.md_named finds (exact name, no glob; a gitignored draft is none, as for
-    a link written as a path: resolve_path)."""
-    nm = nm.strip()
-    if not nm or "/" in nm or nm.endswith(".md"):
-        return None
-    return next((p for p in md_named(f"{nm}.md") if not p.startswith(SKIP_PREFIXES)), None)
-
-
 def _norm(s: str) -> str:
     s = unicodedata.normalize("NFKC", s)
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Cf")   # strip all Unicode format chars
@@ -480,8 +470,8 @@ def check_index_tree() -> None:
         for cand in cands:
             if cand and cand in tracked:
                 return cand, t
-        if not t.endswith(".md") and "/" not in t:                   # bare [[slug]]: by name, as the gate resolves it
-            return resolve_slug(t), t
+        if hit := resolve_slug(t):                                    # bare [[slug]]: by name, as the gate resolves it
+            return hit, t
         return None, (t if t.endswith(".md") else "")                # unresolved slug/wiki: not a *.md dead link
 
     by_folder: dict[str, list[str]] = defaultdict(list)
