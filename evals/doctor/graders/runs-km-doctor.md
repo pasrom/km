@@ -1,5 +1,5 @@
 ---
-type: tool_used
-tool: Bash
-input_match: 'km doctor'
+type: regex
+target: trace
+pattern: '"tool_use_result":(?:\{"stdout":)?"(?:(?:[^"\\]|\\.)*?\\n)?(?:km doctor: |Everything needed is set up\.|\d+ problem\(s\) to fix\.)'
 ---

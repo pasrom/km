@@ -1,5 +1,5 @@
 ---
-type: tool_used
-tool: Bash
-input_match: '\bcite add\b'
+type: regex
+target: trace
+pattern: '"tool_use_result":(?:\{"stdout":)?"(?:(?:[^"\\]|\\.)*?\\n)?cite: (?:\S+ (?:(?:re-|already )?cites|relabels) https://|REFUSED )'
 ---
