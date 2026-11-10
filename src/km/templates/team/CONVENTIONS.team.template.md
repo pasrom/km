@@ -101,6 +101,7 @@ draft → review → accepted → superseded | obsolete
 
 - **No formal work products under configuration management** (requirements, safety cases, traceability): those live in the product repositories with their baselines; the brain holds *knowledge about* them and links out via `resource:`.
 - **No binaries** (images / video / PDF / `.eml` / `.docx`) beyond a small size, reference an external store via `resource:` instead.
+- **No generated file without its source**: an image or diagram made from a source that can be rerun (a script, a `.drawio` file, small input data) is committed with that source in the same folder, and the doc says how to regenerate it, so the next change edits the source instead of redrawing the output. A draw.io export with the diagram embedded is its own source (the doc says to edit it in draw.io); a screenshot or an instrument capture has none. Large input data, or data kept out of git on purpose, stays in an external store: the doc names where it is (`resource:`).
 - **No copies of standards texts** or third-party documents.
 
 ## Enforcement
