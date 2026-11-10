@@ -92,9 +92,10 @@ def run_pinned(root: Path, cmd: str, rest: list[str]) -> int | None:
     if not why:
         print(f"km: the brain pins km {_label(chosen)}; running that one (this is {KM_REF}; KM_LOCAL=1 keeps it)",
               file=sys.stderr)
+        # --no-config: no uv.toml or [tool.uv] from the brain steers what the pinned km is fetched from
         env = {**os.environ, "KM_LOCAL": "1", "KM_ROOT": str(root)}
-        code = subprocess.run([RUNNER, "--quiet", *source, cmd, *rest], env=env).returncode
-        if code == 0 or subprocess.run([RUNNER, "--quiet", *source, "--version"], env=env,
+        code = subprocess.run([RUNNER, "--quiet", "--no-config", *source, cmd, *rest], env=env).returncode
+        if code == 0 or subprocess.run([RUNNER, "--quiet", "--no-config", *source, "--version"], env=env,
                                        capture_output=True).returncode == 0:
             return code                   # the pinned km ran; its exit code stands
         why = f"km {_label(chosen)} could not be fetched (offline?)"
