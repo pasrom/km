@@ -1,5 +1,5 @@
 name: km
-description: Install the km CLI (validate, gen-index, demote, serve, promote) at this action's version.
+description: Install the km CLI (km validate, km gen-index and the other km commands) at this action's version.
 branding:
   icon: book-open
   color: blue
