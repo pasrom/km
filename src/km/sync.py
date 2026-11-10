@@ -229,7 +229,7 @@ def sync_mounts(root: Path, net: bool, init: bool) -> None:
                             timeout=FETCH_TIMEOUT if there else CLONE_TIMEOUT))[0] != 0 or rev(sub, "HEAD") != sha:
             err = res[2]
             leave = "" if not no_access(err) else (
-                f"; without read access, ask for it, or leave it out on this computer: "
+                "; without read access, ask for it, or leave it out on this computer: "
                 + skip_mount(names.get(raw, raw)))
             why = printable(next((ln.strip() for ln in err.splitlines() if ln.startswith(("fatal:", "error:"))), first_line(err) if err else ""))
             say("FAIL", f"mounted {path} could not be checked out ({why or 'not at the pin afterwards'}); "

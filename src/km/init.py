@@ -28,7 +28,7 @@ from pathlib import Path
 import yaml
 
 from km import KM_REF
-from km.paths import TEMPLATES, git, sets_no_eol, write_text
+from km.paths import TEMPLATES, sets_no_eol, write_text
 from km.pins import ITEM, KM_REPO_LINE, km_entries, resolve, version_key
 
 PERSONAL = {                          # template -> path in the brain (repo-owned after init)
