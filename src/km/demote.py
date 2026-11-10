@@ -1,6 +1,7 @@
 """Demote stale served docs: an accepted (served) doc whose `review_by` has lapsed drops back to
 `status: review` (its approval invalidated), so it leaves the served set automatically instead of
 being served forever. This is the staleness mechanism the model needs; run it on a schedule in CI.
+A type that does not expire (`review_by_default` null) is never demoted, whatever `review_by` it carries.
 
 Dry-run by default (lists what would change, exit 1 if any); `--apply` rewrites the files.
 
@@ -18,7 +19,8 @@ import argparse
 import datetime
 import sys
 
-from km.common import ROOT, SERVED_STATUS, as_date, demote_raw, is_article, read, send_back, split_frontmatter, tracked_md
+from km.common import (ROOT, SERVED_STATUS, demote_raw, is_article, read, review_by_default_problem, review_due,
+                       send_back, split_frontmatter, tracked_md)
 from km.edit import edit_docs, load_doc
 from km.paths import write_text
 
@@ -46,6 +48,8 @@ def main() -> int:
         if a.apply:
             ap.error("--apply goes without docs; named docs are always sent back")
         return send_back_docs(a.docs)
+    if why := review_by_default_problem():   # a bad table would read as "nothing expires"
+        ap.error(f"schema.local.yaml: {why}")
     apply = a.apply
     stale: list[str] = []
     stuck: list[str] = []
@@ -55,7 +59,7 @@ def main() -> int:
         fm = split_frontmatter(read(rel))[0]
         if not fm or fm.get("status") != SERVED_STATUS:
             continue
-        rb = as_date(fm.get("review_by"))
+        rb = review_due(fm)   # none for a type that does not expire
         if rb is None or rb >= TODAY:
             continue
         if isinstance(d := load_doc(rel, ROOT / rel), str):   # strict: written back, bytes must survive

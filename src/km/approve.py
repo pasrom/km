@@ -6,9 +6,11 @@ Who may sign off is the doc's `approval` level (see km.common.approval_problem);
 (which `km validate` reports as a stale approval). Each doc is edited in place (those lines, no YAML
 round-trip, like `km demote`) and then gated by `km validate`; a doc that fails is restored unchanged.
 
-A doc whose `review_by` has already passed is refused unless `--review-by` sets a new date, or
+A doc whose `review_by` has already passed is refused unless `--review-by` sets a new date (a type without
+expiry ignores its `review_by` and refuses `--review-by`), or
 the next `km demote` would take the approval straight back. A doc without one gets the default for its
-type (`review_by_default` in the schema), counted from the approval date; a type without expiry gets none.
+type (`review_by_default` in the schema), counted from the approval date; a type without expiry gets none,
+and a `review_by` it already carries is left in place and ignored.
 
 Run:  km approve [--root DIR] <doc.md>... --by WHO [--at YYYY-MM-DD] [--review-by YYYY-MM-DD]
 """
@@ -19,7 +21,7 @@ import datetime
 import sys
 
 from km.common import (SERVED_STATUS, approval_problem, approved_digest, as_date, default_review_by,
-                       review_by_days, review_by_default_problem, set_digest, set_fm_line)
+                       review_by_days, review_by_default_problem, review_due, set_digest, set_fm_line)
 from km.edit import edit_docs
 
 
@@ -38,14 +40,15 @@ def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.dat
         if why := approval_problem(fm, by):
             return why
         new_by, note, doctype = review_by, "", fm.get("type")
+        if review_by and not review_by_days(doctype):
+            return (f"a {doctype} does not expire, --review-by would be ignored; "
+                    f"give the type days in review_by_default (schema.local.yaml) to make it expire")
         if review_by is None:
-            if fm.get("review_by"):   # kept, also on a type without expiry: remove it by hand to stop that
-                due = as_date(fm.get("review_by"))
-                if due is None:
+            if fm.get("review_by"):   # kept; on a type without expiry it is left alone and never counts
+                if as_date(fm.get("review_by")) is None:
                     return f"review_by {fm.get('review_by')!r} is not a YYYY-MM-DD date; pass --review-by"
-                if due < max(at, datetime.date.today()):   # km demote compares with today
-                    hint = "" if review_by_days(doctype) else f", or remove it: a {doctype} does not expire"
-                    return f"review_by {due} has passed; pass --review-by with a new date{hint}"
+                if (due := review_due(fm)) and due < max(at, datetime.date.today()):   # km demote compares with today
+                    return f"review_by {due} has passed; pass --review-by with a new date"
             elif new_by := default_review_by(doctype, at):
                 if new_by < datetime.date.today():
                     return f"the default review_by {new_by} for a {doctype} approved on {at} has passed; pass --review-by"

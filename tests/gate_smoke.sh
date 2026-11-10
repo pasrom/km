@@ -463,11 +463,19 @@ V "$T/ap/r6.md" && ok "review_by_default: a schema without a type enum takes any
 rbd
 RB=2020-01-01 TYPE=decision doc "$T/ap/r14.md" review ''
 out="$(km approve --root "$T" "$T/ap/r14.md" --by RPA 2>&1)"
-{ out_has "has passed; pass --review-by with a new date, or remove it: a decision does not expire" && grep -q '^status: review$' "$T/ap/r14.md"; } \
-  && ok "approve: a decision with a passed review_by is refused, with the hint to remove it" || no "approve: passed review_by on a decision ($out)"
-sed -i.bak '/^review_by:/d' "$T/ap/r14.md" && rm -f "$T/ap/r14.md.bak"
-km approve --root "$T" "$T/ap/r14.md" --by RPA >/dev/null 2>&1 && ! grep -q review_by "$T/ap/r14.md" \
-  && ok "approve: once removed, the decision is approved without review_by" || no "approve: decision after removing review_by"
+{ grep -q '^status: accepted$' "$T/ap/r14.md" && grep -q '^review_by: 2020-01-01$' "$T/ap/r14.md" && ! errs "$T/ap/r14.md" | grep -q gate-stale; } \
+  && ok "approve: a decision's passed review_by is ignored and kept; validate does not call it stale" || no "approve: passed review_by on a decision ($out)"
+RB= TYPE=decision doc "$T/ap/r16.md" review ''; cp "$T/ap/r16.md" "$T/r16.bak"
+out="$(km approve --root "$T" "$T/ap/r16.md" --by RPA --review-by 2099-01-01 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "does not expire, --review-by would be ignored" && cmp -s "$T/ap/r16.md" "$T/r16.bak"; } \
+  && ok "approve: --review-by on a type that does not expire is refused" || no "approve --review-by on a decision ($rc: $out)"
+RB=soon TYPE=decision doc "$T/ap/r17.md" review ''
+out="$(km approve --root "$T" "$T/ap/r17.md" --by RPA 2>&1)"
+out_has "is not a YYYY-MM-DD date" && ok "approve: a malformed review_by is refused on any type" || no "approve: malformed review_by on a decision ($out)"
+RB=2020-01-01 TYPE=note doc "$T/ap/r15.md" review ''
+out="$(km approve --root "$T" "$T/ap/r15.md" --by RPA 2>&1)"
+{ out_has "has passed; pass --review-by with a new date" && grep -q '^status: review$' "$T/ap/r15.md"; } \
+  && ok "approve: a note with a passed review_by is still refused" || no "approve: passed review_by on a note ($out)"
 rbd
 printf 'promoted\n' > "$T/rsrc.txt"
 for ty in reference:365 note:182 summary:182 decision:none artifact:none; do

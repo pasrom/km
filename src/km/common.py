@@ -103,6 +103,13 @@ def review_by_days(doctype) -> int | None:
     return days if _days(days) else None
 
 
+def review_due(fm: dict) -> datetime.date | None:
+    """The `review_by` that counts: none for a type that does not expire, so a date left on such a doc
+    (older km gave every promoted type one) is ignored. Callers refuse a bad table first
+    (review_by_default_problem), else every type would read as not expiring."""
+    return as_date(fm.get("review_by")) if review_by_days(fm.get("type")) else None
+
+
 def default_review_by(doctype, start: datetime.date) -> datetime.date | None:
     """The review_by a doc of this type gets when signed off (or promoted) on `start`; None: no expiry."""
     days = review_by_days(doctype)

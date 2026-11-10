@@ -108,6 +108,17 @@ kt demote --apply >/dev/null
 { grep -q '^status: review$' "$T/process/old.md" && ! grep -q '^approved_' "$T/process/old.md"; } \
   && ok "--apply demotes to review and drops the approval" || no "--apply demotes to review and drops the approval"
 grep -q '^status: accepted' "$T/process/cust.md" && ok "a doc not yet due stays accepted" || no "a doc not yet due stays accepted"
+printf -- '---\ntype: concept\ntitle: Ctl\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\napproved_by: TT\napproved_at: 2025-01-15\n---\ncontrol\n' > "$T/process/ctl.md"
+printf -- '---\ntype: decision\ntitle: Dec\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\napproved_by: TT\napproved_at: 2025-01-15\n---\ndecided\n' > "$T/process/dec.md"
+G add -A; val="$(kt validate process/dec.md process/ctl.md)"; due="$(kt list --due today)"; out="$(kt demote --apply)"
+{ echo "$val" | grep -q " 1 x gate-stale" && echo "$due" | grep -q ctl.md && echo "$out" | grep -q ctl.md \
+  && grep -q '^status: accepted$' "$T/process/dec.md" && ! echo "$out" | grep -q dec.md && ! echo "$due" | grep -q dec.md; } \
+  && ok "a decision's lapsed review_by (no expiry) is ignored by demote, list --due and validate; a concept's is not" || no "decision review_by ignored ($out | $due | $val)"
+cp "$T/schema.local.yaml" "$T/sl.bak"; printf 'review_by_default:\n  decision: 0\n' >> "$T/schema.local.yaml"; G add -A
+out="$(kt demote --apply)"; rc=$?; out2="$(kt list --due today)"; rc2=$?
+{ [ "$rc" = 2 ] && [ "$rc2" = 2 ] && echo "$out" | grep -q "review_by_default maps a type" && grep -q '^status: accepted$' "$T/process/dec.md"; } \
+  && ok "demote and list --due refuse a bad review_by_default table instead of reading it as no expiry" || no "bad table in demote/list ($rc $rc2: $out)"
+mv "$T/sl.bak" "$T/schema.local.yaml"; G rm -qf --cached process/dec.md process/ctl.md; rm -f "$T/process/dec.md" "$T/process/ctl.md"; G add -A
 printf -- '---\ntype: concept\ntitle: Odd\ntimestamp: 2025-01-15\nauthor: TT\nstatus: "accepted" # ok\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\n---\nx\n' > "$T/process/odd.md"
 G add -A; kt demote --apply >/dev/null
 grep -q '^status: review$' "$T/process/odd.md" && ok "a status line with a trailing comment is demoted" || no "a status line with a trailing comment is demoted"
