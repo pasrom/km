@@ -71,9 +71,9 @@ def _status_rules(raw) -> dict[tuple[str, str], list]:
     for key, fields in (raw or {}).items():
         st, _, kind = str(key).rpartition("_")
         if (not st or (known and key not in own and st not in known)
-                or kind not in ("requires", "recommends", "forbids") or not isinstance(fields, list)):
+                or kind not in ("requires", "recommends", "forbids") or not isinstance(fields, list | None)):
             bad.append(str(key))
-        else:
+        elif fields is not None:      # left empty (every entry commented out): no rule, as km's own keep theirs
             out[(st, kind)] = fields
     if bad:
         sys.exit(f"schema: status_rules key(s) {', '.join(bad)} must be <status>_<requires|recommends|forbids>: "
