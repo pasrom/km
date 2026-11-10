@@ -25,8 +25,12 @@ jobs:
         with:
           fetch-depth: 0          # full history so source-pin (path.md@hash) checks can see blobs
       - uses: pasrom/km@<KM_SHA> # <KM_VERSION>, installs the km CLI at that commit
+      # A pull request, or a dispatched run on its branch, also needs every doc it changes signed off;
+      # a dispatched run checks against the default branch, as a workflow opens its pull requests there.
       - name: validate frontmatter + gate + index completeness
-        run: km validate
+        env:
+          BASE: ${{ github.base_ref || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || '' }}
+        run: km validate ${BASE:+--signoff-since "origin/$BASE"}
       - name: _index Documents list up to date
         run: km gen-index --check
       - name: build served bundle (main only — a PR build is not "served")

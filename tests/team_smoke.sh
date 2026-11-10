@@ -540,6 +540,31 @@ out="$(km upgrade --root "$D" 2>&1)"
 { [ "$(on_keys "$D/.github/workflows/ci.yml")" = "push pull_request workflow_dispatch" ] && out_has "added the workflow_dispatch trigger" \
   && [ "$(sans_dispatch "$D/.github/workflows/ci.yml")" = "$before" ]; } \
   && ok "upgrade adds workflow_dispatch to a km ci.yml without it, and changes nothing else" || no "upgrade adds workflow_dispatch ($out; $(cat "$D/.github/workflows/ci.yml"))"
+! out_has "sign-off check" && ok "a ci.yml that checks sign-offs is left as it is" || no "sign-off check on km's own ci.yml ($out)"
+S="$F/signoff"; mkdir -p "$S/.github/workflows"; printf 'meta: {profile: s}\n' > "$S/schema.local.yaml"
+kmpy - "$T/.github/workflows/ci.yml" "$S/.github/workflows/ci.yml" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()   # km's ci.yml as km 1.11.0 wrote it: one plain `run: km validate` step
+old, n = re.subn(r"(?m)^ *# A pull request, or a dispatched run.*\n(?: *#.*\n)*(.*\n) *env:\n *BASE: .*\n( *)run: km validate .*\n", r"\1\2run: km validate\n", text)
+assert n == 1, "the template's sign-off step moved"
+open(sys.argv[2], "w").write(old)
+PY
+out="$(km upgrade --root "$S" --pin v0.9.0 --force 2>&1)"
+{ grep -q '^ *run: km validate$' "$S/.github/workflows/ci.yml" && ! out_has "sign-off check"; } \
+  && ok "upgrade to a km without --signoff-since leaves the step as it is" || no "sign-off step before its release ($out)"
+out="$(km upgrade --root "$S" --pin v1.99.0 2>&1)"
+nopin(){ grep -v '^ *#\|uses: pasrom/km@' "$1"; }
+{ out_has "turned on the sign-off check" && diff <(nopin "$S/.github/workflows/ci.yml") <(nopin "$T/.github/workflows/ci.yml") >/dev/null; } \
+  && ok "upgrade turns on the sign-off check in a km ci.yml without it, as the template has it" || no "upgrade sign-off step ($out; $(diff "$S/.github/workflows/ci.yml" "$T/.github/workflows/ci.yml"))"
+kmpy - "$REPO/src" <<'PY' && ok "with_signoff skips a comment, odd jobs and a second step without a crash" || no "with_signoff edge cases"
+import sys; sys.path.insert(0, sys.argv[1])
+from km.upgrade import with_signoff
+step = "jobs:\n  v:\n    steps:\n      - run: km validate\n"
+assert "--signoff-since" in with_signoff("# TODO: --signoff-since\n" + step).split("\n", 1)[1]
+for odd in (step + "  w:\n    steps:\n", step + "  w: text\n", "jobs:\n" + step[6:].replace("v:", "v: ~\n  x:", 1)):
+    assert "--signoff-since" in with_signoff(odd), odd       # a job that is null or text is no reason to give up
+assert with_signoff("jobs:\n") is None and with_signoff(step + "      - run: km validate\n") is None
+PY
 cp "$D/.github/workflows/ci.yml" "$F/dispatch.before"; out="$(km upgrade --root "$D" 2>&1)"
 { cmp -s "$D/.github/workflows/ci.yml" "$F/dispatch.before" && ! out_has "workflow_dispatch"; } && ok "a second upgrade leaves the trigger as it is" || no "dispatch idempotent ($out)"
 printf 'on:\n  pull_request:\n# workflow_dispatch: not yet\njobs:\n  v:\n    steps:\n      - uses: %s\n' "$PINW" > "$D/.github/workflows/ci.yml"
@@ -644,7 +669,7 @@ rm "$N/$AF"; printf '      - run: python tools/check.py\n' >> "$N/.github/workfl
 { [ ! -e "$N/$AF" ] && out_has "did not add $AF" && grep -q "pasrom/km" "$N/.github/workflows/ci.yml"; } \
   && ok "a km ci.yml with a step of the brain's own gets no approve-fork-ci, with a note" || no "approve-fork-ci with an extra ci step ($out)"
 kmpy -c 'import sys; t = open(sys.argv[1], encoding="utf-8").read(); open(sys.argv[2], "w", encoding="utf-8").write(
-    t.replace("run: km validate\n", "run: km validate\n          \u00a0#$(touch pwned)\n", 1))' "$T/.github/workflows/ci.yml" "$N/.github/workflows/ci.yml"
+    t.replace("run: km gen-index --check\n", "run: km gen-index --check\n          \u00a0#$(touch pwned)\n", 1))' "$T/.github/workflows/ci.yml" "$N/.github/workflows/ci.yml"
 out="$(km upgrade --root "$N" 2>&1)"
 { [ ! -e "$N/$AF" ] && out_has "did not add $AF" && grep -q "#\$(touch pwned)" "$N/.github/workflows/ci.yml"; } \
   && ok "a ci.yml line that only looks like a comment but runs (NBSP before #) gets no approve-fork-ci" || no "approve-fork-ci with a hidden step ($out)"
@@ -769,6 +794,13 @@ rm -f "$F/gh.log"; ! guard true '["good1"]' && grep -q "issue" "$F/gh.log" && ok
 rm -f "$F/gh.log"; ! guard false '["good1","down2"]' && [ ! -f "$F/gh.log" ] && ok "a failed lookup fails main-guard without a false issue" || no "main-guard on a failed lookup"
 kmpy -c 'import km.upgrade as u; from km.init import template; raise SystemExit(u.ci_hash(template("team/ci.yml", {})) not in u.KM_CI)' \
   && ok "KM_CI lists the current team ci template" || no "team/ci.yml changed: add its ci_hash to KM_CI in upgrade.py"
+kmpy - <<'PY' && ok "a km ci.yml with the sign-off step turned on by upgrade still counts as km's" || no "with_signoff result not in KM_CI"
+import re, km.upgrade as u
+from km.init import template
+t = template("team/ci.yml", {})
+old, n = re.subn(r"(?m)^( *)env:\n *BASE: .*\n( *)run: km validate .*\n", r"\2run: km validate\n", t)
+raise SystemExit(n != 1 or u.ci_hash(u.with_signoff(old)) not in u.KM_CI)
+PY
 kmpy -c 'import km.upgrade as u
 assert [u.ci_hash(t) is None for t in ("jobs: {a: {steps: 3}}", "a: &x [*x]", "- a", "{1: a, b: c}")] == [False, True, True, False]' \
   && ok "ci_hash takes a malformed ci.yml (steps not a list, an alias cycle, no mapping, mixed keys) without a traceback" || no "ci_hash on a malformed ci.yml"

@@ -39,7 +39,7 @@ As a Claude Code plugin:
 ## The km command
 
 ```
-km validate [FILE ...]      frontmatter, links, the gate, index completeness
+km validate [FILE ...]      frontmatter, links, the gate, index completeness; --signoff-since BASE: every changed doc signed off
 km gen-index [--check]      regenerate every '## Documents' list in _index.md
 km demote [--apply]         demote served docs past their review date
 km demote DOC...            send accepted docs back to review now, e.g. in the commit that changes them
@@ -78,6 +78,8 @@ Brains carry no km code (the one exception, the script of the mounted-pins workf
 ```
 
 The team brain's ci workflow also runs on `workflow_dispatch`: a pull request that a workflow opens with `GITHUB_TOKEN` starts no `pull_request` run, so such a workflow (a pin bump, say) dispatches ci on its branch and the pull request gets its check. `km upgrade` adds the trigger to a km ci workflow that lacks it.
+
+On a pull request, and on such a dispatched run, the ci workflow runs `km validate --signoff-since` against the base branch: every doc the pull request adds or changes must be signed off at its level (`km approve`, or for a doc a person signs off, `status: review` with the AI review in `reviewed_by`), so an unsigned doc cannot be merged while the check is green. `km upgrade` turns it on in a km ci workflow that lacks it.
 
 A team brain also gets `approve-fork-ci`. A fork pull request from a member with read access waits for "Approve and run" before ci starts; this workflow, on `pull_request_target` and without checking out the fork's code, approves that run when every changed file is data (an allowlist of endings, only Markdown at the top, nothing under `.github/`, no symlink or submodule). Every pull request from the branch must target the default branch and never have changed its base, with exactly one open. It approves only a ci run made for this event, since a fork's run names no pull request and a closed one or an older base could share it. Anything else waits for a person. `km upgrade` adds it only to a team brain whose `ci.yml` is km's as YAML reads it, but for its action pins and branch name (a ci with steps of the brain's own would run fork code unreviewed: it gets a note instead). Like bump-mounted-pins it replaces a copy that is still a version km shipped, so security fixes reach the brain, and leaves one the brain changed with a note; to take km's version, delete the copy and run `km upgrade`. It also notes a copy that sits beside a `ci.yml` that is not km's.
 

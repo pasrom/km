@@ -79,7 +79,7 @@ SHIPPED = {
 }
 # ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
 # a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
-KM_CI = {"4ab8b6e4f2ef1e22"}
+KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f"}
 DIGEST_AFTER = (1, 10, 1)   # the last km release that does not record or check approved_digest
 
 
@@ -90,7 +90,7 @@ def record_digests() -> tuple[list[str], list[str]]:
     from the doc as committed with its last `approved_at` change (a shallow clone without that commit
     takes the text as it is). Imported here, not at the top: km.common reads the schema overlay,
     which this upgrade may have just renamed."""
-    from km.common import ROOT, SERVED_STATUS, approved_digest, git_md, is_article, set_digest, split_frontmatter, tracked_md
+    from km.common import ROOT, SERVED_STATUS, approved_digest, doc_at, git_md, is_article, set_digest, tracked_md
     from km.edit import load_doc
     if git_md() is None:
         return [], []                 # not a git work tree: no tracked docs to look at (tracked_md would exit)
@@ -99,11 +99,8 @@ def record_digests() -> tuple[list[str], list[str]]:
     def approved_then(rel: str) -> str | None:
         """The digest of the doc as committed when its approved_at line last changed, or None."""
         sha = git("log", "-1", "--format=%H", "-G", "^approved_at:", "--", rel, cwd=ROOT).stdout.strip()
-        then = git("show", f"{sha}:./{rel}", cwd=ROOT) if sha else None
-        if not then or then.returncode:
-            return None
-        fm, _, body = split_frontmatter(then.stdout.lstrip("\ufeff").replace("\r\n", "\n"))
-        return approved_digest(fm, body) if fm is not None else None
+        then = doc_at(sha, rel) if sha else None
+        return approved_digest(*then) if then and then[0] is not None else None
 
     done, left = [], []
     for rel in filter(is_article, tracked_md()):
@@ -220,6 +217,37 @@ def with_dispatch(text: str) -> str | None:
     return out if pad and _parse(out) == {**before, key: {**on, "workflow_dispatch": None}} else None
 
 
+# The base branch of a pull request, or the default branch on a dispatched run (a pull request a
+# workflow opened); empty on a push, which needs no sign-off check. As in templates/team/ci.yml.
+SIGNOFF_SINCE = (1, 12, 0)   # the first km release with `km validate --signoff-since`
+SIGNOFF_BASE = "${{ github.base_ref || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || '' }}"
+
+
+def with_signoff(text: str) -> str | None:
+    """The workflow with its one `run: km validate` step also checking sign-offs on a pull request
+    (unchanged when it does), or None when there is no single such step with no `env:` of its own,
+    or the edit would change more than that step."""
+    if re.search(r"(?m)^[^#\n]*--signoff-since", text):   # a comment that names it does not count
+        return text
+    lines = text.splitlines(keepends=True)
+    hits = [(i, m) for i, ln in enumerate(lines) if (m := re.fullmatch(r"(\s*)(- )?run: km validate\s*", ln))]
+    if len(hits) != 1:
+        return None
+    i, m = hits[0]
+    pad = m.group(1) + ("  " if m.group(2) else "")
+    run = f'run: km validate ${{BASE:+--signoff-since "origin/$BASE"}}\n'
+    step = [f"{m.group(1)}{m.group(2) or ''}env:\n", f"{pad}  BASE: {SIGNOFF_BASE}\n", f"{pad}{run}"]
+    out = "".join(lines[:i] + step + lines[i + 1:])
+    def steps(d):
+        jobs = d.get("jobs") if isinstance(d, dict) else None
+        return [s for job in (jobs.values() if isinstance(jobs, dict) else ()) if isinstance(job, dict)
+                for s in (job.get("steps") if isinstance(job.get("steps"), list) else ()) if isinstance(s, dict)]
+    old, new = steps(_parse(text)), steps(_parse(out))
+    want = [{**s, "env": {"BASE": SIGNOFF_BASE}, "run": run.removeprefix("run: ").strip()} if s.get("run") == "km validate" and "env" not in s else s
+            for s in old]
+    return out if len(old) == len(new) and new == want and want != old else None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="km upgrade", description="Move a brain to this km version.")
     ap.add_argument("--force", action="store_true", help="also move a pin to a newer km back to this one")
@@ -330,6 +358,15 @@ def main() -> int:
             else:
                 write_text(root / ci, got)
                 done.append(f"added the workflow_dispatch trigger to {ci}")
+        if (ci in pins and (version_key(target) or ()) >= SIGNOFF_SINCE
+                and (got := with_signoff(text := (root / ci).read_text(encoding="utf-8"))) != text):
+            if got is None:
+                done.append(f"could not turn on the sign-off check in {ci}: change its `km validate` step as in km's "
+                            f"templates/team/ci.yml by hand, so a pull request fails on a changed doc that is not signed off")
+            else:
+                write_text(root / ci, got)
+                done.append(f"turned on the sign-off check in {ci}: a pull request now fails on a doc it changes that is "
+                            f"not signed off (docs already on main are checked once a pull request changes their content)")
         hook = root / ".pre-commit-config.yaml"
         if not hook.is_file():
             done.append(f"no {hook.name}: nothing refuses a commit on main or a push to main locally; `km init` writes one")
