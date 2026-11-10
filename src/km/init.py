@@ -9,9 +9,10 @@ its commit (see km.pins) and runs `km` from there. The release is this km's own,
   km init DIR --team --name NAME --desc TEXT --initials XX --folder DIR=PURPOSE [--folder ...]
               [--rule TEXT ...] [--profile SLUG]
       A team brain: also the root and folder indexes, README, .gitignore, its workflows (ci,
-      staleness, main-guard, bump-mounted-pins with its script), a Dependabot config, and the
-      pre-commit hooks that refuse a commit or push on main and regenerate the indexes (km-gen-index,
-      when the pinned km has it). Refuses to run if any file it would write already exists.
+      staleness, main-guard, approve-fork-ci, bump-mounted-pins with its script), a Dependabot
+      config, and the pre-commit hooks that refuse a commit or push on main and regenerate the
+      indexes (km-gen-index, when the pinned km has it). Refuses to run if any file it would
+      write already exists.
 
 Both render and check everything before writing anything, and refuse a release whose commit
 cannot be looked up (not released yet, or no network). Files only: git add, the first
@@ -48,6 +49,7 @@ TEAM = {
     "team/ci.yml": ".github/workflows/ci.yml",
     "team/staleness.yml": ".github/workflows/staleness.yml",
     "team/main-guard.yml": ".github/workflows/main-guard.yml",
+    "team/approve-fork-ci.yml": ".github/workflows/approve-fork-ci.yml",
     "team/dependabot.yml": ".github/dependabot.yml",
     "team/bump-mounted-pins.yml": ".github/workflows/bump-mounted-pins.yml",
     "team/bump-mounted-pins.py": ".github/scripts/bump-mounted-pins.py",
