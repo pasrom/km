@@ -274,6 +274,9 @@ cp "$REPO/tests/fixtures/old-brain/ci.yml" "$REPO/tests/fixtures/old-brain/stale
 printf 'jobs:\n  own:\n    steps:\n      - uses: pasrom/km@v0.1.0\n      - run: echo mine\n' > "$O/.github/workflows/own.yml"
 cp "$REPO/tests/fixtures/old-brain/pre-commit-config.yaml" "$O/.pre-commit-config.yaml"
 out="$(km upgrade --root "$O" 2>&1)"
+AF=.github/workflows/approve-fork-ci.yml; AFT="$REPO/src/km/templates/team/approve-fork-ci.yml"
+cmp -s "$O/$AF" "$AFT" \
+  && ok "upgrade of a copy-in brain adds approve-fork-ci with the ci it rewrites" || no "copy-in upgrade approve-fork-ci ($out)"
 { [ ! -e "$O/scripts" ] && [ ! -e "$O/schema.base.yaml" ]; } && ok "upgrade removes the copied km files" || no "upgrade removes the copied km files ($out)"
 { grep -q "uses: $PINW" "$O/.github/workflows/ci.yml" && grep -q "km demote --apply" "$O/.github/workflows/staleness.yml" && [ -f "$O/.github/dependabot.yml" ]; } \
   && ok "upgrade rewrites the km workflows and adds Dependabot" || no "upgrade rewrites the km workflows ($out)"
@@ -560,7 +563,7 @@ PW=.github/workflows/bump-mounted-pins.yml; PS=.github/scripts/bump-mounted-pins
   && ok "a team brain gets the mounted-pins workflow and its script" || no "team brain mounted-pins files"
 { [ -f "$O/$PW" ] && [ -f "$O/$PS" ]; } && ok "upgrade adds them to a team brain without them" || no "upgrade adds the mounted-pins files"
 [ ! -e "$P/$PW" ] && [ ! -e "$P/$PS" ] && ok "a personal brain does not get them" || no "personal brain has no mounted-pins files"
-kmpy - <<'PY' && ok "SHIPPED lists the current mounted-pins templates" || no "a mounted-pins template changed: add its hash to SHIPPED in upgrade.py"
+kmpy - <<'PY' && ok "SHIPPED lists the current templates of the copies a team brain carries" || no "a SHIPPED template changed: add its hash to SHIPPED in upgrade.py"
 import sys, km.upgrade as u
 from km.init import template
 sys.exit(any(u.shipped_hash(template(t, {})) not in h for t, h in u.SHIPPED.items()))
@@ -580,7 +583,7 @@ MOVE='s/\(uses: actions\/checkout@\)[^ ]*.*/\1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 for f in "$PW:bump-mounted-pins.yml" "$PS:bump-mounted-pins.py"; do
   { echo "# an earlier km version"; sed "$MOVE" "$REPO/src/km/templates/team/${f#*:}"; } > "$O/${f%%:*}"
 done
-upgrade_older(){ out="$(cd "$O" && kmpy - 2>&1 <<'PY'
+upgrade_older(){ out="$(cd "${1:-$O}" && kmpy - 2>&1 <<'PY'
 import sys, km.upgrade as u
 from km.init import template
 for t, h in u.SHIPPED.items():
@@ -617,6 +620,41 @@ grep -q "branches: \[main\]" "$T/.github/workflows/main-guard.yml" \
   && [ "$(grep -c '^default_install_hook_types' "$O/.pre-commit-config.yaml")" = 1 ] && [ "$(grep -c '^default_stages' "$O/.pre-commit-config.yaml")" = 1 ] \
   && [ "$(hooks_of "$O/.pre-commit-config.yaml")" = "$TEAMH" ]; } \
   && ok "upgrade adds the guard workflow and both hooks to a team brain, once" || no "upgrade adds the main guard ($(cat "$O/.pre-commit-config.yaml"))"
+# --- approve-fork-ci: approves a fork's waiting ci run when the pull request changes only data ---
+cmp -s "$T/$AF" "$AFT" && ok "init --team writes the approve-fork-ci workflow" || no "init --team approve-fork-ci"
+rm "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$AF" "$AFT" && out_has "added $AF"; } && ok "upgrade adds approve-fork-ci to a team brain that lacks it" || no "upgrade adds approve-fork-ci ($out)"
+{ echo "# an earlier km version"; cat "$AFT"; } > "$O/$AF"; upgrade_older
+{ cmp -s "$O/$AF" "$AFT" && out_has "updated $AF to this km's version"; } \
+  && ok "upgrade replaces an approve-fork-ci that is an earlier version km shipped, so security fixes reach it" || no "upgrade replaces an earlier approve-fork-ci ($out)"
+echo "# the brain's own guard" >> "$O/$AF"; cp "$O/$AF" "$F/af.before"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$AF" "$F/af.before" && out_has "left $AF: the brain changed it"; } \
+  && ok "upgrade leaves a brain's own approve-fork-ci byte for byte, with a note" || no "upgrade overwrote approve-fork-ci ($out)"
+N="$F/own-team-ci"; mkdir -p "$N/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$N/.github/workflows/"
+printf 'meta: {profile: n}\n' > "$N/schema.local.yaml"; printf 'jobs:\n  t:\n    runs-on: x\n    steps:\n      - run: make\n' > "$N/.github/workflows/ci.yml"
+out="$(km upgrade --root "$N" 2>&1)"
+{ [ ! -e "$N/$AF" ] && [ -f "$N/.github/workflows/main-guard.yml" ] && out_has "did not add $AF"; } \
+  && ok "upgrade gives no approve-fork-ci to a team brain whose ci.yml is its own, with a note" || no "approve-fork-ci with an own ci.yml ($out)"
+sed "$MOVE" "$T/.github/workflows/ci.yml" > "$N/.github/workflows/ci.yml"; out="$(km upgrade --root "$N" 2>&1)"
+cmp -s "$N/$AF" "$AFT" && ok "a km ci.yml whose action pins moved still gets approve-fork-ci" || no "approve-fork-ci with moved pins ($out)"
+rm "$N/$AF"; grep -v "workflow_dispatch:" "$T/.github/workflows/ci.yml" > "$N/.github/workflows/ci.yml"; out="$(km upgrade --root "$N" 2>&1)"
+{ cmp -s "$N/$AF" "$AFT" && out_has "added the workflow_dispatch trigger"; } \
+  && ok "a km ci.yml from before the dispatch trigger gets approve-fork-ci and the trigger in one run" || no "approve-fork-ci without dispatch ($out)"
+rm "$N/$AF"; printf '      - run: python tools/check.py\n' >> "$N/.github/workflows/ci.yml"; out="$(km upgrade --root "$N" 2>&1)"
+{ [ ! -e "$N/$AF" ] && out_has "did not add $AF" && grep -q "pasrom/km" "$N/.github/workflows/ci.yml"; } \
+  && ok "a km ci.yml with a step of the brain's own gets no approve-fork-ci, with a note" || no "approve-fork-ci with an extra ci step ($out)"
+kmpy -c 'import sys; t = open(sys.argv[1], encoding="utf-8").read(); open(sys.argv[2], "w", encoding="utf-8").write(
+    t.replace("run: km validate\n", "run: km validate\n          \u00a0#$(touch pwned)\n", 1))' "$T/.github/workflows/ci.yml" "$N/.github/workflows/ci.yml"
+out="$(km upgrade --root "$N" 2>&1)"
+{ [ ! -e "$N/$AF" ] && out_has "did not add $AF" && grep -q "#\$(touch pwned)" "$N/.github/workflows/ci.yml"; } \
+  && ok "a ci.yml line that only looks like a comment but runs (NBSP before #) gets no approve-fork-ci" || no "approve-fork-ci with a hidden step ($out)"
+sed "s/branches: \[main\]/branches: [trunk]/" "$T/.github/workflows/ci.yml" > "$N/.github/workflows/ci.yml"; out="$(km upgrade --root "$N" 2>&1)"
+{ cmp -s "$N/$AF" "$AFT" && grep -q "branches: \[trunk\]" "$N/.github/workflows/ci.yml"; } \
+  && ok "a km ci.yml on a default branch other than main gets approve-fork-ci" || no "approve-fork-ci on trunk ($out)"
+rm "$N/$AF"; printf 'jobs:\n  t:\n    runs-on: x\n    steps:\n      - run: make\n' > "$N/.github/workflows/ci.yml"
+{ echo "# an earlier km version"; cat "$AFT"; } > "$N/$AF"; upgrade_older "$N"
+{ cmp -s "$N/$AF" "$AFT" && out_has "updated $AF to this km's version" && out_has "$AF lets a fork's ci run start unreviewed, but ci.yml is not km's unchanged one"; } \
+  && ok "upgrade warns about an approve-fork-ci beside a ci.yml that is not km's, and still brings an earlier km copy up to date" || no "approve-fork-ci beside an edited ci ($out)"
 Z="$F/zero-indent"; mkdir -p "$Z/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$Z/.github/workflows/"
 printf 'meta: {profile: z}\n' > "$Z/schema.local.yaml"
 printf 'repos:\n- repo: https://github.com/pasrom/km\n  rev: %s  # frozen: %s\n  hooks:\n  - id: km-validate\n' "$KM_SHA" "$KM_REF" > "$Z/.pre-commit-config.yaml"
@@ -729,6 +767,92 @@ rm -f "$F/gh.log"; guard false '["good1","good2"]' && [ ! -f "$F/gh.log" ] && ok
 rm -f "$F/gh.log"; ! guard false '["good1","bad2"]' && grep -q "Direct push to main" "$F/gh.log" && ok "main-guard fails and opens an issue on a commit without a PR" || no "main-guard flags an unmerged commit"
 rm -f "$F/gh.log"; ! guard true '["good1"]' && grep -q "issue" "$F/gh.log" && ok "main-guard fails on a force push" || no "main-guard flags a force push"
 rm -f "$F/gh.log"; ! guard false '["good1","down2"]' && [ ! -f "$F/gh.log" ] && ok "a failed lookup fails main-guard without a false issue" || no "main-guard on a failed lookup"
+kmpy -c 'import km.upgrade as u; from km.init import template; raise SystemExit(u.ci_hash(template("team/ci.yml", {})) not in u.KM_CI)' \
+  && ok "KM_CI lists the current team ci template" || no "team/ci.yml changed: add its ci_hash to KM_CI in upgrade.py"
+kmpy -c 'import km.upgrade as u
+assert [u.ci_hash(t) is None for t in ("jobs: {a: {steps: 3}}", "a: &x [*x]", "- a", "{1: a, b: c}")] == [False, True, True, False]' \
+  && ok "ci_hash takes a malformed ci.yml (steps not a list, an alias cycle, no mapping, mixed keys) without a traceback" || no "ci_hash on a malformed ci.yml"
+# approve-fork-ci's script, run with a stand-in gh that serves one pull request's compare, tree, pull
+# requests and waiting runs from files, logs every call and each approval
+if command -v jq >/dev/null; then
+AB="$F/af-stub"; mkdir -p "$AB"
+cat > "$AB/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$AF_DIR/calls"
+[ -n "${AF_FAIL:-}" ] && case "$*" in *"$AF_FAIL"*) exit 1 ;; esac
+[ "$2" = -X ] && { echo "approve $4" >> "$AF_DIR/approved"; exit 0; }
+case "$*" in
+  */compare/*) cat "$AF_DIR/compare.json" ;;
+  */git/trees/*) cat "$AF_DIR/tree.json" ;;
+  *pulls\?*) if [ -f "$AF_DIR/pulls.seen" ]; then cat "$AF_DIR/pulls2.json"; else touch "$AF_DIR/pulls.seen"; cat "$AF_DIR/pulls.json"; fi ;;
+  */timeline*) cat "$AF_DIR/timeline.json" ;;
+  *actions/runs\?*) cat "$AF_DIR/runs.json" ;;
+esac
+SH
+chmod +x "$AB/gh"
+kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["approve"]["steps"][0]["run"])' "$T/$AF" > "$F/af.sh"
+# afrun FILES-JSON [CHANGED]: 0 when it approved run 7; 1 when it left it to a person with a notice and
+# exit 0; 2 when it exited 0 with neither; 3 when it failed (a crash would turn every fork pull request
+# red). TREE, PRS, PRS2 (the pull requests from the second lookup on, the one right before approving),
+# TIMELINE, RUN, AF_REF (the fork's branch), AF_DEFAULT and AF_FAIL (a call that fails) override the
+# stand-in; the calls it made are in $AFD/calls
+AFD="$F/af"; mkdir -p "$AFD"
+RUN_OF(){ printf '{"id":7,"path":".github/workflows/ci.yml","head_repository":{"full_name":"%s"},"head_branch":"%s","created_at":"%s"}' "$@"; }
+PR(){ printf '{"number":%s,"state":"%s","base":{"ref":"%s"}}' "$@"; }
+afrun(){ local prs tree='{"truncated":false,"tree":[]}' run
+  prs="[$(PR 1 open main)]"; run="$(RUN_OF f/r "${AF_REF:-x}" 2026-01-01T00:00:09Z)"
+  rm -f "$AFD"/*; printf '{"files":%s}' "$1" > "$AFD/compare.json"
+  printf '%s' "${TREE:-$tree}" > "$AFD/tree.json"; printf '%s' "${TIMELINE:-[]}" > "$AFD/timeline.json"
+  printf '%s' "${PRS:-$prs}" > "$AFD/pulls.json"; printf '%s' "${PRS2:-${PRS:-$prs}}" > "$AFD/pulls2.json"
+  printf '{"workflow_runs":[%s]}' "${RUN:-$run}" > "$AFD/runs.json"
+  AF_DIR="$AFD" PATH="$AB:$SB:$PATH" REPO=o/r BASE=b SHA=s HEAD_REPO=f/r HEAD_REF="${AF_REF:-x}" DEFAULT="${AF_DEFAULT:-main}" \
+    SINCE=2026-01-01T00:00:05Z CHANGED="${2:-$(printf '%s' "$1" | jq length)}" bash "$F/af.sh" > "$AFD/out" 2>&1 || return 3
+  grep -qx "approve repos/o/r/actions/runs/7/approve" "$AFD/approved" 2>/dev/null && return 0
+  grep -q "^::notice::" "$AFD/out" && return 1 || return 2; }
+refuse(){ local name="$1"; shift; afrun "$@"; [ $? = 1 ] || refused="$refused $name"; }
+called(){ grep -qxF "$1" "$AFD/calls"; }
+{ afrun '[{"filename":"d/a.md"},{"filename":"d/p.png"},{"filename":"README.md"}]' \
+  && called "api repos/o/r/compare/b...s" && called "api repos/o/r/git/trees/s?recursive=1" \
+  && called "api --paginate repos/o/r/pulls?state=all&per_page=100&head=f%3Ax" \
+  && called "api --paginate repos/o/r/issues/1/timeline?per_page=100" \
+  && called "api repos/o/r/actions/runs?head_sha=s&status=action_required&event=pull_request"; } \
+  && ok "approve-fork-ci approves a pull request of data only, through exactly the API calls it means" \
+  || no "approve-fork-ci on data ($(cat "$AFD/calls" "$AFD/out" 2>/dev/null))"
+missed=""; approves(){ local name="$1"; shift; afrun "$@" || missed="$missed $name"; }
+PRS="[$(PR 1 open main),$(PR 2 closed main)]" approves earlier-closed-pr '[{"filename":"d/a.md"}]'
+AF_DEFAULT=trunk PRS="[$(PR 1 open trunk)]" approves default-branch-trunk '[{"filename":"d/a.md"}]'
+AF_REF='a/b&c#d' approves branch-to-encode '[{"filename":"d/a.md"}]'
+called "api --paginate repos/o/r/pulls?state=all&per_page=100&head=f%3Aa%2Fb%26c%23d" || missed="$missed branch-encoding"
+[ -z "$missed" ] && ok "approve-fork-ci also approves beside an earlier closed pull request, on a default branch other than main, and for a branch name it must encode" \
+  || no "approve-fork-ci did not approve:$missed"
+AF_FAIL=/approve afrun '[{"filename":"d/a.md"}]'; rc=$?
+{ [ $rc = 2 ] && grep -q "^::warning::could not approve run 7" "$AFD/out"; } \
+  && ok "approve-fork-ci on a failed approval warns and ends green" || no "approve-fork-ci failed approval (rc $rc; $(cat "$AFD/out"))"
+refused=""
+AF_FAIL=compare/ refuse compare-fails '[{"filename":"d/a.md"}]'
+AF_FAIL=git/trees refuse tree-fails '[{"filename":"d/a.md"}]'
+AF_FAIL=pulls refuse pulls-fails '[{"filename":"d/a.md"}]'
+AF_FAIL=timeline refuse timeline-fails '[{"filename":"d/a.md"}]'
+refuse script '[{"filename":"d/a.md"},{"filename":"d/run.py"}]'
+refuse .github '[{"filename":".github/workflows/x.yml"}]'
+refuse top-level-yaml '[{"filename":"schema.local.yaml"}]'
+refuse rename '[{"filename":"d/a.md","previous_filename":"d/a.py"}]'
+TREE='{"truncated":false,"tree":[{"path":"d/l.md","mode":"120000"}]}' refuse symlink '[{"filename":"d/l.md"}]'
+TREE='{"truncated":true,"tree":[]}' refuse truncated '[{"filename":"d/a.md"}]'
+refuse count '[{"filename":"d/a.md"}]' 2
+refuse empty '[]'
+AF_DEFAULT=trunk refuse not-the-default-branch '[{"filename":"d/a.md"}]'
+PRS="[$(PR 1 open main),$(PR 2 open main)]" refuse second-pr '[{"filename":"d/a.md"}]'
+PRS="[$(PR 1 open main)][$(PR 2 closed legacy)]" refuse closed-pr-other-base '[{"filename":"d/a.md"}]'
+PRS2="[$(PR 1 open main),$(PR 2 open legacy)]" refuse pr-opened-while-waiting '[{"filename":"d/a.md"}]'
+TIMELINE='[{"event":"labeled"}][{"event":"base_ref_changed"}]' refuse base-changed '[{"filename":"d/a.md"}]'
+TIMELINE='[{"event":"automatic_base_change_succeeded"}]' refuse base-changed-by-github '[{"filename":"d/a.md"}]'
+RUN="$(RUN_OF f/r y 2026-01-01T00:00:09Z)" refuse other-branch '[{"filename":"d/a.md"}]'
+RUN="$(RUN_OF g/r x 2026-01-01T00:00:09Z)" refuse other-fork '[{"filename":"d/a.md"}]'
+RUN="$(RUN_OF f/r x 2026-01-01T00:00:01Z)" refuse run-before-event '[{"filename":"d/a.md"}]'
+[ -z "$refused" ] && ok "approve-fork-ci leaves code, .github, top-level config, renames, links, a bad count, failed reads, other pull requests, a changed base, other forks and branches, and an older run to a person, with a notice" \
+  || no "approve-fork-ci approved or crashed on:$refused"
+else no "the approve-fork-ci tests need jq"; fi
 
 # --- upgrade records approved_digest for docs approved before km recorded it ---
 D="$F/digest"; km init "$D" --team --name D --desc d --initials DD --folder d=D --pin v0.9.0 >/dev/null

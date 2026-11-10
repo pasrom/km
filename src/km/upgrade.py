@@ -15,13 +15,14 @@
     still runs stays until that workflow is switched to the km command;
   - a legacy schema.yaml becomes schema.local.yaml, the overlay it already acts as;
   - a team brain gets the Dependabot config, and the obsolete `team_brain:` line goes.
-- A team brain gets the main-guard workflow, the bump-mounted-pins workflow and its script, and the
-  pre-commit hooks that refuse a commit on main and a push to main, whichever it lacks, km's
-  km-gen-index hook in its km entry once the target release has it, and its km
-  ci workflow gets the `workflow_dispatch` trigger, so a workflow that opens a pull request with
-  GITHUB_TOKEN can run the check on it. The bump-mounted-pins workflow and script are copies of km
-  code: one that is still a version km shipped (its action pins aside) is replaced by this km's, one
-  the brain changed is left with a note.
+- A team brain gets the main-guard workflow, the approve-fork-ci workflow (only where ci.yml is km's,
+  but for its pins and branch name, since it approves fork runs of that workflow), the bump-mounted-pins
+  workflow and its script, and the pre-commit hooks that refuse a commit on main and a push to main,
+  whichever it lacks, km's km-gen-index hook in its km entry once the target release has it, and its
+  km ci workflow gets the `workflow_dispatch` trigger, so a workflow that opens a pull request with
+  GITHUB_TOKEN can run the check on it. The bump-mounted-pins workflow and script and approve-fork-ci
+  are copies of km code: one that is still a version km shipped (its action pins aside) is replaced
+  by this km's, one the brain changed is left with a note.
 - Each accepted doc approved before km recorded what an approval covers (`approved_by` set, no
   `approved_digest`) gets the digest of its current content, once: when the brain moves from a km
   that did not check it to one that does. This takes the current text as the approved one, so
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import shutil
 import sys
@@ -66,13 +68,18 @@ OLD_COPIES = {
     ".github/workflows/staleness.yml": ("team/staleness.yml", {"e9768164f8a03461", "199bf98454e2f922", "fb3fcd7353e99cde"}),
     ".pre-commit-config.yaml": ("pre-commit-config.template.yaml", {"8ef7f1ea977e2308", "d6819c5f6e97baa1"}),
 }
-# The km files a team brain carries as copies (its workflow's token job must not install km) ->
+# The km files a team brain carries as copies (the bump-mounted-pins job holding the app token must
+# not install km; approve-fork-ci's security fixes must reach every brain) ->
 # shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
 # is still one of them is replaced by the current template, an edited one is left with a note.
 SHIPPED = {
     "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
+    "team/approve-fork-ci.yml": {"accf1785f4710b4e"},
 }
+# ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
+# a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
+KM_CI = {"4ab8b6e4f2ef1e22"}
 DIGEST_AFTER = (1, 10, 1)   # the last km release that does not record or check approved_digest
 
 
@@ -151,6 +158,34 @@ def fingerprint(text: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
+def ci_hash(text: str) -> str | None:
+    """sha256 prefix of a ci workflow as YAML reads it, so a comment changes nothing and nothing YAML
+    runs can hide as one, with what may differ between brains running the same steps masked: the
+    action refs (Dependabot moves them), the push branches (the default branch's name) and the
+    workflow_dispatch trigger (upgrade adds it after this check). None when it is no workflow."""
+    d = _parse(text)
+    if not isinstance(d, dict):
+        return None
+    on = d.pop(True, d.pop("on", None))              # YAML 1.1 reads a bare `on` as true
+    if isinstance(on, dict):
+        on = {k: v for k, v in on.items() if k != "workflow_dispatch"}
+        if isinstance(on.get("push"), dict) and "branches" in on["push"]:
+            on["push"] = {**on["push"], "branches": "<default>"}
+    d["on"] = on
+    jobs = d.get("jobs")
+    for job in jobs.values() if isinstance(jobs, dict) else ():
+        if not isinstance(job, dict):
+            continue
+        steps = job.get("steps")
+        for step in [job, *(steps if isinstance(steps, list) else ())]:   # a job may call a reusable workflow itself
+            if isinstance(step, dict) and isinstance(step.get("uses"), str):
+                step["uses"] = step["uses"].split("@")[0]
+    try:
+        return hashlib.sha256(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    except (TypeError, ValueError, RecursionError):    # mixed key types, an alias cycle: not km's
+        return None
+
+
 def _parse(text: str):
     try:
         return yaml.safe_load(text)
@@ -214,8 +249,9 @@ def main() -> int:
     local = root / "schema.local.yaml"
     # A team brain: the old team_brain marker, or a km workflow only `km init --team` writes.
     wf = root / ".github/workflows"
-    team = ((wf / "staleness.yml").is_file()
-            or (wf / "ci.yml").is_file() and "pasrom/km" in (wf / "ci.yml").read_text(encoding="utf-8")
+    ci_path = wf / "ci.yml"
+    ci_text = ci_path.read_text(encoding="utf-8", errors="replace") if ci_path.is_file() else ""
+    team = ((wf / "staleness.yml").is_file() or "pasrom/km" in ci_text
             or local.is_file() and bool(MARKER.search(local.read_text(encoding="utf-8"))))
     for rel, (tpl, known) in OLD_COPIES.items():
         p = root / rel
@@ -258,9 +294,21 @@ def main() -> int:
             write_text(local, new)
             done.append("dropped team_brain from schema.local.yaml (no longer used)")
     if team:
+        km_ci = ".github/workflows/ci.yml" in rewrites or ci_hash(ci_text) in KM_CI   # km's, or km's copy-in rewritten to it
         for tpl in ("team/dependabot.yml", "team/main-guard.yml", *SHIPPED):
+            rel = TEAM[tpl]
+            p = root / rel
+            if tpl == "team/approve-fork-ci.yml" and not km_ci:     # checked on every upgrade: ci.yml may change later
+                if not p.exists():
+                    ci_is = "ci.yml is not km's unchanged one" if ci_text else "there is no ci.yml"
+                    done.append(f"did not add {rel}: it lets a fork's ci run start unreviewed, and {ci_is}; once ci.yml "
+                                f"runs nothing from the checkout but km, copy it from km's src/km/templates/{tpl}")
+                    continue
+                if ci_text:                          # without a ci.yml it has no run to approve
+                    done.append(f"{rel} lets a fork's ci run start unreviewed, but ci.yml is not km's unchanged one: "
+                                f"check that ci.yml runs nothing from the checkout but km, or remove {rel}")
             new = template(tpl, {})
-            if not (p := root / (rel := TEAM[tpl])).exists():
+            if not p.exists():
                 p.parent.mkdir(parents=True, exist_ok=True)
                 write_text(p, new)
                 done.append(f"added {rel}")
