@@ -4,6 +4,24 @@
 # km init pins a release by its commit.
 set -eu
 source "$(dirname "${BASH_SOURCE[0]}")/../../tests/lib.sh"
+# The session's sandbox has no network and the run's own empty HOME, which also holds uv's cache
+# and Python dirs. This step runs before the session, outside the sandbox but with that HOME: it
+# installs a uv-managed Python there with the PyYAML pin (pyproject.toml, the same one bin/km
+# passes to `uv run --with`), so bin/km finds the requirement met and starts km offline. Best
+# effort: without uv or network the run starts without it, and km may not start (evals/README.md).
+# It installs only below HOME: a uv Python dir set elsewhere (UV_PYTHON_INSTALL_DIR) is left alone.
+offline_km()(
+  export UV_NO_CONFIG=1
+  local pin py
+  pin="$(grep -oE 'pyyaml==[0-9.]+' "$REPO/pyproject.toml")" \
+    && command -v uv >/dev/null 2>&1 \
+    && case "$(uv python dir 2>/dev/null)/" in */../*) false ;; "$HOME"/*) ;; *) false ;; esac \
+    && uv python install 3.12 >/dev/null 2>&1 \
+    && py="$(uv python find --managed-python '>=3.11' 2>/dev/null)" \
+    && uv pip install --python "$py" --break-system-packages "$pin" >/dev/null 2>&1 \
+    || echo "eval fixture: no offline Python for km; km may not start in the sandbox" >&2
+)
+offline_km
 # brain DIR INITIALS: a personal brain in DIR, committed
 brain(){
   local remote; remote="$(mktemp -d)/km-remote"; fake_km_remote "$remote"
