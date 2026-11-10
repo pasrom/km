@@ -59,6 +59,11 @@ _repo_notices = [(n, f"{n} is ignored: km uses its own base schema (run `km upgr
 if OVERLAY.name == "schema.yaml":
     _repo_notices.append(("schema.yaml", "schema.yaml is read as the local overlay; `km upgrade` renames it to schema.local.yaml"))
 
+# A schema problem that must stop a run is collected here at import and raised by main() after the
+# arguments are parsed, so `km validate --help` answers whatever the schema holds: (what to print on
+# stdout, the sys.exit argument); the first one wins, as when each exited at import.
+_fatal: list[tuple[str, str | int]] = []
+
 FIELDS = SCHEMA["fields"]
 TYPE_RULES = SCHEMA.get("type_rules", {})
 SOFT_RULES = SCHEMA.get("type_rules_soft", {})
@@ -77,8 +82,8 @@ def _status_rules(raw) -> dict[tuple[str, str], list]:
         elif fields is not None:      # left empty (every entry commented out): no rule, as km's own keep theirs
             out[(st, kind)] = fields
     if bad:
-        sys.exit(f"schema: status_rules key(s) {', '.join(bad)} must be <status>_<requires|recommends|forbids>: "
-                 f"[fields], with a status from the schema")
+        _fatal.append(("", f"schema: status_rules key(s) {', '.join(bad)} must be <status>_<requires|recommends|forbids>: "
+                           f"[fields], with a status from the schema"))
     return out
 
 
@@ -119,25 +124,24 @@ if _gate_raw is not None:
                 _gate_cfg_errors.append(f"gate.{_k} must be a list of strings (a missing '-' makes it a string)")
         GATE_ON = bool(GATE.get("enabled"))
 if _gate_cfg_errors:
-    print("gate config error(s) in schema.local.yaml:")
-    for _e in _gate_cfg_errors:
-        print("  -", _e)
-    sys.exit(1)
+    _fatal.append(("gate config error(s) in schema.local.yaml:\n" + "".join(f"  - {_e}\n" for _e in _gate_cfg_errors), 1))
+    GATE, GATE_ON = {}, False                           # what follows reads the gate at import
 
 SERVED_STATUS = GATE.get("served_status", "accepted")
 CUSTOMER_AUDIENCE = GATE.get("customer_audience", "customer")
 EMAIL_ALLOWLIST = [d.lower() for d in (GATE.get("email_allowlist") or [])]
 _ci_raw = SCHEMA.get("check_index", False)
 if not isinstance(_ci_raw, bool):                       # fail-fast on a non-bool, matching gate.enabled
-    sys.exit(f"schema.local.yaml: check_index must be true or false, got {_ci_raw!r}")
+    _fatal.append(("", f"schema.local.yaml: check_index must be true or false, got {_ci_raw!r}"))
 CHECK_INDEX = _ci_raw
 if SCHEMA.get("approval_default", "human") not in APPROVAL_LEVELS:
-    sys.exit(f"schema.local.yaml: approval_default must be ai or human, got {SCHEMA.get('approval_default')!r}")
+    _fatal.append(("", f"schema.local.yaml: approval_default must be ai or human, got {SCHEMA.get('approval_default')!r}"))
 if _rbd_why := review_by_default_problem():
-    sys.exit(f"schema.local.yaml: {_rbd_why}")
+    _fatal.append(("", f"schema.local.yaml: {_rbd_why}"))
 _isp = SCHEMA.get("index_skip_prefixes") or []
 if not (isinstance(_isp, list) and all(isinstance(x, str) for x in _isp)):
-    sys.exit("schema.local.yaml: index_skip_prefixes must be a list of strings")
+    _fatal.append(("", "schema.local.yaml: index_skip_prefixes must be a list of strings"))
+    _isp = []
 INDEX_SKIP_PREFIXES = tuple(_isp)                       # folders left out of the index lint but still valid link targets
 
 
@@ -534,6 +538,9 @@ def main() -> int:
                                  description="Validate the brain's docs; with FILEs only those (pre-commit).")
     ap.add_argument("files", nargs="*", metavar="FILE", help="files to check (others are skipped); none: the whole repo")
     given = ap.parse_args().files
+    if _fatal:
+        print(_fatal[0][0], end="")
+        sys.exit(_fatal[0][1])
     fresh_run()
     errors.clear()
     warnings.clear()
