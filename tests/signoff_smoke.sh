@@ -13,6 +13,7 @@ doc(){ mkdir -p "$(dirname "$T/$1")"; printf -- '---\ntype: note\ntitle: t\ntime
 commit(){ git -C "$T" add -A && git -C "$T" "${G[@]}" commit -q -m "$1"; }
 S(){ out="$(km validate --root "$T" --signoff-since main 2>&1)"; rc=$?; }
 has_signoff(){ grep -A4 'x signoff' <<< "$out" | grep -qF "$1"; }
+gate(){ printf 'meta: {profile: signoff}\napproval_default: ai\ngate: {enabled: %s}\n' "$1" > "$T/schema.local.yaml"; }
 
 doc old/ai-review.md review internal
 doc old/human-review.md review customer
@@ -48,9 +49,23 @@ km approve --root "$T" "$T/new/late.md" --by ai:m >/dev/null 2>&1; commit "appro
 S; [ "$rc" = 0 ] && ok "approved with km approve in the PR, it passes" || no "km approve in the PR (rc=$rc: $out)"
 printf 'edited after the approval\n' >> "$T/new/late.md"; commit "edit late"
 S; { [ "$rc" = 1 ] && has_signoff new/late.md; } && ok "edited after that approval, it fails with the gate off" || no "stale approval, gate off (rc=$rc: $out)"
-printf 'meta: {profile: signoff}\napproval_default: ai\ngate: {enabled: true}\n' > "$T/schema.local.yaml"
+gate true
 S; { [ "$rc" = 1 ] && grep -q "approval-stale" <<< "$out" && ! has_signoff new/late.md; } && ok "with the gate on approval-stale reports it, once" || no "stale approval, gate on (rc=$rc: $out)"
-git -C "$T" checkout -q schema.local.yaml; git -C "$T" rm -q new/late.md; commit "drop late"
+git -C "$T" checkout -q schema.local.yaml
+# an approved_digest that is there but no digest km wrote (empty, a number, a boolean, null) is a
+# mismatch: blanking it next to a content change passes neither check, gate on or off
+for v in '""' 0 false ''; do
+  sed -i.bak "s/^approved_digest:.*/approved_digest: $v/" "$T/new/late.md" && rm -f "$T/new/late.md.bak"
+  git -C "$T" "${G[@]}" commit -qm "blank the digest: $v" -- new/late.md   # not the schema the last round left
+  gate true; S
+  { [ "$rc" = 1 ] && grep -q "approval-stale" <<< "$out"; } && ok "gate on: a content change with approved_digest: $v fails" || no "gate on, approved_digest: $v (rc=$rc: $out)"
+  gate false; S
+  { [ "$rc" = 1 ] && has_signoff new/late.md; } && ok "gate off: a content change with approved_digest: $v fails the sign-off" || no "gate off, approved_digest: $v (rc=$rc: $out)"
+  out="$(km validate --root "$T" 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && grep -q "approval-stale" <<< "$out"; } && ok "gate off, without --signoff-since: approved_digest: $v is approval-stale, a warning" || no "plain validate, approved_digest: $v (rc=$rc: $out)"
+done
+git -C "$T" checkout -q schema.local.yaml
+git -C "$T" rm -q new/late.md; commit "drop late"
 mkdir -p "$T/moved"; git -C "$T" mv old/moved.md moved/moved.md; commit "move"
 S; [ "$rc" = 0 ] && ok "a doc moved as it is asks for no sign-off" || no "moved doc (rc=$rc: $out)"
 
