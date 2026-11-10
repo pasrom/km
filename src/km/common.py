@@ -35,13 +35,19 @@ def _load(p: Path) -> dict | None:
 
 
 def _merge(base: dict, local: dict | None) -> dict:
+    """The overlay on km's base. A base key the overlay leaves empty (YAML null: what remains when
+    every entry under it is commented out) keeps the base value, at the top and one level down (a field).
+    In `review_by_default` an entry's null is a value (the type does not expire), so it overrides."""
     out = dict(base)
     for k, v in (local or {}).items():
         cur = out.get(k)
+        if v is None and k in out:
+            continue
         if isinstance(v, list) and isinstance(cur, list):
             out[k] = cur + v
         elif isinstance(v, dict) and isinstance(cur, dict):
-            out[k] = {**cur, **v}
+            keep_null = k == "review_by_default"
+            out[k] = {**cur, **{kk: vv for kk, vv in v.items() if vv is not None or keep_null or kk not in cur}}
         else:
             out[k] = v
     return out
@@ -51,8 +57,19 @@ def _merge(base: dict, local: dict | None) -> dict:
 # schema plus its own additions); it overlays the base the same way until `km upgrade` renames it.
 OVERLAY = ROOT / ("schema.local.yaml" if (ROOT / "schema.local.yaml").is_file() or not (ROOT / "schema.yaml").is_file()
                   else "schema.yaml")
+def _specs(schema: dict) -> dict:
+    """The merged schema with every field and type spec a mapping without empty keys: a field or type
+    the overlay declares with no spec (`ticket:`) has an empty one, and a key left empty inside a spec
+    (`enum:` with every value commented out) is absent."""
+    for section in ("fields", "type_rules", "type_rules_soft"):
+        if isinstance(specs := schema.get(section), dict):
+            schema[section] = {name: {k: v for k, v in spec.items() if v is not None} if isinstance(spec, dict)
+                               else {} if spec is None else spec for name, spec in specs.items()}
+    return schema
+
+
 BASE = _load(BASE_SCHEMA) or {}   # km's own schema, before the overlay
-SCHEMA = _merge(BASE, _load(OVERLAY))
+SCHEMA = _specs(_merge(BASE, _load(OVERLAY)))
 
 EXEMPT = set(SCHEMA.get("exempt_files") or [])
 RESERVED = set(SCHEMA.get("reserved_no_frontmatter") or [])

@@ -354,6 +354,30 @@ out="$(km approve --root "$T" "$T/vendor/x.md" --by RPA 2>&1)"; rc=$?
   && ok "approve: refuses a doc under skip_prefixes" || no "approve: refuses a doc under skip_prefixes ($rc: $out)"
 rbd(){ printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [owner, review_by]\n%b' "${1:-}" >> "$T/schema.local.yaml"; }
 rbd; rm -rf "$T/vendor"
+# an overlay key left empty (every entry under it commented out) keeps km's base value, not None
+ovl(){ printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf "$1" >> "$T/schema.local.yaml"; }
+ovl 'skip_prefixes:\n  # - vendor/\n'; doc "$T/brains/peer/p.md" review ''; cp "$T/brains/peer/p.md" "$T/peer.bak"
+out="$(km approve --root "$T" "$T/brains/peer/p.md" --by RPA 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "skip_prefixes" && cmp -s "$T/brains/peer/p.md" "$T/peer.bak"; } \
+  && ok "overlay: an empty skip_prefixes keeps brains/ skipped" || no "overlay: empty skip_prefixes ($rc: $out)"
+rm -f "$T/brains/peer/p.md" "$T/peer.bak"
+ovl 'exempt_files:\n  # - NOTES.md\n'; printf '# readme\n' > "$T/ap/README.md"
+out="$(errs "$T/ap/README.md")"; rc=$?
+[ "$rc" = 0 ] && ok "overlay: an empty exempt_files keeps README.md exempt" || no "overlay: empty exempt_files ($rc: $out)"
+rm -f "$T/ap/README.md"
+for o in 'fields:\n' 'type_rules:\n' 'fields:\n  ticket:\n' 'type_rules:\n  concept:\n' 'type_rules_soft:\n  concept:\n' \
+         'fields:\n  status:\n    enum:\n' 'type_rules:\n  concept:\n    require:\n' 'status_rules:\n  accepted_requires:\n'; do
+  ovl "$o"; out="$(errs "$T/ap/a6.md")"; rc=$?
+  [ "$rc" = 0 ] && ok "overlay: '${o//\\n/ }' validates" || no "overlay: '${o//\\n/ }' ($rc: $out)"
+done
+ovl 'status_rules:\n  acepted_requires:\n'; out="$(errs "$T/ap/a6.md")"; rc=$?
+{ [ "$rc" = 1 ] && out_has "status_rules key(s) acepted_requires"; } \
+  && ok "overlay: a mistyped status_rules key fails fast, left empty too" || no "overlay: empty mistyped status_rules key ($rc: $out)"
+ovl 'fields:\n  status:\n'; doc "$T/ap/o1.md" bogus ''
+out="$(errs "$T/ap/o1.md")"; rc=$?
+{ [ "$rc" = 1 ] && ! out_has Traceback; } && ok "overlay: a field left empty keeps its base spec" || no "overlay: empty field spec ($rc: $out)"
+rm -f "$T/ap/o1.md"
+rbd
 AUD=customer doc "$T/ap/p3.md" review ''
 km approve --root "$T" "$T/ap/p3.md" --by ai:model-x 2>&1 | grep -q "needs a human approver" \
   && ok "approve: ai: refused on a customer doc" || no "approve: ai: refused on a customer doc"
@@ -461,6 +485,10 @@ rbd 'fields:\n  type:\n    enum: [note, concept, decision, transcript, artifact,
 RB= TYPE=howto doc "$T/ap/r12.md" review ''
 km approve --root "$T" "$T/ap/r12.md" --by RPA >/dev/null 2>&1 && ! grep -q review_by "$T/ap/r12.md" && V "$T/ap/r12.md" \
   && ok "review_by_default: a brain-local type set to null does not expire" || no "review_by_default: brain-local type null"
+rbd 'review_by_default:\n  note: null\n'
+RB= TYPE=note doc "$T/ap/r12b.md" review ''
+km approve --root "$T" "$T/ap/r12b.md" --by RPA >/dev/null 2>&1 && ! grep -q review_by "$T/ap/r12b.md" && V "$T/ap/r12b.md" \
+  && ok "review_by_default: null on one of km's types overrides it: no expiry" || no "review_by_default: km type set to null"
 for bad in 'review_by_default:\n  referenc: 365\n' 'review_by_default:\n  note: 0\n' 'review_by_default:\n  note: "6 months"\n' 'review_by_default: 182\n'; do
   rbd "$bad"; out="$(errs "$T/ap/r6.md")"; rc=$?; [ "$rc" = 1 ] && out_has "review_by_default maps a type" && ok "review_by_default: fails fast on $(printf '%b' "$bad" | tr '\n' ' ')" \
     || no "review_by_default: fails fast on $bad"
