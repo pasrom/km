@@ -6,9 +6,11 @@ Each command is a module whose main() the CLI calls; it keeps its own argument h
 A brain pins a km release by commit (see km.pins) for CI (its workflows) and its pre-commit hook.
 When this km is another version, a brain command runs the commit CI runs instead (through uvx), so
 local results match CI; `KM_LOCAL=1` keeps this km. When that is not possible (no uv, offline, a
-movable tag instead of a commit, workflows that disagree) it runs this km and says so. A hook pinned
-apart from CI gets a note. `init`, `upgrade`, `doctor`, `list` and `sync` (NO_PIN_CHECK) always run
-this km: they write the pins, check the km that runs, only read, or act on the clone.
+movable tag instead of a commit, workflows that disagree) it runs this km and says so. A command,
+option or positional argument the pinned km lacks (SINCE, OPTION_SINCE, ARGS_SINCE) stops with a
+call to `km upgrade` instead. A hook pinned apart from CI gets a note. `init`, `upgrade`, `doctor`,
+`list` and `sync` (NO_PIN_CHECK) always run this km: they write the pins, check the km that runs,
+only read, or act on the clone.
 """
 from __future__ import annotations
 
@@ -44,6 +46,7 @@ COMMANDS = {
 NO_PIN_CHECK = {"init", "upgrade", "doctor", "list", "sync"}
 SINCE = {"repin": "v1.4.0", "cite": "v1.8.0", "cites": "v1.8.0"}   # commands an older pinned km does not have
 OPTION_SINCE = {("repin", "--cites"): "v1.8.0"}                     # options it does not have
+ARGS_SINCE = {"demote": "v1.11.0"}                                  # positional args it ignores (no option there takes a value)
 RUNNER = os.environ.get("KM_PINNED_RUNNER", "uvx")
 
 
@@ -59,6 +62,12 @@ def take_root(args: list[str]) -> tuple[str | None, list[str]]:
     ap.add_argument("--root")
     ns, rest = ap.parse_known_args(args)
     return ns.root, rest
+
+
+def positional(args: list[str]) -> list[str]:
+    """The positional arguments of a command none of whose options takes a value: after `--`, all."""
+    end = args.index("--") if "--" in args else len(args)
+    return [a for a in args[:end] if a == "-" or not a.startswith("-")] + args[end + 1:]
 
 
 def _label(pins) -> str:
@@ -84,7 +93,8 @@ def run_pinned(root: Path, cmd: str, rest: list[str]) -> int | None:
            f"{RUNNER} is not installed" if not shutil.which(RUNNER) else None)
     source = ["--from", f"git+{repo_url()}@{pin.ref}", "km"]
     need = max([v for (c, opt), v in OPTION_SINCE.items() if c == cmd and opt in rest]   # exact: no allow_abbrev
-               + ([SINCE[cmd]] if cmd in SINCE else []), key=version_key, default=None)
+               + ([SINCE[cmd]] if cmd in SINCE else [])
+               + ([ARGS_SINCE[cmd]] if cmd in ARGS_SINCE and positional(rest) else []), key=version_key, default=None)
     if not why and need and (have := version_key(pin.version)) and have < version_key(need):
         print(f"km: `km {cmd}` needs km {need}, the brain pins {_label(chosen)}; run `km upgrade` "
               f"first (KM_LOCAL=1 runs this km instead).", file=sys.stderr)

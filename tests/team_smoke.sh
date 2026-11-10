@@ -336,6 +336,15 @@ rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$
 rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$O" --cites any.md --dir . 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.8.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
   && ok "an option the pinned km lacks says to upgrade" || no "option newer than the pin ($rc: $out)"
+rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km demote --root "$O" some.md 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.11.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
+  && ok "a positional argument the pinned km ignores says to upgrade" || no "demote DOC newer than the pin ($rc: $out)"
+rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km demote --root "$O" --apply -- --odd.md 2>&1)"; rc=$?
+[ "$rc" = 2 ] && [ ! -e "$F/runner-args" ] && ok "...also a doc after --" || no "demote -- DOC newer than the pin ($rc: $out)"
+for a in "" --apply; do
+  rm -f "$F/runner-args"; KM_PINNED_RUNNER="$F/fake-uvx" km demote --root "$O" $a >/dev/null 2>&1
+  grep -qx -- ".* km demote${a:+ $a}" "$F/runner-args" 2>/dev/null && ok "km demote $a without docs still runs the pinned km" || no "km demote $a forwarded ($(cat "$F/runner-args" 2>/dev/null))"
+done
 for c in init upgrade doctor list sync; do   # NO_PIN_CHECK in cli.py: they run the km that was started
   rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km "$c" --root "$O" --help 2>&1)"; rc=$?
   { [ "$rc" = 0 ] && [ ! -e "$F/runner-args" ] && ! echo "$out" | grep -q "running that one"; } \
