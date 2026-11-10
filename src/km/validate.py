@@ -46,7 +46,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, folder_of, fresh_run, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, folder_of, fresh_run, md_named, pin_state, tracked_md
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.pins import movable_refs
 from km.common import BASE, review_by_days, review_by_default_problem, review_due
@@ -331,15 +331,13 @@ def resolve_path(rel: str, target: str) -> str | None:
 
 
 def resolve_slug(nm: str) -> str | None:
+    """A bare [[slug]]: the first, in sorted order and outside skip_prefixes, of the files named
+    `slug.md` that km.common.md_named finds (exact name, no glob; a gitignored draft is none).
+    Links written as paths (resolve_path, doc_status) read the disk, gitignored files included."""
     nm = nm.strip()
     if not nm or "/" in nm or nm.endswith(".md"):
         return None
-    hits = sorted(
-        str(p.relative_to(ROOT))
-        for p in ROOT.rglob(f"{nm}.md")
-        if ".git" not in p.parts and not str(p.relative_to(ROOT)).startswith(SKIP_PREFIXES)
-    )
-    return hits[0] if hits else None
+    return next((p for p in md_named(f"{nm}.md") if not p.startswith(SKIP_PREFIXES)), None)
 
 
 def _norm(s: str) -> str:
@@ -439,7 +437,9 @@ def check_index_tree() -> None:
     FULL git-TRACKED file set (not disk), so results are clone-stable and case-exact and a link
     into a skip_prefixes folder is not dead; a relative target resolves document-relative first
     then repo-root, an absolute /path at the root only; angle brackets, a quoted title and a
-    #fragment are stripped and %-escapes decoded first. Each `_index.md` covers its own folder: its
+    #fragment are stripped and %-escapes decoded first. A bare [[slug]] that is no tracked path
+    falls back to the gate's lookup by name (resolve_slug); a doc of the index's own folder is always found as a path first, so that never
+    changes what an index is credited with. Each `_index.md` covers its own folder: its
     docs plus the `_index.md` of each direct subfolder, so every folder is reachable from the one
     above it. The root `_index.md` is optional; where it exists it must link the top-level folders
     that have an index. `skip_prefixes`
@@ -469,7 +469,7 @@ def check_index_tree() -> None:
         for cand in cands:
             if cand and cand in tracked:
                 return cand, t
-        if not t.endswith(".md") and "/" not in t:                   # bare [[slug]]: repo-wide unique
+        if not t.endswith(".md") and "/" not in t:                   # bare [[slug]]: by name, as the gate resolves it
             return resolve_slug(t), t
         return None, (t if t.endswith(".md") else "")                # unresolved slug/wiki: not a *.md dead link
 

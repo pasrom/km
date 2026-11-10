@@ -10,6 +10,7 @@ import datetime
 import functools
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -266,7 +267,7 @@ def _drop_objects() -> None:
 def fresh_run() -> None:
     """Forget what an earlier run in this process looked up: the file list, the index, the pins."""
     _drop_objects()
-    for cached in (_ls_md, unstaged, staged_blob, pinned_blob, _body):
+    for cached in (_ls_md, _md_index, md_named, unstaged, staged_blob, pinned_blob, _body):
         cached.cache_clear()
 
 
@@ -444,17 +445,60 @@ def read(rel: str) -> str:
 
 
 @functools.cache
-def _ls_md() -> tuple[str, ...]:
-    res = git("ls-files", "-z", "*.md", cwd=ROOT)
+def _ls_md(others: bool = False) -> tuple[tuple[str, ...] | None, str]:
+    """git's list of .md files, once per run (a path once, though a conflict lists it per stage), and
+    git's error text; None for the list where git cannot list them."""
+    res = git("ls-files", "-z", *(("--cached", "--others", "--exclude-standard") if others else ()), "--", "*.md", cwd=ROOT)
     if res.returncode != 0:
-        sys.exit(f"git ls-files failed (not a git repo?): {res.stderr.strip()}")
-    return tuple(p for p in res.stdout.split("\x00") if p)
+        return None, res.stderr.strip()
+    return tuple(dict.fromkeys(p for p in res.stdout.split("\x00") if p)), ""
+
+
+def git_md(others: bool = False) -> list[str] | None:
+    """The .md files git lists in the brain, relative to it, once per run: the tracked ones (also
+    those deleted but not yet staged), with others=True also the untracked ones .gitignore does not
+    exclude. None where git cannot list them (not a git work tree, no git); unlike tracked_md this
+    never exits."""
+    files = _ls_md(others)[0]
+    return None if files is None else list(files)
 
 
 def tracked_md(existing: bool = True) -> list[str]:
     """The tracked .md files, listed by git once per run; with existing=False also those deleted but
-    not yet staged."""
-    return [p for p in _ls_md() if not existing or (ROOT / p).is_file()]
+    not yet staged. Outside a git work tree the run stops with git's error."""
+    files, error = _ls_md(False)
+    if files is None:
+        sys.exit(f"git ls-files failed (not a git repo?): {error}")
+    return [p for p in files if not existing or (ROOT / p).is_file()]
+
+
+@functools.cache
+def _md_index() -> dict[str, tuple[str, ...]]:
+    """The .md files by file name, existing or not (md_named checks its hits on disk)."""
+    if (listed := _ls_md(True)[0]) is not None:
+        paths = list(listed)
+    else:                                      # not a git work tree: the disk, .git left out
+        paths = []
+        for top, dirs, files in os.walk(ROOT):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            base = Path(top).relative_to(ROOT).as_posix()
+            paths += [f if base == "." else f"{base}/{f}" for f in files if f.endswith(".md")]
+    index: dict[str, list[str]] = {}
+    for p in sorted(paths):
+        index.setdefault(p.rsplit("/", 1)[-1], []).append(p)
+    return {name: tuple(ps) for name, ps in index.items()}
+
+
+@functools.cache
+def md_named(name: str) -> tuple[str, ...]:
+    """The brain-relative paths, sorted, of the .md files a link to the file name `name` (`x.md`) could
+    mean: the files on disk that git tracks or would track, so a draft not yet `git add`ed counts (km
+    gates a doc before it is staged) and a gitignored file (a scratch draft) does not; a tracked file
+    deleted on disk does not either. In a brain that is not a git work tree: every .md on disk outside
+    .git. Mounted brains are repositories of their own, git lists none of their files. The name is
+    matched exactly, as text (`*`, `?`, `[` are no pattern) and case-exact, which is what a clone on
+    a case-sensitive file system sees. Listed, and each name checked on disk, once per run."""
+    return tuple(p for p in _md_index().get(name, ()) if (ROOT / p).is_file())
 
 
 def is_article(rel: str) -> bool:
