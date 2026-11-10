@@ -81,6 +81,10 @@ L c/merged.md c/own.md --fields path,title,description --json
 kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"path": "c/merged.md", "title": "3.30", "description": "2.50"},
  {"path": "c/own.md", "title": "1.10", "description": "4.40"}])' <<< "$out" \
   && ok "a title or description from a merge key is listed as written, with YAML's precedence" || no "merged title ($out)"
+printf -- '---\ntitle: k\nvalid_for: {1: a, "1": b}\n---\nbody\n' > "$T/c/keys.md"; git -C "$T" add c/keys.md
+L c/keys.md --fields valid_for --json
+kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"valid_for": {"!int 1": "a", "!str 1": "b"}}])' <<< "$out" \
+  && ok "two keys that read as the same text are both listed" || no "colliding keys ($out)"
 printf -- '---\n{}\n---\nbody\n' > "$T/e/empty.md"; git -C "$T" add e/empty.md
 out="$(cd "$T" && km list e 2>&1)"; ! grep -q "e/empty.md" <<< "$out" && grep -q "1 doc(s) whose" <<< "$out" && ok "empty frontmatter is not called unparseable" || no "empty fm ($out)"
 out="$(cd "$T" && km list --all e 2>&1)"; grep -q "listed without fields" <<< "$out" && ok "with --all an unparseable doc is listed, and said so" || no "all broken ($out)"

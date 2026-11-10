@@ -6,6 +6,7 @@ configuration than the validator checks; a broken schema file stops the run.
 from __future__ import annotations
 
 import atexit
+import collections
 import datetime
 import functools
 import hashlib
@@ -242,12 +243,58 @@ DIGEST_FIELDS = ("type", "title", "description", "resource", "audience", "claim_
                  "evidence", "participants", "language", "license")
 
 
+def _collides(v) -> bool:
+    """Whether a YAML value holds, at any depth, a mapping with two keys that read as the same text."""
+    if isinstance(v, dict):
+        return len({str(k) for k in v}) < len(v) or any(map(_collides, v.values()))
+    return any(map(_collides, v)) if isinstance(v, list) else False
+
+
 def plain(v):
     """A YAML value with every mapping key as a string, so keys of mixed types (a year next to a
-    word, a date) sort; json.dumps(sort_keys=True) refuses them otherwise."""
+    word, a date) sort; json.dumps(sort_keys=True) refuses them otherwise. In a mapping with two keys
+    that read as the same text (`1` and `"1"`, a date and its ISO string) every key gets its type in
+    front (`!int 1`, `!str 1`), so both values stay; a mapping without such a pair comes out exactly
+    as before. For display (km serve, km list --json): approved_digest does not rely on it for such
+    a mapping (_typed)."""
     if isinstance(v, dict):
+        if len({str(k) for k in v}) < len(v):
+            return {f"!{type(k).__name__} {k}": plain(x) for k, x in v.items()}
         return {str(k): plain(x) for k, x in v.items()}
     return [plain(x) for x in v] if isinstance(v, list) else v
+
+
+def _typed(v):
+    """A YAML value with the type of every key and scalar spelled out: what approved_digest hashes for
+    content that holds two keys reading as the same text. Two values that differ never come out alike
+    (a type and its text name a key or scalar; the same type and text are the same value)."""
+    if isinstance(v, dict):
+        return {"map": sorted(([type(k).__name__, str(k), _typed(x)] for k, x in v.items()), key=lambda e: e[:2])}
+    if isinstance(v, list):
+        return {"list": [_typed(x) for x in v]}
+    return [type(v).__name__, str(v)]
+
+
+def _key(k) -> str:
+    """A mapping key as km names it in a message: a string quoted, anything else with its type."""
+    return json.dumps(k, ensure_ascii=False) if isinstance(k, str) else f"{k} ({type(k).__name__})"
+
+
+def colliding_keys(v, where: str = "") -> list[str]:
+    """Where a YAML value holds a mapping with two keys that read as the same text, recursively: what
+    plain() has to tell apart, and a reader (or a tool) easily takes for one key."""
+    found = []
+    if isinstance(v, dict):
+        by_text = collections.defaultdict(list)
+        for k in v:
+            by_text[str(k)].append(k)
+        found += [f"{where or 'the frontmatter'}: {' and '.join(map(_key, ks))}" for ks in by_text.values() if len(ks) > 1]
+        for k, x in v.items():
+            found += colliding_keys(x, f"{where}.{k}" if where else str(k))
+    elif isinstance(v, list):
+        for i, x in enumerate(v):
+            found += colliding_keys(x, f"{where}[{i}]")
+    return found
 
 
 def unquoted_scalars(fm: dict) -> list[str]:
@@ -264,9 +311,14 @@ def unquoted_scalars(fm: dict) -> list[str]:
 def approved_digest(fm: dict, body: str) -> str:
     """The digest of a doc's approved content (see DIGEST_FIELDS): sha256 prefix of its content
     fields, as YAML read them, and its body, line endings (CRLF or a lone CR, which Python's universal
-    newlines turn into LF on a read) and surrounding blank space aside."""
-    fields = {k: plain(fm[k]) for k in DIGEST_FIELDS if k in fm}
-    text = json.dumps(fields, sort_keys=True, ensure_ascii=False, default=str) + "\n" + body.replace("\r\n", "\n").replace("\r", "\n").strip()
+    newlines turn into LF on a read) and surrounding blank space aside. Content with two keys that read
+    as the same text is hashed with every type spelled out (_typed), so no value or key type is lost."""
+    fields = {k: fm[k] for k in DIGEST_FIELDS if k in fm}
+    if _collides(fields):        # typed: a text that starts with "k", never with the "{" of the plain one
+        head = "km-digest-typed\n" + json.dumps(_typed(fields), ensure_ascii=False)
+    else:                        # as km always computed it: every recorded approval depends on it
+        head = json.dumps({k: plain(v) for k, v in fields.items()}, sort_keys=True, ensure_ascii=False, default=str)
+    text = head + "\n" + body.replace("\r\n", "\n").replace("\r", "\n").strip()
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
