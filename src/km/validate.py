@@ -60,6 +60,7 @@ from km.paths import git
 from km.pins import movable_refs
 from km.common import BASE, PROBLEMS, review_by_days, review_by_default_problem, review_due
 from km.common import RESERVED as RESERVED_NF
+from km.common import INDEX_SKIP as INDEX_SKIP_PREFIXES   # folders left out of the index lint but still valid link targets
 from km.common import SKIP as SKIP_PREFIXES
 
 _repo_notices = [(n, f"{n} is ignored: km uses its own base schema (run `km upgrade`)")
@@ -82,6 +83,9 @@ def _status_rules(raw) -> dict[tuple[str, str], list]:
     known = set((FIELDS.get("status") or {}).get("enum") or [])
     own = set(BASE.get("status_rules") or {})
     out, bad = {}, []
+    if not isinstance(raw, dict | None):
+        _fatal.append(("", f"schema: status_rules must map <status>_<requires|recommends|forbids> to [fields], got {raw!r}"))
+        return out
     for key, fields in (raw or {}).items():
         st, _, kind = str(key).rpartition("_")
         if (not st or (known and key not in own and st not in known)
@@ -148,11 +152,6 @@ if _rbd_why := review_by_default_problem():
     _fatal.append(("", f"schema.local.yaml: {_rbd_why}"))
 _fatal.extend(("", _p) for _p in PROBLEMS)          # km.common's, raised here after the arguments, not by km.cli
 PROBLEMS.clear()
-_isp = SCHEMA.get("index_skip_prefixes") or []
-if not (isinstance(_isp, list) and all(isinstance(x, str) for x in _isp)):
-    _fatal.append(("", "schema.local.yaml: index_skip_prefixes must be a list of strings"))
-    _isp = []
-INDEX_SKIP_PREFIXES = tuple(_isp)                       # folders left out of the index lint but still valid link targets
 
 
 def _load_terms() -> list[str]:
