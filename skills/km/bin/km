@@ -9,13 +9,25 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"   # -P: follow a symlink
 src="$here/../../../src"
 export PYTHONPATH="$src${PYTHONPATH:+:$PYTHONPATH}"
 # uv, also where its installer puts it before an app restart has put that folder on the PATH
-uv="$(command -v uv || true)"
+uv="$(command -v uv || true)"; uv_failed=""
 for u in "$HOME/.local/bin/uv" "$HOME/.local/bin/uv.exe"; do [ -n "$uv" ] || { [ -x "$u" ] && uv="$u"; }; done
 if [ -n "$uv" ]; then
-  exec "$uv" run --quiet --no-config --no-project --python '>=3.11' --with pyyaml==6.0.3 python -P -m km "$@"
+  # km deletes $KM_PENDING_FILE first thing (src/km/__main__.py), and runs nothing if it cannot: if
+  # the file is still there, km never started (mostly uv could not set up Python and PyYAML: offline,
+  # nothing cached), so the Pythons below get their turn. Once km started, its exit code and output
+  # are the launcher's, and nothing runs it again.
+  run=("$uv" run --quiet --no-config --no-project --python '>=3.11' --with pyyaml==6.0.3 python -P -m km "$@")
+  pending="$(mktemp 2>/dev/null)" || exec "${run[@]}"   # no mktemp: run as before, without the fallback
+  rc=0; KM_PENDING_FILE="$pending" "${run[@]}" || rc=$?
+  [ -e "$pending" ] || exit "$rc"   # gone: km ran (a builtin test, no rm process on this path)
+  rm -f "$pending"
+  # a uv that exits 0 without km (a stand-in in the tests), or one interrupted: nothing to retry
+  { [ "$rc" = 0 ] || [ "$rc" -gt 128 ]; } && exit "$rc"
+  uv_failed=1
 fi
-# Without uv: a Python 3.11+ under any of its usual names (on Windows `python3` is often only the
-# Store's placeholder). `km doctor` and `km sync` need no PyYAML, so doctor can say what is missing.
+# Without uv, or where uv could not set km up: a Python 3.11+ under any of its usual names (on
+# Windows `python3` is often only the Store's placeholder), with any PyYAML version, not only uv's
+# pin. `km doctor` and `km sync` need no PyYAML, so doctor can say what is missing.
 cmd=""; skip=""
 for a in "$@"; do
   if [ -n "$skip" ]; then skip=""; elif [ "$a" = --root ]; then skip=1; elif [ "${a#--root=}" = "$a" ]; then cmd="$a"; break; fi
@@ -25,8 +37,16 @@ case "$cmd" in doctor|sync) ;; *) need="import yaml; $need" ;; esac
 # The probe runs with -P too, or its `import yaml` would run a yaml.py from the working directory;
 # a Python older than 3.11 rejects -P, which skips it like a failed check.
 for py in python3 python "py -3"; do
-  if $py -P -c "$need" >/dev/null 2>&1; then exec $py -P -m km "$@"; fi
+  if $py -P -c "$need" >/dev/null 2>&1; then
+    [ -z "$uv_failed" ] || echo "km: km did not start under uv (above), so $py runs it" >&2
+    exec $py -P -m km "$@"
+  fi
 done
+if [ -n "$uv_failed" ]; then
+  printf '%s\n' >&2 \
+    "km cannot start: it did not start under uv (the error above; without network uv needs PyYAML" \
+    "in its cache), and no Python 3.11+ with PyYAML is installed here (python3, python, py -3)."
+else
 # Nothing to run km with: say so in words someone who never used a terminal can act on.
 printf '%s\n' >&2 \
   "km cannot start on this computer: it needs uv (or Python 3.11+ with PyYAML). Install uv, no" \
@@ -34,5 +54,6 @@ printf '%s\n' >&2 \
   '  Windows (PowerShell):  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"' \
   "  macOS and Linux:       curl -LsSf https://astral.sh/uv/install.sh | sh" \
   "then run the km command again. More: https://docs.astral.sh/uv/getting-started/installation/"
+fi
 command -v git >/dev/null 2>&1 || echo "git is missing as well: https://git-scm.com/downloads" >&2
 exit 1
