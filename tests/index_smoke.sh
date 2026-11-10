@@ -117,4 +117,20 @@ printf 'meta: {profile: idx}\nskip_prefixes: [vendor/]\ncheck_index: true\nindex
 out="$(cd "$T" && km validate 2>&1)"
 has "orphan/" && no "index_skip_prefixes folder is not linted" || ok "index_skip_prefixes folder is not linted"
 
+# gen-index: a title or description YAML reads as a number, a date or a block scalar is listed as text
+GI="$T/gi"; mkdir -p "$GI/f"; printf 'meta: {profile: idx}\n' > "$GI/schema.local.yaml"
+idx "$GI/f/_index.md" '## Documents'
+printf -- '---\ntype: note\ntitle: 2024\ndescription: 1.5\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/y.md"
+printf -- '---\ntype: note\ntitle: 2026-11-10\ndescription: >\n  two\n  lines\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/z.md"
+printf -- '---\ntype: note\ntitle: >\n  long\n  title\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/w.md"
+printf -- '---\ntype: note\ntitle: 0\ndescription: 0\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/v.md"
+( cd "$GI" && git init -q && git add -A )
+out="$(cd "$GI" && km gen-index 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && grep -qx -- '- \[2024\](y.md): 1.5' "$GI/f/_index.md" && grep -qx -- '- \[0\](v.md): 0' "$GI/f/_index.md" \
+  && grep -qx -- '- \[2026-11-10\](z.md): two lines' "$GI/f/_index.md" && grep -qx -- '- \[long title\](w.md)' "$GI/f/_index.md"; } \
+  && ok "gen-index: a number or date title, a block-scalar title or description" || no "gen-index: non-string title ($rc: $out; $(cat "$GI/f/_index.md"))"
+out="$(cd "$GI" && git add -A && km gen-index --check 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "gen-index --check: a number or date title" || no "gen-index --check: non-string title ($rc: $out)"
+rm -rf "$GI"
+
 summary index-smoke || exit 1
