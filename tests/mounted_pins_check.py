@@ -238,7 +238,7 @@ def api_errors() -> None:
         try:
             REAL_API("repos/o/r", "t")
             got = "no error"
-        except bump.ApiError as e:
+        except bump.ApiError:
             got = "ApiError"
         except Exception as e:                                     # noqa: BLE001
             got = type(e).__name__

@@ -46,7 +46,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, fresh_run, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, folder_of, fresh_run, pin_state, tracked_md
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.pins import movable_refs
 from km.common import BASE, review_by_days, review_by_default_problem, review_due
@@ -473,14 +473,11 @@ def check_index_tree() -> None:
             return resolve_slug(t), t
         return None, (t if t.endswith(".md") else "")                # unresolved slug/wiki: not a *.md dead link
 
-    def _folder(p: str) -> str:
-        return p.rsplit("/", 1)[0] if "/" in p else "."
-
     by_folder: dict[str, list[str]] = defaultdict(list)
     for p in walk:
-        by_folder[_folder(p)].append(p)
+        by_folder[folder_of(p)].append(p)
         if p.endswith("/_index.md"):                                # a subfolder is reached through its index
-            parent = _folder(_folder(p))
+            parent = folder_of(folder_of(p))
             if parent != "." or "_index.md" in walk:                 # the root map is optional
                 by_folder[parent].append(p)
     for folder, members in sorted(by_folder.items()):
