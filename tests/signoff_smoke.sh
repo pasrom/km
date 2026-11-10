@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Smoke test for `km validate --signoff-since`: every doc a branch changes must be signed off at its
+# level before the merge, a ripple edit asks for no new sign-off, and the team CI runs it on a PR.
+# Run:  bash tests/signoff_smoke.sh
+set -u
+source "$(dirname "$0")/lib.sh"
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+git init -q -b main "$T"
+printf 'meta: {profile: signoff}\napproval_default: ai\n' > "$T/schema.local.yaml"
+# doc PATH STATUS AUDIENCE [EXTRA-FRONTMATTER] [BODY]
+doc(){ mkdir -p "$(dirname "$T/$1")"; printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-01-15\nauthor: TT\nowner: TT\nstatus: %s\naudience: %s\ntags: [t]\n%b---\n%s\n' "$2" "$3" "${4:-}" "${5:-body}" > "$T/$1"; }
+commit(){ git -C "$T" add -A && git -C "$T" "${G[@]}" commit -q -m "$1"; }
+S(){ out="$(km validate --root "$T" --signoff-since main 2>&1)"; rc=$?; }
+has_signoff(){ grep -A4 'x signoff' <<< "$out" | grep -qF "$1"; }
+
+doc old/ai-review.md review internal
+doc old/human-review.md review customer
+doc old/served.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n'
+doc old/legacy.md accepted internal 'review_by: 2099-01-01\n'   # served before km recorded approvers
+doc old/moved.md review internal "" "$(seq 50 90 | tr "\n" " ") moved as it is"
+doc old/gone.md review internal "" "$(seq 1 40 | tr "\n" " ") a body no other doc shares, so git sees no rename"
+commit base
+git -C "$T" switch -q -c topic
+
+printf 'x\n' > "$T/notes.txt"; commit "no doc"
+S; [ "$rc" = 0 ] && ok "a branch that changes no doc passes" || no "no doc changed (rc=$rc: $out)"
+
+doc new/ai.md review internal; commit "ai review doc"
+S; { [ "$rc" = 1 ] && has_signoff new/ai.md; } && ok "a changed doc an AI may sign off fails while in review" || no "ai level in review (rc=$rc: $out)"
+doc new/ai.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-16\n'; commit "approve"
+S; [ "$rc" = 0 ] && ok "signed off, it passes" || no "ai level accepted (rc=$rc: $out)"
+
+doc new/hand.md accepted customer 'review_by: 2099-01-01\n'; commit "accepted by hand"
+S; { [ "$rc" = 1 ] && has_signoff new/hand.md; } && ok "an accepted doc nobody signed off fails" || no "hand-set accepted (rc=$rc: $out)"
+git -C "$T" rm -q new/hand.md; commit "drop hand"
+doc old/served.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n' "changed after the sign-off"; commit "edit served"
+S; { [ "$rc" = 1 ] && has_signoff old/served.md; } && ok "a served doc changed since its sign-off fails, gate off too" || no "served content change (rc=$rc: $out)"
+doc old/served.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-20\n' "changed after the sign-off"; commit "re-approve"
+S; [ "$rc" = 0 ] && ok "signed off again, it passes" || no "served re-approved (rc=$rc: $out)"
+doc old/legacy.md accepted internal 'review_by: 2099-01-01\nrelated: [old/served.md]\n'; commit "ripple legacy"
+S; [ "$rc" = 0 ] && ok "a ripple edit to a served doc with no approved_by asks for nothing" || no "legacy ripple (rc=$rc: $out)"
+doc old/legacy.md accepted internal 'review_by: 2099-01-01\nrelated: [old/served.md]\n' "new legacy body"; commit "edit legacy"
+S; { [ "$rc" = 1 ] && has_signoff old/legacy.md; } && ok "a content change to it does" || no "legacy content change (rc=$rc: $out)"
+git -C "$T" "${G[@]}" revert --no-edit HEAD >/dev/null
+doc new/late.md review internal; commit "late doc"
+km approve --root "$T" "$T/new/late.md" --by ai:m >/dev/null 2>&1; commit "approve late"
+S; [ "$rc" = 0 ] && ok "approved with km approve in the PR, it passes" || no "km approve in the PR (rc=$rc: $out)"
+printf 'edited after the approval\n' >> "$T/new/late.md"; commit "edit late"
+S; { [ "$rc" = 1 ] && has_signoff new/late.md; } && ok "edited after that approval, it fails with the gate off" || no "stale approval, gate off (rc=$rc: $out)"
+printf 'meta: {profile: signoff}\napproval_default: ai\ngate: {enabled: true}\n' > "$T/schema.local.yaml"
+S; { [ "$rc" = 1 ] && grep -q "approval-stale" <<< "$out" && ! has_signoff new/late.md; } && ok "with the gate on approval-stale reports it, once" || no "stale approval, gate on (rc=$rc: $out)"
+git -C "$T" checkout -q schema.local.yaml; git -C "$T" rm -q new/late.md; commit "drop late"
+mkdir -p "$T/moved"; git -C "$T" mv old/moved.md moved/moved.md; commit "move"
+S; [ "$rc" = 0 ] && ok "a doc moved as it is asks for no sign-off" || no "moved doc (rc=$rc: $out)"
+
+doc new/human.md review customer; commit "human review doc"
+S; { [ "$rc" = 1 ] && has_signoff new/human.md; } && ok "a doc a person signs off fails in review without a recorded review" || no "human level, no reviewed_by (rc=$rc: $out)"
+doc new/human.md review customer 'reviewed_by: ["ai:m 2026-01-16"]\n'; commit "pre-review"
+S; [ "$rc" = 0 ] && ok "with reviewed_by it may wait for the person's sign-off" || no "human level, reviewed_by (rc=$rc: $out)"
+
+doc new/draft.md draft customer 'reviewed_by: ["ai:m 2026-01-16"]\n'; commit "draft"
+S; { [ "$rc" = 1 ] && has_signoff new/draft.md && grep -q "set .status: review." <<< "$out"; } && ok "a draft fails at any level, told to go to review first" || no "draft (rc=$rc: $out)"
+doc new/draft.md obsolete customer; commit "retire"
+S; [ "$rc" = 0 ] && ok "a retired doc passes" || no "obsolete (rc=$rc: $out)"
+
+doc old/ai-review.md review internal 'related: [old/human-review.md]\n'; git -C "$T" rm -q old/gone.md; commit "ripple + delete"
+S; [ "$rc" = 0 ] && ok "a ripple edit (related:) and a deleted doc ask for no sign-off" || no "ripple/delete (rc=$rc: $out)"
+doc old/ai-review.md review internal 'related: [old/human-review.md]\n' "new body"; commit "content"
+S; { [ "$rc" = 1 ] && has_signoff old/ai-review.md; } && ok "a content change to an old review doc does" || no "content change (rc=$rc: $out)"
+git -C "$T" "${G[@]}" revert --no-edit HEAD >/dev/null
+
+doc "new/übersicht.md" review internal; commit "umlaut"
+# km prints the name in the console's encoding (cp1252 on Windows): match the ASCII part
+S; { [ "$rc" = 1 ] && has_signoff "new/" && has_signoff "bersicht.md"; } && ok "a non-ASCII file name is seen" || no "umlaut path (rc=$rc: $out)"
+git -C "$T" rm -q "new/übersicht.md"; commit "drop umlaut"
+
+out="$(km validate --root "$T" --signoff-since no-such-ref 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && grep -q "no merge base" <<< "$out"; } && ok "an unknown base stops with exit 2" || no "unknown base (rc=$rc: $out)"
+out="$(km validate --root "$T" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "without the option a review doc is fine" || no "plain validate (rc=$rc: $out)"
+
+# the team CI passes the option on a pull request only
+step="$(kmpy -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print(next(s["run"] for s in d["jobs"]["validate"]["steps"] if "km validate" in s.get("run", "")))' "$REPO/src/km/templates/team/ci.yml")"
+args(){ BASE="$1" bash -c "set -- ${step#km validate }; echo \"\$*\""; }
+{ [ "$(args main)" = "--signoff-since origin/main" ] && [ -z "$(args '')" ]; } && ok "ci.yml adds --signoff-since on a pull request only" || no "ci.yml step ($step)"
+
+summary signoff_smoke

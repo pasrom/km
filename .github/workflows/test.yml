@@ -31,6 +31,7 @@ jobs:
       - name: sync_smoke.sh without uv (the launcher's own fallback)
         run: KM_TEST_UV=forbid bash tests/sync_smoke.sh
       - run: bash tests/list_smoke.sh
+      - run: bash tests/signoff_smoke.sh
       - run: bash tests/skill_smoke.sh
       - run: bash tests/hook_smoke.sh
       - run: bash tests/mounted_pins_smoke.sh
@@ -113,7 +114,7 @@ jobs:
       - name: km doctor, km sync and the plugin's edit guard on Windows, without uv (the launcher's own fallback)
         env:
           PYTHON: python
-        run: bash tests/doctor_smoke.sh && KM_TEST_UV=forbid bash tests/sync_smoke.sh && bash tests/hook_smoke.sh
+        run: bash tests/doctor_smoke.sh && KM_TEST_UV=forbid bash tests/sync_smoke.sh && bash tests/hook_smoke.sh && bash tests/signoff_smoke.sh
       # then the same uv as in smoke, for sync_smoke's launcher cases
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:

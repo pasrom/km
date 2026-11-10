@@ -7,7 +7,14 @@ optional `schema.local.yaml` overlay (skip_prefixes / exempt_files / repo-only f
 
 Two modes: whole repo (git ls-files, TRACKED .md only) or per-file args (pre-commit).
 Exit code 0 if no errors, 1 otherwise. Warnings never fail the build.
-Run:  km validate [--root DIR] [FILE ...]
+Run:  km validate [--root DIR] [--signoff-since BASE] [FILE ...]
+
+--signoff-since BASE (a pull request's check): every doc the branch adds or changes since its merge
+base with BASE must be signed off before the merge (with FILEs, those of them). Retired passes, and
+served with an approval that covers its content (a moved doc counts as itself); a doc a person must
+sign off may stay in review once an AI pre-review is recorded (`reviewed_by`); anything else is a
+`signoff` error. A doc whose status and approved content (the digest fields and body) match the
+merge base is skipped, so a ripple edit to `related:` or `tags:` never asks for a new sign-off.
 
 A served doc whose content changed since its approval (`approved_digest`, see km.common.DIGEST_FIELDS)
 is `approval-stale`: an ERROR with the gate on (a team brain), a WARNING without it.
@@ -47,8 +54,9 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, folder_of, fresh_run, md_named, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, folder_of, fresh_run, md_named, pin_state, tracked_md
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
+from km.paths import git
 from km.pins import movable_refs
 from km.common import BASE, review_by_days, review_by_default_problem, review_due
 from km.common import RESERVED as RESERVED_NF
@@ -520,6 +528,53 @@ def _term_errors(rel: str, scan: str) -> list[tuple[str, str, str]]:
     return [("gate-leak:term", rel, f"forbidden term {_redact(t)}") for t, n in TERM_NEEDLES if n in scan]
 
 
+def changed_since(base: str) -> tuple[str, dict[str, str | None]] | None:
+    """(merge base, {doc the branch adds or changes: its path at the merge base, None for a new one})
+    for the merge base with `base`; a moved doc keeps its old path. None when git cannot name it."""
+    found = git("merge-base", base, "HEAD", cwd=ROOT)
+    if found.returncode:
+        return None
+    mb = found.stdout.strip()
+    diff = git("diff", "-z", "--name-status", "-M", "--diff-filter=d", "--relative", mb, "HEAD", "--", "*.md", cwd=ROOT)
+    if diff.returncode:
+        return None
+    out, parts = {}, diff.stdout.split("\0")
+    while len(parts) > 1:
+        status, parts = parts[0], parts[1:]
+        if status[:1] in "RC":                      # rename or copy: old path, then new path
+            out[parts[1]], parts = parts[0], parts[2:]
+        else:
+            out[parts[0]], parts = (None if status == "A" else parts[0]), parts[1:]
+    return mb, out
+
+
+def signoff_problem(fm: dict, body: str, then: tuple[dict | None, str] | None) -> str | None:
+    """Why a changed doc may not be merged yet (`then`: its frontmatter and body at the merge base), or None."""
+    st = fm.get("status")
+    if st in RETIRED_STATUS:
+        return None
+    old = then[0] if then and then[0] is not None else None
+    same = old is not None and old.get("status") == st and approved_digest(old, then[1]) == approved_digest(fm, body)
+    if same:
+        return None                                  # only bookkeeping fields changed: no new sign-off due
+    if st == SERVED_STATUS:
+        if not fm.get("approved_by"):
+            return f"is {st} without approved_by: sign it off with `km approve`, never by setting the status by hand"
+        if (dg := fm.get("approved_digest")) is not None:   # the content the approval saw; with the gate on approval-stale reports it
+            covered = GATE_ON or str(dg) == approved_digest(fm, body)
+        else:                                        # approved before km recorded a digest: a new approval in this PR covers it
+            covered = old is None or any(old.get(k) != fm.get(k) for k in ("status", "approved_by", "approved_at"))
+        return None if covered else ("changed since its sign-off: `km demote` it in this commit, then `km approve` it "
+                                     "after review in a commit of its own")
+    level = approval_level(fm)
+    if st == "review" and level == "human" and as_list(fm.get("reviewed_by")):
+        return None                                  # waits for the person, with the AI review on record
+    how = ("`/km review`, then `km approve --by ai:<model>` in a commit of its own" if level == "ai"
+           else "`/km review` recorded in `reviewed_by`, then a person's `km approve`")
+    if st != "review":
+        how = f"finish it and set `status: review`, then {how}"
+    return f"is {st or 'without a status'}, not signed off: {how}"
+
 def report(title: str, items: list[tuple[str, str, str]]) -> None:
     print(f"\n{title}: {len(items)}")
     by_cat: dict[str, list[tuple[str, str]]] = defaultdict(list)
@@ -537,10 +592,19 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="km validate", allow_abbrev=False,
                                  description="Validate the brain's docs; with FILEs only those (pre-commit).")
     ap.add_argument("files", nargs="*", metavar="FILE", help="files to check (others are skipped); none: the whole repo")
-    given = ap.parse_args().files
+    ap.add_argument("--signoff-since", metavar="BASE",
+                    help="also require a sign-off on every doc changed since the merge base with BASE (a pull request's check)")
+    args = ap.parse_args()
+    given = args.files
     if _fatal:
         print(_fatal[0][0], end="")
         sys.exit(_fatal[0][1])
+    mb, changed = None, {}
+    if args.signoff_since:
+        mb, changed = changed_since(args.signoff_since) or (None, None)
+    if changed is None:
+        print(f"km validate: no merge base with {args.signoff_since} (fetch it, or check out the full history)", file=sys.stderr)
+        return 2
     fresh_run()
     errors.clear()
     warnings.clear()
@@ -592,6 +656,8 @@ def main() -> int:
         body = body_of(text)
         # the digest as km approve computes it: before the aliases below change the frontmatter
         digest = approved_digest(fm, body) if fm.get("approved_digest") else None
+        if rel in changed and (_why := signoff_problem(fm, body, changed[rel] and doc_at(mb, changed[rel]))):
+            errors.append(("signoff", rel, _why))
         # apply field aliases declared in the schema (e.g. date -> timestamp)
         for _field, _spec in FIELDS.items():
             _alias = _spec.get("alias")

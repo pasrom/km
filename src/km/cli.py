@@ -45,7 +45,7 @@ COMMANDS = {
 # they write the pins, check the km that is running, only read, or act on the clone, not the content
 NO_PIN_CHECK = {"init", "upgrade", "doctor", "list", "sync"}
 SINCE = {"repin": "v1.4.0", "cite": "v1.8.0", "cites": "v1.8.0"}   # commands an older pinned km does not have
-OPTION_SINCE = {("repin", "--cites"): "v1.8.0"}                     # options it does not have
+OPTION_SINCE = {("repin", "--cites"): "v1.8.0", ("validate", "--signoff-since"): "v1.12.0"}   # options it does not have
 ARGS_SINCE = {"demote": "v1.11.0"}                                  # positional args it ignores (no option there takes a value)
 RUNNER = os.environ.get("KM_PINNED_RUNNER", "uvx")
 

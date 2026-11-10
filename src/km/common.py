@@ -464,6 +464,15 @@ def frontmatter(text: str) -> dict:
     return split_frontmatter(text)[0] or {}
 
 
+def doc_at(rev: str, rel: str) -> tuple[dict | None, str] | None:
+    """(frontmatter or None, body) of `rel` as committed in `rev`, or None where `rev` has no such file."""
+    then = git("show", f"{rev}:./{rel}", cwd=ROOT)
+    if then.returncode:
+        return None
+    fm, _, body = split_frontmatter(then.stdout.lstrip("\ufeff").replace("\r\n", "\n"))
+    return fm, body
+
+
 def read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
 
