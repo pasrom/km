@@ -323,6 +323,12 @@ V "$T/ap/a6.md" && ok "accepted_requires: a doc with the field passes" || no "ac
 printf 'meta: {profile: smoke}\ngate:\n  enabled: true\n  served_status: published\nfields:\n  status:\n    enum: [draft, review, published, superseded, obsolete]\n' > "$T/schema.local.yaml"
 doc "$T/ap/a9.md" published 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
 km validate --root "$T" "$T/ap/a9.md" 2>&1 | grep -q "an AI approver needs 'approval: ai'" && ok "approval: the rule follows a renamed served status" || no "approval: the rule follows a renamed served status"
+doc "$T/ap/rpub.md" published 'approved_by: RPA\napproved_at: 2026-09-30\n'
+mkdir -p "$T/inbox"; printf -- '---\ntype: concept\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: draft\ntags: [t]\n---\nnew text\n' > "$T/inbox/rpub.md"
+out="$(km promote --root "$T" rpub "$T/inbox/rpub.md" --replace 2>&1)"
+{ grep -q '^status: review' "$T/ap/rpub.md" && grep -q '^new text$' "$T/ap/rpub.md"; } \
+  && ok "promote --replace: a doc at a renamed served status is replaced" || no "promote --replace: renamed served status ($out)"
+rm -f "$T/ap/rpub.md" "$T/inbox/rpub.md"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  acepted_require: [owner]\n' >> "$T/schema.local.yaml"
 km validate --root "$T" "$T/ap/a6.md" 2>&1 | grep -q "must be <status>_<requires|recommends|forbids>" && ok "status_rules: a malformed key fails fast" || no "status_rules: a malformed key fails fast"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  acepted_requires: [owner]\n' >> "$T/schema.local.yaml"
