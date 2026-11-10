@@ -1,5 +1,5 @@
 # Sourced by the eval fixtures: a brain made by `km init` from this checkout, in the empty workspace
-# the run starts in. tests/lib.sh gives `km` from this checkout and `fake_km_remote`, a local bare
+# the run starts in. tests/lib.sh gives `km` from this checkout and `fake_km_remote`, a local
 # repository tagged with this km's version that stands in for the km repository (KM_REPO_URL), since
 # km init pins a release by its commit.
 set -eu
