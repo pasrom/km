@@ -318,6 +318,14 @@ if [ "$SEP" = ":" ]; then   # a computer with git but nothing to run km with
   old
   out="$(cd "$B" && CLAUDE_PROJECT_DIR="$B" PATH="$T/bare" "$BASH" "$REPO/hooks/session-start.sh" 2>&1)"; rc=$?
   { [ "$rc" = 0 ] && [ -z "$out" ]; } && ok "without uv or Python the hook stays silent" || no "hook on a fresh computer ($out)"
+  # without uv the launcher probes for a Python with PyYAML from inside the brain: a yaml.py there does not run
+  mkdir -p "$T/pyonly" "$T/nohome" && ln -s "$(command -v dirname)" "$T/pyonly/dirname"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$("$PY" -c 'import sys; print(sys.executable)')" > "$T/pyonly/python3" && chmod +x "$T/pyonly/python3"
+  printf 'open(%s, "w").write("yaml")\n' "'$T/shadowed'" > "$B/yaml.py"
+  out="$(cd "$B" && HOME="$T/nohome" PATH="$T/pyonly" "$BASH" "$REPO/skills/km/bin/km" --version 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && [ ! -e "$T/shadowed" ] && [ "$out" = "$(km --version)" ]; } \
+    && ok "without uv, a yaml.py in the brain is not what the launcher's Python probe imports" || no "yaml.py via the launcher's probe ($rc: $out)"
+  rm -f "$B/yaml.py" "$T/shadowed"
 fi
 # the upstream renames its default branch: the stale ref is pruned, and the new name read from the host
 sync >/dev/null; git -C "$U" branch -m main trunk && git -C "$U" symbolic-ref HEAD refs/heads/trunk

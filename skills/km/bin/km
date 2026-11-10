@@ -22,8 +22,10 @@ for a in "$@"; do
 done
 need='import sys; sys.exit(sys.version_info < (3, 11))'
 case "$cmd" in doctor|sync) ;; *) need="import yaml; $need" ;; esac
+# The probe runs with -P too, or its `import yaml` would run a yaml.py from the working directory;
+# a Python older than 3.11 rejects -P, which skips it like a failed check.
 for py in python3 python "py -3"; do
-  if $py -c "$need" >/dev/null 2>&1; then exec $py -P -m km "$@"; fi
+  if $py -P -c "$need" >/dev/null 2>&1; then exec $py -P -m km "$@"; fi
 done
 # Nothing to run km with: say so in words someone who never used a terminal can act on.
 printf '%s\n' >&2 \
