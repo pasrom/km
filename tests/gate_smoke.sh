@@ -695,6 +695,33 @@ grep -qE '^  entry: km validate --( |$)' "$REPO/.pre-commit-hooks.yaml" \
   && ok "the km-validate hook ends its entry with --: a staged name never reads as an option" || no "km-validate hook entry lacks --"
 out="$(km validate --root "$S/b" -- "$S/b/k/sl.md" 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "gate-bergab"; } && ok "validate: -- ends the options, the FILE is checked" || no "validate -- FILE ($rc: $out)"
+# promote: a slug is a file name every system can hold; a slug and a wiki-link target are names, never patterns
+acc "$S/b/k/target.md" internal "old"; cp "$S/b/k/target.md" "$S/target.bak"; printf 'new\n' > "$N/src.txt"
+for sl in 'targe?' '**x**'; do
+  out="$(km promote --root "$S/b" "$sl" "$N/src.txt" --folder k --type note --author X --replace 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && out_has "which a file name on Windows" && cmp -s "$S/b/k/target.md" "$S/target.bak" \
+    && ! ls "$S/b/k" | grep -q '[?*]' && ! out_has Traceback; } \
+    && ok "promote: the slug '$sl' is refused, nothing written" || no "promote: slug '$sl' ($rc: $out)"
+done
+for sl in aux Com1 nul.x; do   # a device name Windows reserves, with any extension
+  out="$(km promote --root "$S/b" "$sl" "$N/src.txt" --folder k --type note --author X 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && out_has "name Windows reserves" && [ ! -e "$S/b/k/$sl.md" ]; } \
+    && ok "promote: the slug '$sl' is refused, nothing written" || no "promote: slug '$sl' ($rc: $out)"
+done
+out="$(km promote --root "$S/b" target "$N/src.txt" --folder k 2>&1)"; rc=$?   # target.md is not yet `git add`ed
+{ [ "$rc" = 2 ] && out_has "k/target.md exists" && cmp -s "$S/b/k/target.md" "$S/target.bak"; } \
+  && ok "promote: an untracked doc that is not ignored still takes its slug" || no "promote: untracked collision ($rc: $out)"
+printf 'mine\n' | tee "$S/b/k/ign.md" > "$S/b/scratch/ign2.md"; printf 'k/ign.md\nscratch/ign2.md\n' > "$S/b/.gitignore"
+out="$(km promote --root "$S/b" ign "$N/src.txt" --folder k --type note --author X 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && out_has "exists but is no doc of the brain" && [ "$(cat "$S/b/k/ign.md")" = mine ]; } \
+  && ok "promote: a gitignored file at the target is never overwritten" || no "promote: ignored target ($rc: $out)"
+i=0; for w in 'targe*' '**nope**' 'ign2'; do i=$((i+1))
+  printf -- '---\ntype: note\ntitle: G\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [[%s]]\n' "$w" > "$N/g.md"
+  out="$(km promote --root "$S/b" "xr-glob$i" "$N/g.md" --folder k --author X 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && [ ! -e "$S/b/k/xr-glob$i.md" ] && grep -qF -- "- [[$w]]" <<< "$out" && ! out_has Traceback; } \
+    && ok "promote cross-repo: [[$w]] is a dead link$([ "$w" = ign2 ] && echo ': a gitignored file is none' || echo ', not a pattern')" \
+    || no "promote cross-repo [[$w]] ($rc: $out)"
+done
 rm -rf "$S" "$N"
 
 summary smoke || exit 1
