@@ -3,8 +3,10 @@
 Part of the km package, run as `km promote`. Moves a note into the brain as a
 `status: review` doc, dedups by topic slug, and prints a pointer (paste back into personal
 scratch instead of keeping a copy). Safety rules:
-  * The slug must be a single path segment; the target is containment-checked (inside the repo,
-    not inside a peer brain/submodule) BEFORE anything is written.
+  * The slug must be a single path segment and a file name Windows can hold too (none of
+    < > : " / \\ | ? * or a control character, no device name such as CON or AUX); the target is
+    containment-checked (inside the repo, not inside a peer brain/submodule) BEFORE anything is
+    written, and a file already there that the dedup does not count (gitignored) is never overwritten.
   * The candidate is gated in a temp file inside the repo, then atomically renamed onto the
     target on PASS; a failing promote writes nothing and never clobbers.
   * An existing served doc is NOT overwritten without --replace, and --replace INVALIDATES the
@@ -41,24 +43,18 @@ from pathlib import Path
 
 import yaml
 
-from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, default_review_by,
+from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, default_review_by, md_named,
                        review_by_default_problem, submodule_prefixes, under, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
 
 
-def find_hits(slug: str, prefixes: set[str], exclude: Path | None = None):
-    out = []
-    for p in ROOT.rglob(f"{slug}.md"):
-        if ".git" in p.parts:
-            continue
-        if exclude is not None and p.resolve() == exclude:
-            continue   # the source note is never the doc it dedups against
-        rel = str(p.relative_to(ROOT))
-        if under(rel, prefixes):
-            continue
-        out.append(p)
-    return sorted(out)
+def find_hits(slug: str, prefixes: set[str], exclude: Path | None = None) -> list[Path]:
+    """The docs already in the brain that the slug names, wherever they sit: the files `<slug>.md`
+    km.common.md_named finds (exact name; a gitignored file is none), outside the mounted brains and
+    other than the source note itself."""
+    return [ROOT / rel for rel in md_named(f"{slug}.md")
+            if not under(rel, prefixes) and (exclude is None or (ROOT / rel).resolve() != exclude)]
 
 
 class Unparsable(Exception):
@@ -174,7 +170,8 @@ def _strip_code(s: str) -> str:
 
 def _resolves_in_repo(target_dir: Path, raw: str, wiki: bool) -> bool:
     """Does a link target resolve to a file inside ROOT? Doc-relative then root-relative (containment
-    checked); a bare [[slug]] also repo-wide. A scheme URL or empty target counts as external."""
+    checked); a bare [[slug]] also by name, wherever in the brain (km.common.md_named). A scheme URL
+    or empty target counts as external."""
     t = str(raw).strip()
     if t.startswith("<") and t.endswith(">"):
         t = t[1:-1].strip()
@@ -192,13 +189,7 @@ def _resolves_in_repo(target_dir: Path, raw: str, wiki: bool) -> bool:
                 return True
         except (ValueError, OSError):
             continue
-    if wiki and "/" not in t:
-        try:
-            if any(p.is_file() for p in ROOT.rglob(t.rsplit("/", 1)[-1])):
-                return True
-        except OSError:
-            pass
-    return False
+    return wiki and "/" not in t and bool(md_named(t))
 
 
 def outward_links(body: str, target_dir: Path) -> list[str]:
@@ -260,6 +251,14 @@ def main() -> int:
 
     if not a.slug or a.slug != Path(a.slug).name:
         print(f"promote: REFUSED — slug must be a single path segment (no '/' or '..'), got {a.slug!r}")
+        return 2
+    if bad := sorted(set(re.findall(r'[<>:"\\|?*\x00-\x1f\x7f]', a.slug))):   # Windows cannot hold such a name; "/" is refused above
+        print(f"promote: REFUSED — slug {a.slug!r} holds {', '.join(map(repr, bad))}, which a file name on Windows "
+              f"cannot (< > : \" / \\ | ? * and control characters); pick another slug.")
+        return 2
+    if re.fullmatch(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", a.slug):   # reserved with any extension
+        print(f"promote: REFUSED — slug {a.slug!r} starts with a device name Windows reserves (CON, PRN, AUX, NUL, "
+              f"COM1-9, LPT1-9), so no Windows clone could check it out; pick another slug.")
         return 2
 
     if not Path(a.source).is_file():
@@ -369,6 +368,10 @@ def main() -> int:
         return 2
     if target.resolve() == src_resolved:
         print("promote: REFUSED — source and target are the same file.")
+        return 2
+    if existing is None and target.exists():   # a file the dedup does not count (gitignored, a name in another case)
+        print(f"promote: REFUSED — {rel_target} exists but is no doc of the brain (gitignored, or its name differs "
+              f"in case); move it away or pick another slug, nothing written.")
         return 2
 
     if a.ticket:
