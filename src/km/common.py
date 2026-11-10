@@ -327,9 +327,21 @@ def append_fm(raw: str, text: str) -> str:
 
 def demote_raw(raw: str) -> str | None:
     """A served doc's raw '---' block back at `status: review`, its approval lines dropped; the status
-    line edited in place, no YAML round-trip. None if no status line can be rewritten."""
+    line edited in place, no YAML round-trip. None if no status line can be rewritten, or the block no
+    longer parses afterwards. An approval key it cannot find (quoted, `approved_by : x`) stays: the
+    doc leaves the served set all the same, which a stale doc must."""
     new, n = re.subn(rf"(?m)^status:[ \t]*['\"]?{re.escape(SERVED_STATUS)}['\"]?[ \t]*(#.*)?$", "status: review", raw)
-    return re.sub(rf"(?m)^(?:{'|'.join(APPROVAL_FIELDS)}):.*\n", "", new) if n == 1 else None
+    if n != 1:
+        return None
+    for key in APPROVAL_FIELDS:   # the whole entry: a block-list approved_by has its `- ` items on the lines below
+        while (dropped := set_fm_block(new, key, "")) is not None:
+            new = dropped
+    return new if split_frontmatter(new)[0] is not None else None   # never write a block that no longer parses
+
+
+def approval_left(raw: str) -> list[str]:
+    """The approval keys a demoted '---' block still holds: those demote_raw cannot find (quoted)."""
+    return [k for k in APPROVAL_FIELDS if k in frontmatter(raw)]
 
 
 def send_back(fm: dict, raw: str, message: str):
@@ -339,9 +351,11 @@ def send_back(fm: dict, raw: str, message: str):
     if fm.get("status") != SERVED_STATUS:
         return raw, message
     if (raw := demote_raw(raw)) is None:
-        return "signed off, but its status line cannot be rewritten to review"
+        return "signed off, but its status line cannot be rewritten to review (or the block would no longer parse)"
     if "reviewed_by" in fm and (raw := set_fm_block(raw, "reviewed_by", "")) is None:
         return "cannot find the `reviewed_by:` line to drop"
+    if left := approval_left(raw):   # unparsable: the gate refuses it
+        return raw, message + f"; back to review, but drop its {', '.join(left)} by hand, then `km approve` after review"
     return raw, message + "; back to review without its approval, run `km approve` after review"
 
 

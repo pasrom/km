@@ -132,6 +132,40 @@ cp "$T/process/l1.md" "$T/l1.bak"; G add -A; out="$(kt demote --apply)"; rc=$?
   && ok "demote leaves a doc that is not UTF-8 byte for byte and reports it" || no "demote non-UTF-8 (rc=$rc: $out)"
 rm -f "$T/process/l1.md" "$T/l1.bak"; G add -A
 G rm -qf --cached process/flow.md; rm -f "$T/process/flow.md"
+# approved_by as a block list: the whole entry goes, its `- ` items do not fold into the field before them
+blk(){ printf -- '---\ntype: concept\ntitle: %s\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\nreview_by: 2025-06-01\n%s\napproved_by:\n- TT\n- AB\napproved_at: 2025-01-15\n---\nx\n' "$2" "$3" > "$1"; cp "$1" "$1.orig"; }
+# demoted_clean DOC [ORIGINAL]: byte for byte ORIGINAL (default DOC.orig) without its approval lines, status at
+# review: edited in place, nothing reformatted
+demoted_clean(){ grep -v -e '^approved_' -e '^- ' "${2:-$1.orig}" | sed 's/^status: accepted$/status: review/' | cmp -s - "$1"; }
+blk "$T/process/bl1.md" BL1 $'tags: [t]\nowner: TT'; blk "$T/process/bl2.md" BL2 $'owner: TT\ntags: [t]'
+G add -A; out="$(kt demote --apply)"
+{ demoted_clean "$T/process/bl1.md" && demoted_clean "$T/process/bl2.md"; } \
+  && ok "--apply drops a block-list approved_by whole, the frontmatter intact" || no "--apply on a block-list approved_by ($out; $(cat "$T/process/bl1.md" "$T/process/bl2.md"))"
+blk "$T/process/bl3.md" BL3 $'tags: [t]\nowner: TT'; blk "$T/process/bl4.md" BL4 $'owner: TT\ntags: [t]'
+G add -A; out="$(kt demote process/bl3.md process/bl4.md)"; rc=$?
+{ [ "$rc" = 0 ] && demoted_clean "$T/process/bl3.md" && demoted_clean "$T/process/bl4.md"; } \
+  && ok "demote DOC drops a block-list approved_by whole, the frontmatter intact" || no "demote DOC on a block-list approved_by (rc=$rc: $out; $(cat "$T/process/bl3.md" "$T/process/bl4.md"))"
+rm -f "$T"/process/bl[1-4].md*; G add -A
+# an approval key it cannot find (quoted): demoted all the same, the key left in, so a stale doc is never served on
+printf -- '---\ntype: concept\ntitle: Q\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\n"approved_by": TT\napproved_at: 2025-01-15\n---\nx\n' > "$T/process/q.md"
+cp "$T/process/q.md" "$T/q.bak"; G add -A; out="$(kt demote --apply)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "demoted 1 doc" && out_has "  - process/q.md: drop its approved_by by hand" \
+  && demoted_clean "$T/process/q.md" "$T/q.bak"; } \
+  && ok "--apply demotes a doc whose approval key it cannot find, the rest byte for byte" || no "--apply on a quoted approved_by (rc=$rc: $out; $(cat "$T/process/q.md"))"
+cp "$T/q.bak" "$T/process/q.md"; G add -A; out="$(kt demote process/q.md)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "process/q.md sent back; back to review, but drop its approved_by by hand" \
+  && demoted_clean "$T/process/q.md" "$T/q.bak"; } \
+  && ok "demote DOC sends it back too and says which approval key is left to drop" || no "demote DOC on a quoted approved_by (rc=$rc: $out)"
+rm -f "$T/process/q.md" "$T/q.bak"; G add -A
+# a block that would no longer parse without the approval line (a flow mapping over several lines): refused, unchanged
+printf -- '---\n{type: concept, title: FM, timestamp: 2025-01-15, author: TT, review_by: 2025-06-01, tags: [t],\nstatus: accepted\n,\napproved_by: TT}\n---\nx\n' > "$T/process/fm.md"
+cp "$T/process/fm.md" "$T/fm.bak"; G add -A; out="$(kt demote --apply)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "  - process/fm.md: status line cannot be rewritten" && ! out_has "demoted" && cmp -s "$T/process/fm.md" "$T/fm.bak"; } \
+  && ok "--apply refuses a demotion that would leave a block that does not parse, the doc unchanged" || no "--apply on a block that would break (rc=$rc: $out; $(cat "$T/process/fm.md"))"
+out="$(kt demote process/fm.md)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "REFUSED process/fm.md: signed off, but" && cmp -s "$T/process/fm.md" "$T/fm.bak"; } \
+  && ok "demote DOC refuses it too, the doc unchanged" || no "demote DOC on a block that would break (rc=$rc: $out)"
+rm -f "$T/process/fm.md" "$T/fm.bak"; G add -A
 
 # --- a tracked file deleted on disk (deletion not staged yet) does not crash the scripts ---
 doc "$T/process/gone.md" "Gone"; G add -A; kt gen-index >/dev/null; G add -A; G commit -q -m gone >/dev/null; rm "$T/process/gone.md"
