@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, default_review_by, md_named,
+from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, brain_path, default_review_by, known_file, md_named,
                        review_by_default_problem, submodule_prefixes, under, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
@@ -169,9 +169,10 @@ def _strip_code(s: str) -> str:
 
 
 def _resolves_in_repo(target_dir: Path, raw: str, wiki: bool) -> bool:
-    """Does a link target resolve to a file inside ROOT? Doc-relative then root-relative (containment
-    checked); a bare [[slug]] also by name, wherever in the brain (km.common.md_named). A scheme URL
-    or empty target counts as external."""
+    """Does a link target resolve to a file inside ROOT that a clone of it has (km.common.known_file:
+    a gitignored doc is none)? Doc-relative then root-relative (containment checked); a bare [[slug]]
+    also by name, wherever in the brain (km.common.md_named). A scheme URL or empty target counts as
+    external."""
     t = str(raw).strip()
     if t.startswith("<") and t.endswith(">"):
         t = t[1:-1].strip()
@@ -181,14 +182,8 @@ def _resolves_in_repo(target_dir: Path, raw: str, wiki: bool) -> bool:
         return True
     if wiki and not t.endswith(".md"):
         t = t + ".md"
-    for cand in (target_dir / t, ROOT / t.lstrip("/")):
-        try:
-            rp = cand.resolve()
-            rp.relative_to(ROOT)
-            if rp.is_file():
-                return True
-        except (ValueError, OSError):
-            continue
+    if any((r := brain_path(cand)) and known_file(r) for cand in (target_dir / t, ROOT / t.lstrip("/"))):
+        return True
     return wiki and "/" not in t and bool(md_named(t))
 
 

@@ -54,7 +54,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, folder_of, fresh_run, md_named, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, md_named, pin_state, tracked_md
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -269,13 +269,18 @@ def frontmatter(text: str):
         return {"__error__": str(exc)}
 
 
+def _known(cand: Path) -> bool:
+    """A link target on disk: inside the brain it must be a file a clone has (km.common.known_file:
+    not gitignored); outside the brain, which git does not list here, on disk is enough."""
+    rel = brain_path(cand)
+    return known_file(rel) if rel is not None else cand.exists()
+
+
 def resolve_ref(rel: str, target: str) -> bool:
     target = target.split("@", 1)[0].strip()
     if not target.endswith(".md"):
         return True
-    if (ROOT / target.lstrip("/")).exists():
-        return True
-    return ((ROOT / rel).parent / target).exists()
+    return _known(ROOT / target.lstrip("/")) or _known((ROOT / rel).parent / target)
 
 
 PIN_PROBLEMS = {
@@ -328,20 +333,15 @@ def resolve_path(rel: str, target: str) -> str | None:
     if not target or not target.endswith(".md"):
         return None
     for cand in (((ROOT / rel).parent / target), (ROOT / target.lstrip("/"))):
-        try:
-            rp = cand.resolve()
-            rp.relative_to(ROOT)
-            if rp.is_file():
-                return str(rp.relative_to(ROOT))
-        except (ValueError, OSError):
-            continue
+        if (rp := brain_path(cand)) and known_file(rp):   # a gitignored file is none, as for a slug
+            return rp
     return None
 
 
 def resolve_slug(nm: str) -> str | None:
     """A bare [[slug]]: the first, in sorted order and outside skip_prefixes, of the files named
-    `slug.md` that km.common.md_named finds (exact name, no glob; a gitignored draft is none).
-    Links written as paths (resolve_path, doc_status) read the disk, gitignored files included."""
+    `slug.md` that km.common.md_named finds (exact name, no glob; a gitignored draft is none, as for
+    a link written as a path: resolve_path)."""
     nm = nm.strip()
     if not nm or "/" in nm or nm.endswith(".md"):
         return None

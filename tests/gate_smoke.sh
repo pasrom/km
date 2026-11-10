@@ -715,10 +715,22 @@ draft "$S/b/scratch/foo.md"; acc "$S/b/k/sl.md" internal 'see [[foo]]'; git -C "
 printf 'scratch/\n' > "$S/b/.gitignore"
 out="$(km validate --root "$S/b" "$S/b/k/sl.md" 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && ! out_has gate-bergab; } && ok "bergab: a gitignored draft is not a link target" || no "bergab: ignored draft ($rc: $out)"
+# a link written as a path resolves as a slug does: a gitignored file is none, as nobody who clones has it
+draft "$S/b/scratch/pth.md"; acc "$S/b/k/pl.md" internal 'see [x](../scratch/pth.md)'; git -C "$S" add b/k/pl.md
+printf -- '---\ntype: note\ntitle: r\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\nrelated: [scratch/pth.md, brains/peer/p.md]\n---\nr\n' > "$S/b/k/rl.md"
+mkdir -p "$S/b/brains/peer"; git -C "$S/b/brains/peer" init -q; draft "$S/b/brains/peer/p.md"   # a mounted brain: its own repository
+out="$(km validate --root "$S/b" "$S/b/k/pl.md" "$S/b/k/rl.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! out_has gate-bergab && out_has "ref:related" && out_has "missing target scratch/pth.md" && ! out_has "brains/peer/p.md"; } \
+  && ok "a path link or related: to a gitignored file is dead (no bergab, a ref warning); a mounted brain's file resolves" \
+  || no "path link to an ignored file ($rc: $out)"
 rm "$S/b/.gitignore"   # the gate runs before `git add` (km approve, promote): a draft not yet staged counts
 out="$(km validate --root "$S/b" "$S/b/k/sl.md" 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "scratch/foo.md"; } \
   && ok "bergab: an untracked draft that is not ignored fails" || no "bergab: untracked draft ($rc: $out)"
+out="$(km validate --root "$S/b" "$S/b/k/pl.md" "$S/b/k/rl.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "scratch/pth.md" && ! out_has "ref:related"; } \
+  && ok "a path link to an untracked draft that is not ignored resolves (bergab, no ref warning)" || no "path link to untracked draft ($rc: $out)"
+rm -rf "$S/b/brains" "$S/b/k/rl.md"
 git -C "$S" add b/scratch/foo.md
 out="$(km validate --root "$S/b" "$S/b/k/sl.md" 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "scratch/foo.md"; } && ok "bergab: a tracked draft slug still fails" || no "bergab: tracked draft slug ($rc: $out)"
@@ -780,6 +792,15 @@ i=0; for w in 'targe*' '**nope**' 'ign2'; do i=$((i+1))
     && ok "promote cross-repo: [[$w]] is a dead link$([ "$w" = ign2 ] && echo ': a gitignored file is none' || echo ', not a pattern')" \
     || no "promote cross-repo [[$w]] ($rc: $out)"
 done
+i=0; for l in 'ign.md' '/scratch/ign2.md' '../scratch/ign2.md'; do i=$((i+1))
+  printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [x](%s)\n' "$l" > "$N/p.md"
+  out="$(km promote --root "$S/b" "xr-path$i" "$N/p.md" --folder k --author X 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && [ ! -e "$S/b/k/xr-path$i.md" ] && grep -qF -- "- $l" <<< "$out"; } \
+    && ok "promote cross-repo: [x]($l) to a gitignored file is a dead link" || no "promote cross-repo [x]($l) ($rc: $out)"
+done
+printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [x](target.md)\n' > "$N/p.md"
+out="$(km promote --root "$S/b" xr-path-ok "$N/p.md" --folder k --author X 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && [ -e "$S/b/k/xr-path-ok.md" ]; } && ok "promote cross-repo: a path link to a doc of the brain resolves" || no "promote cross-repo path link ($rc: $out)"
 rm -rf "$S" "$N"
 
 summary smoke || exit 1
