@@ -3,7 +3,9 @@
 being served forever. This is the staleness mechanism the model needs; run it on a schedule in CI.
 A type that does not expire (`review_by_default` null) is never demoted, whatever `review_by` it carries.
 
-Dry-run by default (lists what would change, exit 1 if any); `--apply` rewrites the files.
+Dry-run by default (lists what would change, exit 1 if any); `--apply` rewrites the files. A doc
+whose approval key it cannot find (quoted: `"approved_by": x`) is demoted all the same, so it leaves
+the served set, but the key stays and the run exits 1 after demoting the others: drop it by hand.
 
 With docs named, it sends those accepted docs back to review now, whatever their date: their
 approval and pre-reviews (`reviewed_by`) dropped, as `km repin` does. That is how a change to an
@@ -53,6 +55,7 @@ def main() -> int:
     apply = a.apply
     stale: list[str] = []
     stuck: list[str] = []
+    partial = 0   # demoted, but an approval key is left for a person to drop
     for rel in tracked_md():
         if not is_article(rel):
             continue
@@ -76,6 +79,7 @@ def main() -> int:
             continue
         left = approval_left(new_fm)
         stale.append(f"{rel}: drop its {', '.join(left)} by hand" if left else rel)
+        partial += bool(left)
         write_text(ROOT / rel, new_fm + d.body)
 
     if stale:
@@ -86,9 +90,12 @@ def main() -> int:
         print("km demote: past review_by, but the doc cannot be rewritten; fix by hand:")
         for s in stuck:
             print(f"  - {s}")
+    if partial:
+        print(f"km demote: {partial} demoted doc(s) still carry an approval key km cannot find (quoted?); "
+              f"drop it by hand")
     if not (stale or stuck):
         print("km demote: none overdue")
-    return 1 if stuck or (stale and not apply) else 0
+    return 1 if stuck or partial or (stale and not apply) else 0
 
 
 if __name__ == "__main__":

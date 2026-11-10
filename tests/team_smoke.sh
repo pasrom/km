@@ -146,12 +146,16 @@ G add -A; out="$(kt demote process/bl3.md process/bl4.md)"; rc=$?
 { [ "$rc" = 0 ] && demoted_clean "$T/process/bl3.md" && demoted_clean "$T/process/bl4.md"; } \
   && ok "demote DOC drops a block-list approved_by whole, the frontmatter intact" || no "demote DOC on a block-list approved_by (rc=$rc: $out; $(cat "$T/process/bl3.md" "$T/process/bl4.md"))"
 rm -f "$T"/process/bl[1-4].md*; G add -A
-# an approval key it cannot find (quoted): demoted all the same, the key left in, so a stale doc is never served on
+# an approval key it cannot find (quoted): demoted all the same, the key left in, so a stale doc is never served on;
+# the run fails so the staleness job does not report it as done, and a clean doc beside it is still demoted
 printf -- '---\ntype: concept\ntitle: Q\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\n"approved_by": TT\napproved_at: 2025-01-15\n---\nx\n' > "$T/process/q.md"
-cp "$T/process/q.md" "$T/q.bak"; G add -A; out="$(kt demote --apply)"; rc=$?
-{ [ "$rc" = 0 ] && out_has "demoted 1 doc" && out_has "  - process/q.md: drop its approved_by by hand" \
-  && demoted_clean "$T/process/q.md" "$T/q.bak"; } \
-  && ok "--apply demotes a doc whose approval key it cannot find, the rest byte for byte" || no "--apply on a quoted approved_by (rc=$rc: $out; $(cat "$T/process/q.md"))"
+printf -- '---\ntype: concept\ntitle: Q2\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\napproved_by: TT\napproved_at: 2025-01-15\n---\nx\n' > "$T/process/q2.md"
+cp "$T/process/q.md" "$T/q.bak"; cp "$T/process/q2.md" "$T/q2.bak"; G add -A; out="$(kt demote --apply)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "demoted 2 doc" && out_has "  - process/q.md: drop its approved_by by hand" \
+  && out_has "1 demoted doc(s) still carry an approval key" && demoted_clean "$T/process/q.md" "$T/q.bak" \
+  && demoted_clean "$T/process/q2.md" "$T/q2.bak"; } \
+  && ok "--apply demotes a doc whose approval key it cannot find, the rest byte for byte, and exits 1 after demoting the others" || no "--apply on a quoted approved_by (rc=$rc: $out; $(cat "$T/process/q.md"))"
+rm -f "$T/process/q2.md" "$T/q2.bak"
 cp "$T/q.bak" "$T/process/q.md"; G add -A; out="$(kt demote process/q.md)"; rc=$?
 { [ "$rc" = 0 ] && out_has "process/q.md sent back; back to review, but drop its approved_by by hand" \
   && demoted_clean "$T/process/q.md" "$T/q.bak"; } \
