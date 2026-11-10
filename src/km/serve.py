@@ -17,8 +17,8 @@ import re
 import sys
 from pathlib import Path
 
-from km.common import (CUSTOMER_AUDIENCE, INTERNAL_AUDIENCE, ROOT, SERVED_STATUS, is_article, plain, read,
-                       split_frontmatter, tracked_md)
+from km.common import (CUSTOMER_AUDIENCE, INTERNAL_AUDIENCE, ROOT, SERVED_STATUS, fm_text, is_article, plain,
+                       read, split_frontmatter, tracked_md)
 from km.paths import write_text
 
 OUT = ROOT / "dist" / "served"
@@ -40,7 +40,7 @@ def main() -> int:
     for rel in tracked_md():
         if not is_article(rel):
             continue
-        fm, _, body = split_frontmatter(read(rel))
+        fm, raw, body = split_frontmatter(read(rel))
         if not fm or fm.get("status") != SERVED_STATUS:
             continue
         audience = fm.get("audience", INTERNAL_AUDIENCE)
@@ -49,7 +49,7 @@ def main() -> int:
             continue
         accepted.append({
             "path": rel,
-            "title": None if fm.get("title") is None else str(fm["title"]),   # YAML reads `title: 2026-11-10` as a date, which JSON refuses
+            "title": fm_text(fm, raw, "title"),   # as written: YAML reads `title: 1.10` as 1.1, `2026-11-10` as a date
             "type": fm.get("type"),
             "tags": fm.get("tags") or [],
             "audience": audience,

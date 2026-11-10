@@ -124,11 +124,14 @@ printf -- '---\ntype: note\ntitle: 2024\ndescription: 1.5\ntimestamp: 2026-08-26
 printf -- '---\ntype: note\ntitle: 2026-11-10\ndescription: >\n  two\n  lines\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/z.md"
 printf -- '---\ntype: note\ntitle: >\n  long\n  title\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/w.md"
 printf -- '---\ntype: note\ntitle: 0\ndescription: 0\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/v.md"
+printf -- '---\ntype: note\ntitle: 1.10\ndescription: 2.50\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/u.md"
+printf -- '---\ntype: note\ntitle: false\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nbody\n' > "$GI/f/s.md"
 ( cd "$GI" && git init -q && git add -A )
 out="$(cd "$GI" && km gen-index 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && grep -qx -- '- \[2024\](y.md): 1.5' "$GI/f/_index.md" && grep -qx -- '- \[0\](v.md): 0' "$GI/f/_index.md" \
-  && grep -qx -- '- \[2026-11-10\](z.md): two lines' "$GI/f/_index.md" && grep -qx -- '- \[long title\](w.md)' "$GI/f/_index.md"; } \
-  && ok "gen-index: a number or date title, a block-scalar title or description" || no "gen-index: non-string title ($rc: $out; $(cat "$GI/f/_index.md"))"
+  && grep -qx -- '- \[2026-11-10\](z.md): two lines' "$GI/f/_index.md" && grep -qx -- '- \[long title\](w.md)' "$GI/f/_index.md" \
+  && grep -qx -- '- \[1.10\](u.md): 2.50' "$GI/f/_index.md" && grep -qx -- '- \[false\](s.md)' "$GI/f/_index.md"; } \
+  && ok "gen-index: a number or date title, a block-scalar title or description, a number as written" || no "gen-index: non-string title ($rc: $out; $(cat "$GI/f/_index.md"))"
 out="$(cd "$GI" && git add -A && km gen-index --check 2>&1)"; rc=$?
 [ "$rc" = 0 ] && ok "gen-index --check: a number or date title" || no "gen-index --check: non-string title ($rc: $out)"
 rm -rf "$GI"

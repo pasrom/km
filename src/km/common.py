@@ -444,6 +444,22 @@ def body_of(text: str) -> str:
     return m.group(3) if m else text
 
 
+def fm_text(fm: dict, raw: str, key: str) -> str | None:
+    """A frontmatter field shown as text: None when unset or null; a scalar as written in the file
+    (YAML reads `title: 1.10` as 1.1, `2026-11-10` as a date); anything else as str(). For display
+    only: the digest and the checks keep the value YAML read."""
+    v = fm.get(key)
+    if v is None or isinstance(v, str):
+        return v
+    try:   # the parsed block parsed, so composing it does too; a guard all the same
+        node = yaml.compose(_FM.match(raw).group(2), Loader=yaml.SafeLoader)
+    except (yaml.YAMLError, AttributeError):
+        return str(v)
+    found = [vn.value for kn, vn in getattr(node, "value", []) if isinstance(vn, yaml.ScalarNode)
+             and isinstance(kn, yaml.ScalarNode) and kn.value == key]
+    return found[-1] if found else str(v)   # the last of a key given twice, as YAML reads it
+
+
 def frontmatter(text: str) -> dict:
     return split_frontmatter(text)[0] or {}
 

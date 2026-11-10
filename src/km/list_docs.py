@@ -28,18 +28,20 @@ import sys
 import unicodedata
 from pathlib import Path
 
-from km.common import (ROOT, SCHEMA, approval_level, as_list, is_article, plain, read, review_by_default_problem,
-                       review_due, split_frontmatter, submodule_prefixes, tracked_md, under)
+from km.common import (ROOT, SCHEMA, approval_level, as_list, fm_text, is_article, plain, read,
+                       review_by_default_problem, review_due, split_frontmatter, submodule_prefixes, tracked_md, under)
 
 DEFAULT_FIELDS = ("path", "status", "signoff", "title")
 COMPUTED = ("path", "signoff")
 
 
-def value(fm: dict, rel: str, field: str):
+def value(fm: dict, raw: str, rel: str, field: str):
     if field == "path":
         return rel
     if field == "signoff":
         return approval_level(fm)
+    if field in ("title", "description"):
+        return fm_text(fm, raw, field)   # as written: YAML reads `title: 1.10` as 1.1
     v = fm.get(field)
     return v.isoformat() if isinstance(v, datetime.date) else v
 
@@ -113,7 +115,7 @@ def main() -> int:
         if (prefixes and not under(rel, prefixes)) or not (a.all or is_article(rel)):
             continue
         text = read(rel)
-        parsed = split_frontmatter(text)[0]
+        parsed, raw, _ = split_frontmatter(text)
         if parsed is None and text.startswith("---"):
             broken.append(rel)
         fm = parsed or {}
@@ -128,7 +130,7 @@ def main() -> int:
                 or (a.signoff and approval_level(fm) != a.signoff)
                 or (a.due and (due is None or due >= a.due))):
             continue
-        rows.append({f: value(fm, rel, f) for f in fields})
+        rows.append({f: value(fm, raw, rel, f) for f in fields})
 
     if broken:
         print(f"km list: {len(broken)} doc(s) whose frontmatter does not parse, e.g. {broken[0]}, "
