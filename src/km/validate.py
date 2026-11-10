@@ -48,8 +48,8 @@ import yaml
 
 from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_date, as_list, fresh_run, pin_state, tracked_md
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
-from km.paths import BASE_SCHEMA
 from km.pins import movable_refs
+from km.common import BASE, review_by_days, review_by_default_problem
 from km.common import RESERVED as RESERVED_NF
 from km.common import SKIP as SKIP_PREFIXES
 
@@ -66,7 +66,7 @@ def _status_rules(raw) -> dict[tuple[str, str], list]:
     name a status the schema knows. Anything else fails fast, so a typo never switches a rule off.
     km's own keys are exempt from the status check: a brain may rename its statuses."""
     known = set((FIELDS.get("status") or {}).get("enum") or [])
-    own = set((yaml.safe_load(BASE_SCHEMA.read_text(encoding="utf-8")) or {}).get("status_rules") or {})
+    own = set(BASE.get("status_rules") or {})
     out, bad = {}, []
     for key, fields in (raw or {}).items():
         st, _, kind = str(key).rpartition("_")
@@ -132,6 +132,8 @@ if not isinstance(_ci_raw, bool):                       # fail-fast on a non-boo
 CHECK_INDEX = _ci_raw
 if SCHEMA.get("approval_default", "human") not in APPROVAL_LEVELS:
     sys.exit(f"schema.local.yaml: approval_default must be ai or human, got {SCHEMA.get('approval_default')!r}")
+if _rbd_why := review_by_default_problem():
+    sys.exit(f"schema.local.yaml: {_rbd_why}")
 _isp = SCHEMA.get("index_skip_prefixes") or []
 if not (isinstance(_isp, list) and all(isinstance(x, str) for x in _isp)):
     sys.exit("schema.local.yaml: index_skip_prefixes must be a list of strings")
@@ -638,7 +640,8 @@ def main() -> int:
             if _st != st:
                 continue
             for r in _fields:
-                if _kind == "requires" and r not in fm:
+                # review_by is the one field whose need depends on the type: one that does not expire has none
+                if _kind == "requires" and r not in fm and (r != "review_by" or review_by_days(t)):
                     errors.append(("status-rule", rel, f"{st} requires '{r}'"))
                 elif _kind == "forbids" and r in fm:
                     warnings.append(("status-rule", rel, f"{st} should not set '{r}'"))
