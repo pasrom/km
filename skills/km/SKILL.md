@@ -110,7 +110,7 @@ All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. 
 - **Save:** Auto-detect type (note/concept/decision/transcript). Unclear folder → `inbox/`
 - **Decision:** Extract title, context, alternatives, consequences. Use `type: decision`
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript
-- **Update:** Preserve frontmatter, update `date` field, show diff. A doc with `contribution:` is edited on its PR head instead (hard rule under "Contributing content" in `${CLAUDE_SKILL_DIR}/reference/brains.md`)
+- **Update:** Preserve frontmatter, update `timestamp`, show diff. A doc with `contribution:` is edited on its PR head instead (hard rule under "Contributing content" in `${CLAUDE_SKILL_DIR}/reference/brains.md`)
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
 - **Cites:** a doc linking SharePoint or OneDrive files: Read (the tool) "Citing while you write" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` and cite each link before the commit
 - **Generated files:** an image or diagram made from a source you can rerun (script, `.drawio`, small data) is committed with it in the same folder; the doc says how to regenerate it
