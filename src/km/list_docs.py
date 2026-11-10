@@ -28,8 +28,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
-from km.common import (ROOT, SCHEMA, approval_level, as_list, is_article, read, review_by_default_problem, review_due,
-                       split_frontmatter, submodule_prefixes, tracked_md, under)
+from km.common import (ROOT, SCHEMA, approval_level, as_list, is_article, plain, read, review_by_default_problem,
+                       review_due, split_frontmatter, submodule_prefixes, tracked_md, under)
 
 DEFAULT_FIELDS = ("path", "status", "signoff", "title")
 COMPUTED = ("path", "signoff")
@@ -138,7 +138,8 @@ def main() -> int:
                              and all(r[f] is None for r in rows)]):
         print(f"km list: no listed doc has {', '.join(unknown)}, and the schema does not know it (a typo?)", file=sys.stderr)
     if a.json:
-        print(json.dumps(rows, indent=1, default=str))   # ASCII: survives any console encoding
+        # ASCII: survives any console encoding; plain: a mapping key YAML reads as a date, as its text
+        print(json.dumps(plain(rows), indent=1, default=str))
         return 0 if rows else 1
     if not rows:
         print("km list: no doc matches", file=sys.stderr)

@@ -204,7 +204,14 @@ G add -A; out="$(kt serve)"
 { ! out_has Traceback && grep '"path": "process/dated.md"' "$T/dist/served/internal.jsonl" | grep '"tags": \["2026-11-11"\]' \
     | grep '"ticket": "2026-11-12"' | grep -q '"title": "2026-11-10"'; } \
   && ok "serve: a date read as the title, a tag or the ticket is served as text" || no "serve: date values ($out)"
-G rm -qf --cached process/dated.md; rm -f "$T/process/dated.md"; kt serve >/dev/null
+G rm -qf --cached process/dated.md; rm -f "$T/process/dated.md"
+# a date YAML reads as a mapping KEY (default=str covers values only): served as text too
+printf -- '---\ntype: concept\ntitle: Keyed\ntimestamp: 2026-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [{2026-11-11: t}]\nticket: {2026-11-12: x, 7: y}\nowner: TT\nreview_by: 2099-01-01\n---\nx\n' > "$T/process/keyed.md"
+G add -A; out="$(kt serve)"
+{ ! out_has Traceback && grep '"path": "process/keyed.md"' "$T/dist/served/internal.jsonl" | grep '"tags": \[{"2026-11-11": "t"}\]' \
+    | grep -q '"ticket": {"2026-11-12": "x", "7": "y"}'; } \
+  && ok "serve: a date read as a mapping key is served as text" || no "serve: date keys ($out)"
+G rm -qf --cached process/keyed.md; rm -f "$T/process/keyed.md"; kt serve >/dev/null
 
 # --- served_status is read from the gate config, as the validator does ---
 G add -A && G commit -q -m docs >/dev/null

@@ -38,6 +38,11 @@ paths --all; [ "$out" = "a/_index.md a/one.md a/sub/two.md ab/four.md b/plain.md
 L a/one.md --fields path,tags,review_by --json
 kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"path": "a/one.md", "tags": ["x", "y"], "review_by": "2026-03-01"}])' <<< "$out" \
   && ok "--json keeps lists and dates as values" || no "json ($out)"
+mkdir -p "$T/k"; printf -- '---\ntitle: K\nticket: {2026-11-12: x, 7: y}\n---\nbody\n' > "$T/k/keyed.md"; git -C "$T" add k
+L k/keyed.md --fields ticket --json
+kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"ticket": {"2026-11-12": "x", "7": "y"}}])' <<< "$out" \
+  && ok "--json: a date or number read as a mapping key is listed as text" || no "date key ($out)"
+git -C "$T" rm -qf k/keyed.md
 L a/one.md --fields path,tags; grep -q "a/one.md  x,y$" <<< "$out" && ok "a list is joined with commas in the table" || no "table list ($out)"
 printf 'repos:\n  - repo: https://github.com/pasrom/km\n    rev: %s  # frozen: v0.0.1\n    hooks:\n      - id: km-validate\n' "$(printf 'a%.0s' {1..40})" > "$T/.pre-commit-config.yaml"
 out="$(cd "$T" && KM_PINNED_RUNNER=false km list b 2>&1)"

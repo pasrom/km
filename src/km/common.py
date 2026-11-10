@@ -193,12 +193,12 @@ DIGEST_FIELDS = ("type", "title", "description", "resource", "audience", "claim_
                  "evidence", "participants", "language", "license")
 
 
-def _plain(v):
+def plain(v):
     """A YAML value with every mapping key as a string, so keys of mixed types (a year next to a
     word, a date) sort; json.dumps(sort_keys=True) refuses them otherwise."""
     if isinstance(v, dict):
-        return {str(k): _plain(x) for k, x in v.items()}
-    return [_plain(x) for x in v] if isinstance(v, list) else v
+        return {str(k): plain(x) for k, x in v.items()}
+    return [plain(x) for x in v] if isinstance(v, list) else v
 
 
 def unquoted_scalars(fm: dict) -> list[str]:
@@ -216,7 +216,7 @@ def approved_digest(fm: dict, body: str) -> str:
     """The digest of a doc's approved content (see DIGEST_FIELDS): sha256 prefix of its content
     fields, as YAML read them, and its body, line endings (CRLF or a lone CR, which Python's universal
     newlines turn into LF on a read) and surrounding blank space aside."""
-    fields = {k: _plain(fm[k]) for k in DIGEST_FIELDS if k in fm}
+    fields = {k: plain(fm[k]) for k in DIGEST_FIELDS if k in fm}
     text = json.dumps(fields, sort_keys=True, ensure_ascii=False, default=str) + "\n" + body.replace("\r\n", "\n").replace("\r", "\n").strip()
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 

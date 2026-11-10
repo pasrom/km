@@ -17,7 +17,8 @@ import re
 import sys
 from pathlib import Path
 
-from km.common import CUSTOMER_AUDIENCE, INTERNAL_AUDIENCE, ROOT, SERVED_STATUS, is_article, read, split_frontmatter, tracked_md
+from km.common import (CUSTOMER_AUDIENCE, INTERNAL_AUDIENCE, ROOT, SERVED_STATUS, is_article, plain, read,
+                       split_frontmatter, tracked_md)
 from km.paths import write_text
 
 OUT = ROOT / "dist" / "served"
@@ -25,8 +26,9 @@ ALLOWED_AUDIENCE = {INTERNAL_AUDIENCE, CUSTOMER_AUDIENCE}
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
-    # default=str: a value YAML reads as a date (`tags: [2026-11-10]`, `ticket: 2026-11-10`) as its text
-    write_text(path, "".join(json.dumps(r, ensure_ascii=False, sort_keys=True, default=str) + "\n" for r in records))
+    # default=str: a value YAML reads as a date (`tags: [2026-11-10]`, `ticket: 2026-11-10`) as its text;
+    # plain: a mapping key YAML reads as a date or number (`ticket: {2026-11-10: x}`) as its text
+    write_text(path, "".join(json.dumps(plain(r), ensure_ascii=False, sort_keys=True, default=str) + "\n" for r in records))
 
 
 def main() -> int:
