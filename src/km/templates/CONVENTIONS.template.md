@@ -75,6 +75,10 @@ Obsolete/superseded documents are **never deleted** — they remain for historic
 | `topics/` | Cross-cutting themes |
 -->
 
+## Generated Files
+
+An image or diagram made from a source that can be rerun (a script, a `.drawio` file, small input data) is committed with that source in the same folder, and the doc says how to regenerate it, so the next change edits the source instead of redrawing the output. A draw.io export with the diagram embedded is its own source (the doc says to edit it in draw.io); a screenshot or an instrument capture has none. Large input data, or data kept out of git on purpose, stays in an external store: the doc names where it is (`resource:`).
+
 ## Naming Conventions
 
 - **Concepts:** `kebab-case.md` (e.g., `sensor-fusion.md`)

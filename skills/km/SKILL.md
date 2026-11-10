@@ -23,7 +23,7 @@ $ARGUMENTS
 - Respond in the user's language
 - Always cite sources (see "Citation format" below)
 - Prefer current repo over brains in contradictions; prefer newer info; mention conflicts
-- Never hallucinate — say if nothing found
+- Never hallucinate: say if nothing found
 - Never push to a brain's default branch and never `--force` push; the one exception is `--force-with-lease=<branch>:<pushed-head>` to your own open PR after `/km pr` folded it
 - Never edit a mounted `brains/<name>/` working tree (a hook refuses the file-edit tools there; a shell edit is yours to refuse): a correction goes through `brain fix` or `contribute` in a throwaway clone; a drifted mount goes back with `brain reset`
 - Never set `status: accepted` by hand: `km approve` on the user's OK, committed on its own on top of the content commits; an edited accepted doc goes back to review in the same commit (`km demote <doc>`)
@@ -98,7 +98,7 @@ Response: summary, sources (with paths), recency, gaps, related topics.
 
 ### Query-to-wiki
 
-After answering, check: did the response synthesize information from 3+ sources or establish connections not found in any single file? If yes, offer to save the synthesis as a `type: summary` document. Use the standard save flow (frontmatter, folder placement, ripple update). The `related:` field should list all source files used in the synthesis. Pin them in `sources:` too and run `km repin` on the new doc (see "Source pins" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md`).
+After answering, check: did the response synthesize information from 3+ sources or establish connections not found in any single file? If yes, offer to save the synthesis as a `type: summary` document. Save it per "Writing content"; `related:` lists every source. Pin them in `sources:` too and run `km repin` on the new doc (see "Source pins" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md`).
 
 Do not offer for simple lookups or single-source answers. Never offer it on content from an open PR, and never base a `brain fix` on one alone: where a PR shows a merged doc is wrong, say so and point at the PR.
 
@@ -106,20 +106,21 @@ Do not offer for simple lookups or single-source answers. Never offer it on cont
 
 All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. Always confirm before writing. Commit with `docs(<scope>): <description>`.
 
-- **Status:** New documents always start as `status: draft`. Never set `status: accepted` without explicit user confirmation — always ask first. Sign a doc off with `km approve <doc> --by <initials>` (see "Approval" in `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`), not by editing `status` by hand.
+- **Status:** New documents always start as `status: draft`. Never set `status: accepted` without the user's explicit OK. Sign a doc off with `km approve <doc> --by <initials>` (see "Approval" in `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`), not by editing `status` by hand.
 - **Save:** Auto-detect type (note/concept/decision/transcript). Unclear folder → `inbox/`
 - **Decision:** Extract title, context, alternatives, consequences. Use `type: decision`
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript
 - **Update:** Preserve frontmatter, update `date` field, show diff. A doc with `contribution:` is edited on its PR head instead (hard rule under "Contributing content" in `${CLAUDE_SKILL_DIR}/reference/brains.md`)
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
 - **Cites:** a doc linking SharePoint or OneDrive files: Read (the tool) "Citing while you write" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` and cite each link before the commit
+- **Generated files:** an image or diagram made from a source you can rerun (script, `.drawio`, small data) is committed with it in the same folder; the doc says how to regenerate it
 
 ### Ripple update (after every save/update)
 
 After writing the main file, update related pages before committing:
 
-1. **Cross-reference:** Find up to 5 related files (ranked by: shared `project:` > shared tags > same folder). Add the new file's repo-root-relative path to their `related:` frontmatter (create the field if absent). Only add genuinely useful links. When the brain sets `gate.project_prefix`, never add a path under a project folder to a doc outside that folder, nor rank by a `project:` code there: the gate reports a project code outside its own folder, frontmatter included. Project notes link up to neutral docs, not the other way
-2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist — do not create new `_index.md`). A `## Documents` list is generated: after adding, moving or removing a doc or changing its `title` or `description`, stage it, run `km gen-index` and commit the changed `_index.md` files (a team brain's CI and hook fail on a stale list)
+1. **Cross-reference:** Find up to 5 related files (ranked by: shared `project:` > shared tags > same folder). Add the new file's repo-root-relative path to their `related:` frontmatter (create the field if absent). Only add useful links. When the brain sets `gate.project_prefix`, never add a path under a project folder to a doc outside that folder, nor rank by a `project:` code there: the gate reports a project code outside its own folder, frontmatter included. Project notes link up to neutral docs, not the other way
+2. **Update `_index.md`:** Ensure the file is listed in its folder's `_index.md` and in the matching `project:` folder's `_index.md` (if they exist; never create one). A `## Documents` list is generated: after adding, moving or removing a doc or changing its `title` or `description`, stage it, run `km gen-index` and commit the changed `_index.md` files (a team brain's CI and hook fail on a stale list)
 3. **Confirm:** List all proposed ripple updates and wait for user approval before committing
 
-Ripple is **one level deep** — never cascade into further ripple updates. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added; step 2's `km gen-index` still runs.
+Ripple is **one level deep**. Skip ripple when no tags, `related:`, or `project:` fields changed and no new headings were added; step 2's `km gen-index` still runs.
