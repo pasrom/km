@@ -24,8 +24,9 @@ the next run needs no gh and the fetched branch has a ref of its own.
 Never a rebase, a reset, a force or a write into a dirty tree. One line per step as km doctor
 prints them; --quiet prints only what changed (done) or needs attention (note, FAIL). Exit 0 when
 nothing was to do or everything that could be done was done, a branch behind included; 1 when
-something failed (a FAIL line: no origin, no repository, a fast-forward, push or mount that failed).
-An unreachable remote is no failure: the run compares with the last fetch. --max-age skips the run
+something failed (a FAIL line: no repository, the remote upstream that could not be added, a
+fast-forward, push or mount that failed). A brain without origin yet is a skip, and an unreachable
+remote no failure: the run compares with the last fetch. --max-age skips the run
 while the last one (the stamp km-sync in the git dir, touched also when the network was not
 there) is younger, so a hook costs nothing in between. --no-init only reports a mount that is not
 checked out, with the command that checks it out (a clone can take long; the hook passes it). What
