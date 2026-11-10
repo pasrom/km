@@ -1,5 +1,5 @@
 # schema.local.yaml: repo-specific overlay for the <BRAIN> (team served knowledge base).
-# Merged OVER schema.base.yaml by validate.py. Lists here EXTEND the base lists; dict keys
+# Merged OVER km's base schema by `km validate`. Lists here EXTEND the base lists; dict keys
 # (meta, fields, type_rules) are shallow-merged. Owned by this repo; `km upgrade` leaves it alone.
 
 meta:
