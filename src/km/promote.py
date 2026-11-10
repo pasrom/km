@@ -41,8 +41,8 @@ from pathlib import Path
 
 import yaml
 
-from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, default_review_by, review_by_default_problem,
-                       submodule_prefixes, under, yaml_reason)
+from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, default_review_by,
+                       review_by_default_problem, submodule_prefixes, under, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
 
@@ -296,7 +296,7 @@ def main() -> int:
         if ex_fm.get("type") == "verbatim-block":
             print(f"promote: REFUSED — {existing.relative_to(ROOT)} is a verbatim-block; change it only via supersede, not --replace.")
             return 2
-        if ex_fm.get("status") != "accepted":
+        if ex_fm.get("status") != SERVED_STATUS:
             print(f"promote: REFUSED — target {existing.relative_to(ROOT)} is not served (status={ex_fm.get('status')!r}).")
             return 2
         if not a.replace:
