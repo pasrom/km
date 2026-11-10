@@ -11,6 +11,9 @@ from pathlib import Path
 PACKAGE = Path(__file__).resolve().parent
 BASE_SCHEMA = PACKAGE / "schema.base.yaml"
 TEMPLATES = PACKAGE / "templates"
+# True while km.cli imports a command: km.common then leaves a schema problem it finds for km.cli to
+# raise after the import, so `km <cmd> --help` answers whatever the schema holds (km.common.PROBLEMS).
+defer_schema_problems = False
 
 
 def git(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None,
