@@ -28,13 +28,22 @@ jobs:
       - run: bash tests/pins_smoke.sh
       - run: bash tests/cites_smoke.sh
       - run: bash tests/doctor_smoke.sh
-      - run: bash tests/sync_smoke.sh
+      - name: sync_smoke.sh without uv (the launcher's own fallback)
+        run: KM_TEST_UV=forbid bash tests/sync_smoke.sh
       - run: bash tests/list_smoke.sh
       - run: bash tests/skill_smoke.sh
       - run: bash tests/hook_smoke.sh
       - run: bash tests/mounted_pins_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
+      # Last, so no other suite sees it: uv for the launcher's cases in sync_smoke (skills/km/bin/km runs
+      # km through uv where it is installed); no cache shared across workflow runs
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - name: sync_smoke.sh with uv
+        run: KM_TEST_UV=require bash tests/sync_smoke.sh
 
   # The composite action a brain's CI uses: install km from this checkout, then build and check a
   # team brain with the installed `km` command.
@@ -101,10 +110,19 @@ jobs:
           source tests/lib.sh
           windows_like "" || { echo "::error::the runner's encoding is UTF-8, this job tests nothing"; exit 1; }
           with_env "" bash tests/encoding_smoke.sh    # as checked: UTF-8 mode off
-      - name: km doctor, km sync and the plugin's edit guard on Windows
+      - name: km doctor, km sync and the plugin's edit guard on Windows, without uv (the launcher's own fallback)
         env:
           PYTHON: python
-        run: bash tests/doctor_smoke.sh && bash tests/sync_smoke.sh && bash tests/hook_smoke.sh
+        run: bash tests/doctor_smoke.sh && KM_TEST_UV=forbid bash tests/sync_smoke.sh && bash tests/hook_smoke.sh
+      # then the same uv as in smoke, for sync_smoke's launcher cases
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - name: the launcher through uv on Windows, the path of its pending file included
+        env:
+          PYTHON: python
+        run: KM_TEST_UV=require bash tests/sync_smoke.sh
 
   # Merging a version bump is the release: once main is green, tag v<__version__> if that tag is new.
   # Brains pin these tags, and `km init` writes the tag of the km that runs it.

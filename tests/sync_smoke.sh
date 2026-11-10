@@ -24,6 +24,15 @@ sync(){ out="$(cd "$B" && km sync "$@" 2>&1)"; rc=$?; }
 up(){ git -C "$W" commit -q --allow-empty -m "$1" && git -C "$W" push -q origin main; }
 sha(){ git -C "$1" rev-parse "$2"; }
 clean(){ [ -z "$(git -C "$B" status --porcelain --ignore-submodules=none)" ] && git -C "$B" diff --cached --quiet; }
+# The launcher's cases below take uv's path where uv is installed and can set km up, its own fallback
+# where it is not. KM_TEST_UV=require or =forbid makes the suite fail unless it is the one or the other,
+# so a CI step cannot pass while skipping what it is there for.
+uv_ok=""; command -v uv >/dev/null 2>&1 \
+  && uv run -q --no-config --no-project --python '>=3.11' --with pyyaml==6.0.3 python -c '' 2>/dev/null && uv_ok=1
+case "${KM_TEST_UV:-}" in
+  require) [ -n "$uv_ok" ] && ok "uv is installed and sets km up (KM_TEST_UV=require)" || no "KM_TEST_UV=require: no uv that sets km up" ;;
+  forbid) ! command -v uv >/dev/null 2>&1 && ok "no uv on the PATH (KM_TEST_UV=forbid)" || no "KM_TEST_UV=forbid: uv is on the PATH" ;;
+esac
 
 sync
 { [ "$rc" = 0 ] && out_has "ok    branch main has everything upstream main has" && out_has "ok    your fork's main has everything upstream has"; } \
@@ -318,7 +327,7 @@ printf 'x' > "$T/keep"; out="$(KM_PENDING_FILE="$T/keep" km --version 2>&1)"; rc
 { [ "$rc" = 1 ] && [ -s "$T/keep" ] && out_has "^km: cannot remove KM_PENDING_FILE" && ! out_has "^$(km --version)$"; } \
   && ok "km deletes no file with content for the launcher, and then runs nothing" || no "KM_PENDING_FILE with content ($rc: $out)"
 # km run by uv and failing: its output and exit code, once (where uv can set km up, online or cached)
-if command -v uv >/dev/null 2>&1 && uv run -q --no-config --no-project --python '>=3.11' --with pyyaml==6.0.3 python -c '' 2>/dev/null; then
+if [ -n "$uv_ok" ]; then
   out="$(cd "$B" && "$REPO/skills/km/bin/km" nosuch 2>&1)"; rc=$?
   { [ "$rc" = "$erc" ] && [ "$rc" != 0 ] && [ "$out" = "$expected" ]; } \
     && ok "a km command failing under uv fails the launcher with its own output, once" || no "km fails under the real uv ($rc/$erc: $out)"
