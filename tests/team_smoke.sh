@@ -347,6 +347,11 @@ out="$(km validate --root "$L" 2>&1)"
   && ok "a legacy schema.yaml is read as the overlay" || no "legacy schema.yaml overlay ($out)"
 km upgrade --root "$L" >/dev/null 2>&1
 { [ -f "$L/schema.local.yaml" ] && [ ! -e "$L/schema.yaml" ]; } && ok "upgrade renames it to schema.local.yaml" || no "upgrade renames schema.yaml"
+# an older brain's overlay may still carry the meta.schema_version km's base schema no longer has
+printf 'meta:\n  profile: "old"\n  schema_version: "1.4.0"\n' > "$L/schema.local.yaml"; git -C "$L" add -A
+out="$(km validate --root "$L" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! echo "$out" | grep -qi "schema_version\|traceback"; } \
+  && ok "an overlay with meta.schema_version still validates" || no "overlay with meta.schema_version ($out)"
 
 # --- --root in every form ---
 B="$F/badbrain"; mkdir -p "$B"; git -C "$B" init -q; printf -- '---\ntitle: x\n---\nx\n' > "$B/x.md"; git -C "$B" add -A

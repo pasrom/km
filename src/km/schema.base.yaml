@@ -1,6 +1,7 @@
 # schema.base.yaml — CANONICAL frontmatter schema for /km knowledge bases.
 # A strict PROFILE of Open Knowledge Format (OKF) v0.1 plus a governance layer.
-# Owned by km (https://github.com/pasrom/km) and shipped in its package; brains pin a km version.
+# Owned by km (https://github.com/pasrom/km) and shipped in its package; brains pin a km version,
+# which is also this schema's version.
 # Repo-specific scope (skip_prefixes / exempt_files / extra fields) lives in
 # schema.local.yaml, which km merges OVER this file at runtime.
 # OKF base fields are wire-compatible; governance fields are OKF-tolerated extensions.
@@ -8,7 +9,6 @@
 meta:
   okf_version: "0.1"
   profile: "km"            # brains may override in schema.local.yaml (e.g. profile: "team-km")
-  schema_version: "1.4.0"
 
 fields:
   # --- OKF base (externally OKF-conformant) ---
