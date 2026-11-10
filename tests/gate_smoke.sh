@@ -828,6 +828,19 @@ i=0; for l in 'ign.md' '/scratch/ign2.md' '../scratch/ign2.md'; do i=$((i+1))
   { [ "$rc" = 2 ] && [ ! -e "$S/b/k/xr-path$i.md" ] && grep -qF -- "- $l" <<< "$out"; } \
     && ok "promote cross-repo: [x]($l) to a gitignored file is a dead link" || no "promote cross-repo [x]($l) ($rc: $out)"
 done
+# a bare [[slug]] resolves for promote where it does for validate: not under skip_prefixes, a [[x.md]] only as a path
+mkdir -p "$S/b/brains/x"; draft "$S/b/brains/x/only-there.md"; draft "$S/b/k/real.md"; draft "$S/b/k/two words.md"
+git -C "$S" add b/brains/x b/k/real.md "b/k/two words.md"
+i=0; for w in only-there real.md; do i=$((i+1))
+  printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [[%s]]\n' "$w" > "$N/p.md"
+  out="$(km promote --root "$S/b" "xr-skip$i" "$N/p.md" --folder z --author X 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && [ ! -e "$S/b/z/xr-skip$i.md" ] && grep -qF -- "- [[$w]]" <<< "$out"; } \
+    && ok "promote cross-repo: [[$w]] does not resolve, as km validate reads it" || no "promote cross-repo [[$w]] ($rc: $out)"
+done
+printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [[real]] and [[two words]]\n' > "$N/p.md"
+out="$(km promote --root "$S/b" xr-skip-ok "$N/p.md" --folder z --author X 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && [ -e "$S/b/z/xr-skip-ok.md" ]; } && ok "promote cross-repo: [[real]] and [[two words]] resolve by name" || no "promote cross-repo [[real]] ($rc: $out)"
+git -C "$S" rm -rq --cached b/brains/x b/k/real.md "b/k/two words.md"; rm -rf "$S/b/brains" "$S/b/z" "$S/b/k/real.md" "$S/b/k/two words.md"
 printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [x](target.md)\n' > "$N/p.md"
 out="$(km promote --root "$S/b" xr-path-ok "$N/p.md" --folder k --author X 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && [ -e "$S/b/k/xr-path-ok.md" ]; } && ok "promote cross-repo: a path link to a doc of the brain resolves" || no "promote cross-repo path link ($rc: $out)"

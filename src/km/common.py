@@ -653,6 +653,17 @@ def known_file(rel: str) -> bool:
     return rel in md_named(rel.rsplit("/", 1)[-1])
 
 
+def resolve_slug(nm: str) -> str | None:
+    """Where a bare [[slug]] link resolves, for `km validate` and `km promote` alike: the first, in
+    sorted order and outside skip_prefixes (a mounted brain, an excluded folder), of the files named
+    `slug.md` that md_named finds (exact name, no glob; a gitignored draft is none, as for a link
+    written as a path: known_file). None for a name with a `/` or ending in `.md`: such a link is a path."""
+    nm = nm.strip()
+    if not nm or "/" in nm or nm.endswith(".md"):
+        return None
+    return next((p for p in md_named(f"{nm}.md") if not p.startswith(SKIP)), None)
+
+
 def brain_path(p: Path) -> str | None:
     """`p` resolved, as a brain-relative path; None outside the brain (or where it cannot be resolved)."""
     try:
