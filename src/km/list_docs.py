@@ -28,8 +28,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
-from km.common import (ROOT, SCHEMA, approval_level, as_date, as_list, is_article, read, split_frontmatter,
-                       submodule_prefixes, tracked_md, under)
+from km.common import (ROOT, SCHEMA, approval_level, as_list, is_article, read, review_by_default_problem, review_due,
+                       split_frontmatter, submodule_prefixes, tracked_md, under)
 
 DEFAULT_FIELDS = ("path", "status", "signoff", "title")
 COMPUTED = ("path", "signoff")
@@ -97,6 +97,8 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="also folder indexes and files without frontmatter")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
+    if a.due and (why := review_by_default_problem()):   # a bad table would read as "nothing expires"
+        ap.error(f"schema.local.yaml: {why}")
     fields = [f.strip() for f in a.fields.split(",") if f.strip()]
     if not fields:
         ap.error("--fields names no field")
@@ -117,7 +119,7 @@ def main() -> int:
         fm = parsed or {}
         if not fm and not a.all:
             continue
-        due = as_date(fm.get("review_by"))
+        due = review_due(fm)   # none for a type that does not expire, as km demote counts it
         if ((a.status and fm.get("status") not in a.status)
                 or (a.type and fm.get("type") not in a.type)
                 or (a.audience and fm.get("audience") not in a.audience)

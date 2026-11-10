@@ -46,10 +46,10 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_date, as_list, fresh_run, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, body_of, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, fresh_run, pin_state, tracked_md
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.pins import movable_refs
-from km.common import BASE, review_by_days, review_by_default_problem
+from km.common import BASE, review_by_days, review_by_default_problem, review_due
 from km.common import RESERVED as RESERVED_NF
 from km.common import SKIP as SKIP_PREFIXES
 
@@ -683,9 +683,8 @@ def main() -> int:
                         errors.append(("gate-bergab", rel, f"served doc links to unfinished ({_st2}) {_tp}"))
                     elif _st2 in RETIRED_STATUS:
                         warnings.append(("gate-bergab-old", rel, f"served doc links to {_st2} {_tp}"))
-                _rb = fm.get("review_by")
-                if (_due := as_date(_rb)) and _due < TODAY:
-                    warnings.append(("gate-stale", rel, f"review_by {_rb} is in the past"))
+                if (_due := review_due(fm)) and _due < TODAY:   # none for a type that does not expire
+                    warnings.append(("gate-stale", rel, f"review_by {fm.get('review_by')} is in the past"))
 
 
     if CHECK_INDEX and not _args():   # whole-repo lint only; skip on per-file (pre-commit) runs
