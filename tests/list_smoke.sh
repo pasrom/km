@@ -74,6 +74,13 @@ printf -- '---\ntitle: 1.10\ndescription: 2.50\n---\nbody\n' > "$T/c/num.md"; gi
 L c/num.md --fields title,description --json
 kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"title": "1.10", "description": "2.50"}])' <<< "$out" \
   && ok "a number title or description is listed as written (YAML reads 1.10 as 1.1)" || no "number title ($out)"
+# through a merge key too, with YAML's precedence: the block's own key wins, then the first merged mapping
+printf -- '---\nx-a: &a {title: 1.10, description: 2.50}\nx-b: &b {title: 3.30}\n<<: [*b, *a]\n---\nbody\n' > "$T/c/merged.md"
+printf -- '---\nx-a: &a {title: 1.10, description: 2.50}\ndescription: 4.40\n<<: *a\n---\nbody\n' > "$T/c/own.md"; git -C "$T" add c
+L c/merged.md c/own.md --fields path,title,description --json
+kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"path": "c/merged.md", "title": "3.30", "description": "2.50"},
+ {"path": "c/own.md", "title": "1.10", "description": "4.40"}])' <<< "$out" \
+  && ok "a title or description from a merge key is listed as written, with YAML's precedence" || no "merged title ($out)"
 printf -- '---\n{}\n---\nbody\n' > "$T/e/empty.md"; git -C "$T" add e/empty.md
 out="$(cd "$T" && km list e 2>&1)"; ! grep -q "e/empty.md" <<< "$out" && grep -q "1 doc(s) whose" <<< "$out" && ok "empty frontmatter is not called unparseable" || no "empty fm ($out)"
 out="$(cd "$T" && km list --all e 2>&1)"; grep -q "listed without fields" <<< "$out" && ok "with --all an unparseable doc is listed, and said so" || no "all broken ($out)"

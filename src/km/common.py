@@ -501,12 +501,19 @@ def fm_text(fm: dict, raw: str, key: str) -> str | None:
     if v is None or isinstance(v, str):
         return v
     try:   # the parsed block parsed, so composing it does too; a guard all the same
-        node = yaml.compose(_FM.match(raw).group(2), Loader=yaml.SafeLoader)
+        loader = yaml.SafeLoader(_FM.match(raw).group(2))
+        try:
+            node = loader.get_single_node()
+            if isinstance(node, yaml.MappingNode):
+                loader.flatten_mapping(node)   # merge keys (`<<: *anchor`) resolved as YAML reads them
+        finally:
+            loader.dispose()
     except (yaml.YAMLError, AttributeError):
         return str(v)
-    found = [vn.value for kn, vn in getattr(node, "value", []) if isinstance(vn, yaml.ScalarNode)
-             and isinstance(kn, yaml.ScalarNode) and kn.value == key]
-    return found[-1] if found else str(v)   # the last of a key given twice, as YAML reads it
+    # flattened, the merged pairs come first and the block's own after them, each in the order YAML
+    # lets the later win: the last pair of the key is the one YAML read (a key given twice, too)
+    found = [vn for kn, vn in getattr(node, "value", []) if isinstance(kn, yaml.ScalarNode) and kn.value == key]
+    return found[-1].value if found and isinstance(found[-1], yaml.ScalarNode) else str(v)
 
 
 def frontmatter(text: str) -> dict:
