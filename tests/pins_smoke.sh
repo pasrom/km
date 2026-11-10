@@ -110,6 +110,18 @@ out="$(cd "$T" && km repin rv.md 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && grep -q "^status: review" "$T/rv.md" && ! grep -q "reviewed_by\|model-x" "$T/rv.md"; } \
   && ok "repin of a signed-off doc drops its pre-reviews" || no "repin reviewed_by ($rc: $out; $(cat "$T/rv.md"))"
 
+# an approval key repin cannot find (quoted): sent back all the same, the key named, exit 1 (as km demote)
+summary_doc qa.md "src.md@$B1"
+sed -i.bak 's/^status: draft$/status: accepted\
+owner: X\
+review_by: 2099-01-01\
+"approved_by": "X"\
+approved_at: 2026-10-09/' "$T/qa.md" && rm -f "$T/qa.md.bak" && git -C "$T" add qa.md
+out="$(cd "$T" && km repin qa.md 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "qa.md pins the current content" && out_has "drop its approved_by by hand" \
+  && out_has "1 doc(s) sent back still carry a key" && grep -q "^status: review" "$T/qa.md" && grep -q '^"approved_by"' "$T/qa.md"; } \
+  && ok "repin sends back a doc with a quoted approved_by, names the key and exits 1" || no "repin quoted approved_by ($rc: $out; $(cat "$T/qa.md"))"
+
 # a blank or comment line inside the list is part of it: the old entries do not stay behind
 printf -- '---\ntype: summary\ntitle: s\ntimestamp: 2026-10-09\nauthor: X\nstatus: draft\ntags: [t]\nsources:\n# primary\n- src.md@%s\n\n- orig.md\n\n# end\ntranslates: orig.md@%s\n---\nbody\n' "$B1" "$BO" > "$T/gap.md"
 git -C "$T" add gap.md; out="$(cd "$T" && km repin gap.md 2>&1)"; rc=$?

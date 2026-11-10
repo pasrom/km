@@ -21,11 +21,10 @@ from __future__ import annotations
 import argparse
 import datetime
 import sys
-from pathlib import Path
 
 from km.common import (ROOT, SERVED_STATUS, approval_left, demote_raw, is_article, read, review_by_default_problem,
-                       review_due, send_back, sent_back_left, split_frontmatter, tracked_md)
-from km.edit import edit_docs, load_doc
+                       review_due, send_back, split_frontmatter, tracked_md)
+from km.edit import edit_sending_back, load_doc
 from km.paths import write_text
 
 TODAY = datetime.date.today()
@@ -34,23 +33,11 @@ TODAY = datetime.date.today()
 def send_back_docs(docs: list[str]) -> int:
     """Send the named accepted docs back to review; a doc that is not accepted is refused. A doc
     left with a key to drop by hand fails the run, as with --apply."""
-    left: set[str] = set()   # the blocks written with a key left in
     def change(fm: dict, raw: str, _body: str):
         if fm.get("status") != SERVED_STATUS:
             return f"not {SERVED_STATUS} (status: {fm.get('status')!r}), nothing to send back"
-        res = send_back(fm, raw, "sent back")
-        if not isinstance(res, str) and sent_back_left(res[0]):
-            left.add(res[0])
-        return res
-    refused = edit_docs(docs, change, "demote")
-    for why in refused:
-        print(f"demote: REFUSED {why}")
-    # counted from what is on disk now: a doc the gate refused was restored, still accepted
-    partial = sum(not isinstance(d := load_doc(p, p), str) and d.raw in left
-                  for p in {Path(doc).resolve() for doc in docs})
-    if partial:
-        print(f"km demote: {partial} doc(s) sent back still carry a key km cannot find (quoted?); drop it by hand")
-    return 1 if refused or partial else 0
+        return send_back(fm, raw, "sent back")
+    return edit_sending_back(docs, change, "demote")
 
 
 def main() -> int:
