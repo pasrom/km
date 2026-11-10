@@ -10,6 +10,7 @@ Run:  km serve [--root DIR]
 """
 from __future__ import annotations
 
+import argparse
 import datetime
 import json
 import re
@@ -29,6 +30,8 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
 
 
 def main() -> int:
+    argparse.ArgumentParser(prog="km serve", allow_abbrev=False,
+                            description="Build the served bundle under dist/served/.").parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     accepted: list[dict] = []
     skipped_bad_audience = 0

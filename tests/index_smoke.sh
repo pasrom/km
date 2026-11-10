@@ -144,6 +144,20 @@ out="$(cd "$GS" && km validate 2>&1)"; rc=$?
 idx "$GS/f/_index.md" '# F\n- [[alpha]]\n- [[beta]]'; ( cd "$GS" && git add -A )
 out="$(cd "$GS" && km validate 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && ! has "does not link f/"; } && ok "index: an exact [[slug]] still credits its doc" || no "index: exact slug ($rc: $out)"
+# gen-index and serve reject an unknown option and answer --help, writing nothing
+idx "$GS/f/_index.md" '## Documents\n\n- stale'; ( cd "$GS" && git add -A ); cp "$GS/f/_index.md" "$GS/idx.bak"
+out="$(cd "$GS" && km gen-index --chekc 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && has "unrecognized arguments: --chekc" && cmp -s "$GS/f/_index.md" "$GS/idx.bak"; } \
+  && ok "gen-index: an unknown option is a usage error, nothing written" || no "gen-index --chekc ($rc: $out)"
+out="$(cd "$GS" && km gen-index --help 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && has "usage: km gen-index" && has "\-\-check" && cmp -s "$GS/f/_index.md" "$GS/idx.bak"; } \
+  && ok "gen-index --help: usage, nothing written" || no "gen-index --help ($rc: $out)"
+out="$(cd "$GS" && km gen-index --check 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && has "out of date" && cmp -s "$GS/f/_index.md" "$GS/idx.bak"; } && ok "gen-index --check still checks" || no "gen-index --check ($rc: $out)"
+out="$(cd "$GS" && km serve --help 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && has "usage: km serve" && [ ! -e "$GS/dist" ]; } && ok "serve --help: usage, no bundle" || no "serve --help ($rc: $out)"
+out="$(cd "$GS" && km serve --out x 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && [ ! -e "$GS/dist" ]; } && ok "serve: an unknown option is a usage error" || no "serve --out ($rc: $out)"
 rm -rf "$GS"
 
 summary index-smoke || exit 1
