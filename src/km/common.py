@@ -18,9 +18,18 @@ from pathlib import Path
 
 import yaml
 
+from km import paths
 from km.paths import BASE_SCHEMA, git, repo_root
 
 ROOT = repo_root()
+
+
+# What stops a run: a schema file that does not parse or is no mapping (read as absent), and a key
+# whose value km cannot use (replaced by a safe one). The run stops with the first, at import, unless
+# km.cli is importing the command (km.paths.defer_schema_problems): km.cli then stops the run after
+# the import, unless the arguments ask for help. A command that raises them itself after parsing its
+# arguments takes them out of this list at its import (`km validate`, into its own deferred list).
+PROBLEMS: list[str] = []
 
 
 def _load(p: Path) -> dict | None:
@@ -29,9 +38,11 @@ def _load(p: Path) -> dict | None:
     try:
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
-        sys.exit(f"{p.name}: invalid YAML: {exc}")
+        PROBLEMS.append(f"{p.name}: invalid YAML: {exc}")
+        return None
     if not isinstance(data, dict):
-        sys.exit(f"{p.name}: must be a mapping")
+        PROBLEMS.append(f"{p.name}: must be a mapping")
+        return None
     return data
 
 
@@ -92,6 +103,9 @@ APPROVAL_FIELDS = ("approved_by", "approved_at", "approved_digest")
 APPROVAL_LEVELS = ("ai", "human")
 INTERNAL_AUDIENCE = "internal"
 APPROVAL_DEFAULT = "ai" if SCHEMA.get("approval_default") == "ai" else "human"   # a bad value is reported by `km validate`
+
+if PROBLEMS and not paths.defer_schema_problems:
+    sys.exit(PROBLEMS[0])
 
 
 # The review_by a sign-off sets on a doc that has none: days after it, per type (`review_by_default`,

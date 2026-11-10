@@ -58,7 +58,7 @@ from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, 
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
-from km.common import BASE, review_by_days, review_by_default_problem, review_due
+from km.common import BASE, PROBLEMS, review_by_days, review_by_default_problem, review_due
 from km.common import RESERVED as RESERVED_NF
 from km.common import SKIP as SKIP_PREFIXES
 
@@ -146,6 +146,8 @@ if SCHEMA.get("approval_default", "human") not in APPROVAL_LEVELS:
     _fatal.append(("", f"schema.local.yaml: approval_default must be ai or human, got {SCHEMA.get('approval_default')!r}"))
 if _rbd_why := review_by_default_problem():
     _fatal.append(("", f"schema.local.yaml: {_rbd_why}"))
+_fatal.extend(("", _p) for _p in PROBLEMS)          # km.common's, raised here after the arguments, not by km.cli
+PROBLEMS.clear()
 _isp = SCHEMA.get("index_skip_prefixes") or []
 if not (isinstance(_isp, list) and all(isinstance(x, str) for x in _isp)):
     _fatal.append(("", "schema.local.yaml: index_skip_prefixes must be a list of strings"))

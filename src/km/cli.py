@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 from km import KM_REF, __version__
+from km import paths
 from km.paths import repo_root
 from km.pins import read_pins, repo_url, version_key
 
@@ -64,10 +65,22 @@ def take_root(args: list[str]) -> tuple[str | None, list[str]]:
     return ns.root, rest
 
 
+def _split(args: list[str]) -> tuple[list[str], list[str]]:
+    """The arguments before a `--`, where a dash starts an option, and those after it."""
+    end = args.index("--") if "--" in args else len(args)
+    return args[:end], args[end + 1:]
+
+
 def positional(args: list[str]) -> list[str]:
     """The positional arguments of a command none of whose options takes a value: after `--`, all."""
-    end = args.index("--") if "--" in args else len(args)
-    return [a for a in args[:end] if a == "-" or not a.startswith("-")] + args[end + 1:]
+    before, after = _split(args)
+    return [a for a in before if a == "-" or not a.startswith("-")] + after
+
+
+def asks_help(args: list[str]) -> bool:
+    """Whether argparse will answer with help: -h or --help before a `--`, where it is always an option.
+    An abbreviation (`--he`) is not counted: the run then stops on a schema problem, as it always did."""
+    return any(a in ("-h", "--help") for a in _split(args)[0])
 
 
 def _label(pins) -> str:
@@ -138,8 +151,17 @@ def main(argv: list[str] | None = None) -> int:
         return code
     sys.argv = [f"km {cmd}", *rest]           # argparse shows "km <cmd>" in its usage lines
     try:
-        return importlib.import_module(COMMANDS[cmd][0]).main() or 0
-    except SystemExit as exc:   # argparse, and a fail-fast config check at import
+        paths.defer_schema_problems = True
+        try:
+            module = importlib.import_module(COMMANDS[cmd][0])
+        finally:
+            paths.defer_schema_problems = False
+        # a broken schema stops a run, not --help (km.common.PROBLEMS); cli never imports km.common
+        # itself: doctor runs without PyYAML. A command that imports it later stops there.
+        if (common := sys.modules.get("km.common")) and common.PROBLEMS and not asks_help(rest):
+            sys.exit(common.PROBLEMS[0])
+        return module.main() or 0
+    except SystemExit as exc:   # argparse, and a schema problem
         code = exc.code
         if code is None or isinstance(code, int):
             return code or 0

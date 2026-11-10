@@ -515,6 +515,24 @@ out="$(km validate --root "$T" --help 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && out_has "usage: km validate" && ! out_has "status_rules"; } \
   && ok "a mistyped status_rules key still lets validate --help answer" || no "validate --help with bad status_rules ($rc: $out)"
 mv "$T/sl.bak" "$T/schema.local.yaml"
+# a schema.local.yaml that is no YAML, or no mapping: every --help answers, a real run stops as before
+cp "$T/schema.local.yaml" "$T/sl.bak"
+for broken in 'gate: [unclosed\n' '- a list\n'; do
+  printf -- "$broken" > "$T/schema.local.yaml"; what="$(printf -- "$broken" | head -c 12)"
+  for c in validate gen-index demote serve promote approve repin cite cites list "promote stub" "cite add"; do
+    out="$(km $c --root "$T" --help 2>&1)"; rc=$?
+    { [ "$rc" = 0 ] && out_has "usage: km $c" && ! out_has "schema.local.yaml"; } \
+      && ok "schema '$what': km $c --help answers" || no "schema '$what': $c --help ($rc: $out)"
+  done
+  for c in validate list serve; do
+    err="$(km $c --root "$T" 2>&1 >/dev/null)"; rc=$?; out="$(km $c --root "$T" 2>/dev/null)"
+    { [ "$rc" = 1 ] && [ -z "$out" ] && grep -Eq '^schema.local.yaml: (invalid YAML|must be a mapping)' <<< "$err"; } \
+      && ok "schema '$what': a km $c run still stops on stderr, exit 1" || no "schema '$what': $c run ($rc: $out / $err)"
+  done
+done
+{ [ "$(km --root "$T" --version)" = "$(km --version)" ] && km --root "$T" --help | grep -q "usage: km <command>"; } \
+  && ok "a broken schema leaves km --help and --version alone" || no "km --help/--version with a broken schema"
+mv "$T/sl.bak" "$T/schema.local.yaml"
 RB= TYPE=note doc "$T/ap/r13.md" review ''; cp "$T/ap/r13.md" "$T/r13.bak"; printf 'promoted\n' > "$T/rsrc.txt"
 out="$(km approve --root "$T" "$T/ap/r13.md" --by RPA 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && out_has "review_by_default maps a type" && cmp -s "$T/ap/r13.md" "$T/r13.bak"; } \
