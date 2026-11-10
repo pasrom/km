@@ -123,6 +123,21 @@ status_rules:
   accepted_recommends: [approved_by, approved_at]   # soft rollout; flip to *_requires once backfilled
   # accepted_requires: [owner, review_by]           # a brain may make fields mandatory for accepted
 
+# review_by that `km approve` and `km promote` set on a doc without one: days after the sign-off (or
+# the promote), per type. null: the type does not expire (a decision is superseded, not stale; the
+# others are fixed records), so `*_requires: [review_by]` does not apply to it. "*" covers a type not
+# listed, a brain-local one too. A brain overrides single entries in schema.local.yaml.
+review_by_default:
+  reference: 365
+  concept: 365
+  note: 182
+  summary: 182
+  decision: null
+  transcript: null
+  verbatim-block: null
+  artifact: null
+  "*": 182
+
 # Universal defaults — brains EXTEND these in schema.local.yaml (lists are concatenated).
 exempt_files: [CLAUDE.md, README.md, CONVENTIONS.md, SKILL.md]
 skip_prefixes: [brains/]                 # peer brains carry their own conventions

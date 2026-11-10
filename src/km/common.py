@@ -51,7 +51,8 @@ def _merge(base: dict, local: dict | None) -> dict:
 # schema plus its own additions); it overlays the base the same way until `km upgrade` renames it.
 OVERLAY = ROOT / ("schema.local.yaml" if (ROOT / "schema.local.yaml").is_file() or not (ROOT / "schema.yaml").is_file()
                   else "schema.yaml")
-SCHEMA = _merge(_load(BASE_SCHEMA) or {}, _load(OVERLAY))
+BASE = _load(BASE_SCHEMA) or {}   # km's own schema, before the overlay
+SCHEMA = _merge(BASE, _load(OVERLAY))
 
 EXEMPT = set(SCHEMA.get("exempt_files") or [])
 RESERVED = set(SCHEMA.get("reserved_no_frontmatter") or [])
@@ -73,6 +74,39 @@ APPROVAL_FIELDS = ("approved_by", "approved_at", "approved_digest")
 APPROVAL_LEVELS = ("ai", "human")
 INTERNAL_AUDIENCE = "internal"
 APPROVAL_DEFAULT = "ai" if SCHEMA.get("approval_default") == "ai" else "human"   # a bad value is reported by `km validate`
+
+
+# The review_by a sign-off sets on a doc that has none: days after it, per type (`review_by_default`,
+# "*" for a type the table does not name); null means the type does not expire, so a doc of it needs
+# no review_by. `km validate`, `km approve` and `km promote` refuse a bad table (review_by_default_problem).
+def _days(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
+
+def review_by_default_problem() -> str | None:
+    """Why the merged `review_by_default` table is unusable, or None."""
+    table = SCHEMA.get("review_by_default")
+    types = (SCHEMA.get("fields", {}).get("type") or {}).get("enum")   # none: any type is allowed, so any key
+    known = set(types or []) | set(BASE.get("review_by_default") or {})
+    if not isinstance(table, dict) or any((types and k not in known) or not (v is None or _days(v))
+                                          for k, v in table.items()):
+        return f'review_by_default maps a type (or "*" for any other) to days > 0 or null, got {table!r}'
+    return None
+
+
+def review_by_days(doctype) -> int | None:
+    """Days from sign-off to review_by for a doc of this type; None when the type does not expire."""
+    table = SCHEMA.get("review_by_default")
+    if not isinstance(table, dict):
+        return None
+    days = table.get(doctype, table.get("*")) if isinstance(doctype, str) else table.get("*")
+    return days if _days(days) else None
+
+
+def default_review_by(doctype, start: datetime.date) -> datetime.date | None:
+    """The review_by a doc of this type gets when signed off (or promoted) on `start`; None: no expiry."""
+    days = review_by_days(doctype)
+    return start + datetime.timedelta(days=days) if days else None
 
 
 def is_ai_approver(who) -> bool:

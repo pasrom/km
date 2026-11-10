@@ -41,7 +41,8 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, submodule_prefixes, under, yaml_reason
+from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, default_review_by, review_by_default_problem,
+                       submodule_prefixes, under, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
 
@@ -253,6 +254,9 @@ def main() -> int:
     ap.add_argument("--stub-source", action="store_true", help="rewrite an in-repo source note into a superseded stub pointing at the promoted doc")
     ap.add_argument("--ticket", default=None, help="Jira/work-item key -> the `ticket` frontmatter field")
     a = ap.parse_args()
+    if why := review_by_default_problem():
+        print(f"promote: REFUSED — schema.local.yaml: {why}")
+        return 2
 
     if not a.slug or a.slug != Path(a.slug).name:
         print(f"promote: REFUSED — slug must be a single path segment (no '/' or '..'), got {a.slug!r}")
@@ -268,7 +272,6 @@ def main() -> int:
         return 2
     body = body.strip()
     today = datetime.date.today().isoformat()
-    review_by = (datetime.date.today() + datetime.timedelta(days=180)).isoformat()
     prefixes = submodule_prefixes()
     src_resolved = Path(a.source).resolve()
     try:                                            # cross-repo = outside this repo OR inside a mounted brain
@@ -342,7 +345,8 @@ def main() -> int:
         fm.setdefault("tags", [a.slug])
         if a.owner:
             fm["owner"] = a.owner
-        fm.setdefault("review_by", review_by)
+        if "review_by" not in fm and (rb := default_review_by(doctype, datetime.date.today())):   # none: no expiry
+            fm["review_by"] = rb.isoformat()
         if cross_repo:   # these reference the SOURCE repo and do not resolve in the target; and the
             # target decides for itself whether an AI review may approve the doc (unset = its approval_default)
             for _k in ("related", "sources", "translates", "project", "evidence", "approval"):

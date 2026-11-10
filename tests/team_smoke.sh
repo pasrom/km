@@ -643,7 +643,10 @@ rm -f "$F/gh.log"; ! guard false '["good1","down2"]' && [ ! -f "$F/gh.log" ] && 
 
 # --- upgrade records approved_digest for docs approved before km recorded it ---
 D="$F/digest"; km init "$D" --team --name D --desc d --initials DD --folder d=D --pin v0.9.0 >/dev/null
-acc_doc(){ printf -- '---\ntype: concept\ntitle: %s\ntimestamp: 2026-01-15\nauthor: DD\nstatus: %s\naudience: internal\nlanguage: en\ntags: [t]\nowner: DD\nreview_by: 2099-01-01\n%b---\nbody\n' "$2" "$3" "${4:-}" > "$1"; }
+acc_doc(){ # acc_doc FILE TITLE STATUS "extra lines"; TYPE= overrides concept, RB= (empty) drops review_by
+  local rb="${RB-2099-01-01}"
+  printf -- '---\ntype: %s\ntitle: %s\ntimestamp: 2026-01-15\nauthor: DD\nstatus: %s\naudience: internal\nlanguage: en\ntags: [t]\nowner: DD\n%b%b---\nbody\n' \
+    "${TYPE:-concept}" "$2" "$3" "${rb:+review_by: $rb\n}" "${4:-}" > "$1"; }
 acc_doc "$D/d/legacy.md" legacy accepted 'approved_by: DD\napproved_at: 2026-01-15\n'
 acc_doc "$D/d/open.md" open review
 acc_doc "$D/d/edited.md" edited accepted 'approved_by: DD\napproved_at: 2026-01-15\n'
@@ -675,5 +678,16 @@ acc_doc "$D/d/byhand.md" byhand accepted 'approved_by: DD\napproved_at: 2026-01-
 out="$(km upgrade --root "$D" --pin v1.99.0 --force 2>&1)"
 { ! grep -q approved_digest "$D/d/byhand.md" && ! out_has "approved_digest"; } \
   && ok "an upgrade on a brain already past the digest release records none (records once, on the crossing)" || no "upgrade after the crossing ($out)"
+
+# --- a team brain: a type without expiry is accepted without review_by, the others still need it ---
+signed='approved_by: DD\napproved_at: 2026-01-15\n'
+RB= TYPE=decision acc_doc "$D/d/nx-decision.md" Decided accepted "$signed"
+RB= TYPE=transcript acc_doc "$D/d/nx-transcript.md" Met accepted "${signed}participants: [DD]\n"
+RB= acc_doc "$D/d/nx-concept.md" Concept accepted "$signed"
+out="$(KM_LOCAL=1 km validate --root "$D" "$D/d/nx-decision.md" "$D/d/nx-transcript.md" 2>&1)" \
+  && ok "team brain: an accepted decision or transcript without review_by passes" || no "team brain: no-expiry types ($out)"
+out="$(KM_LOCAL=1 km validate --root "$D" "$D/d/nx-concept.md" 2>&1)"
+out_has "accepted requires 'review_by'" && ok "team brain: an accepted concept without review_by still fails" || no "team brain: concept needs review_by ($out)"
+rm -f "$D"/d/nx-*.md
 
 summary team-smoke || exit 1

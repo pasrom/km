@@ -7,7 +7,8 @@ Who may sign off is the doc's `approval` level (see km.common.approval_problem);
 round-trip, like `km demote`) and then gated by `km validate`; a doc that fails is restored unchanged.
 
 A doc whose `review_by` has already passed is refused unless `--review-by` sets a new date, or
-the next `km demote` would take the approval straight back.
+the next `km demote` would take the approval straight back. A doc without one gets the default for its
+type (`review_by_default` in the schema), counted from the approval date; a type without expiry gets none.
 
 Run:  km approve [--root DIR] <doc.md>... --by WHO [--at YYYY-MM-DD] [--review-by YYYY-MM-DD]
 """
@@ -17,7 +18,8 @@ import argparse
 import datetime
 import sys
 
-from km.common import SERVED_STATUS, approval_problem, approved_digest, as_date, set_digest, set_fm_line
+from km.common import (SERVED_STATUS, approval_problem, approved_digest, as_date, default_review_by,
+                       review_by_days, review_by_default_problem, set_digest, set_fm_line)
 from km.edit import edit_docs
 
 
@@ -35,19 +37,26 @@ def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.dat
                 return "already approved for this content; approve it again after a change to its content"
         if why := approval_problem(fm, by):
             return why
+        new_by, note, doctype = review_by, "", fm.get("type")
         if review_by is None:
-            due = as_date(fm.get("review_by"))
-            if fm.get("review_by") and due is None:
-                return f"review_by {fm.get('review_by')!r} is not a YYYY-MM-DD date; pass --review-by"
-            if due and due < max(at, datetime.date.today()):   # km demote compares with today
-                return f"review_by {due} has passed; pass --review-by with a new date"
+            if fm.get("review_by"):   # kept, also on a type without expiry: remove it by hand to stop that
+                due = as_date(fm.get("review_by"))
+                if due is None:
+                    return f"review_by {fm.get('review_by')!r} is not a YYYY-MM-DD date; pass --review-by"
+                if due < max(at, datetime.date.today()):   # km demote compares with today
+                    hint = "" if review_by_days(doctype) else f", or remove it: a {doctype} does not expire"
+                    return f"review_by {due} has passed; pass --review-by with a new date{hint}"
+            elif new_by := default_review_by(doctype, at):
+                if new_by < datetime.date.today():
+                    return f"the default review_by {new_by} for a {doctype} approved on {at} has passed; pass --review-by"
+                note = f"; set review_by {new_by}, the default for a {doctype}"
         lines = [("status", SERVED_STATUS), ("approved_by", f'"{by}"'), ("approved_at", at.isoformat())]
-        if review_by:
-            lines.append(("review_by", review_by.isoformat()))
+        if new_by:
+            lines.append(("review_by", new_by.isoformat()))
         for key, value in lines:
             raw = set_fm_line(raw, key, value)
-        note = ("; its reviewed_by entries are from before the change, drop those that did not see this text"
-                if fm.get("status") == SERVED_STATUS and fm.get("reviewed_by") else "")
+        if fm.get("status") == SERVED_STATUS and fm.get("reviewed_by"):
+            note += "; its reviewed_by entries are from before the change, drop those that did not see this text"
         return set_digest(raw, fm, body), f"accepted, approved_by {by} on {at.isoformat()}" + note
     return edit_docs(docs, change, "approve")
 
@@ -62,6 +71,8 @@ def main() -> int:
     a = ap.parse_args()
     if not a.by.strip():
         ap.error("--by must name the approver")
+    if why := review_by_default_problem():
+        ap.error(f"schema.local.yaml: {why}")
     if a.review_by and a.review_by < max(a.at, datetime.date.today()):
         ap.error(f"--review-by {a.review_by} is in the past; the next km demote would undo the approval")
     refused = approve(a.docs, a.by, a.at, a.review_by)

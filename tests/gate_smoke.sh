@@ -269,10 +269,10 @@ rm -rf "$T/projects" "$T/bmsx" "$T/topics/ts2.md" "$T/.git"
 # AI approval: an ai: approver needs approval: ai; customer docs and verbatim-blocks need a human
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
 mkdir -p "$T/ap"
-doc(){ # doc FILE STATUS "extra frontmatter lines"; TYPE=, AUD= override, AUD= / RB= (empty) drop the field
-  local rb="${RB-2027-01-01}" aud="${AUD-internal}"
-  printf -- '---\ntype: %s\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: %s\n%blanguage: en\ntags: [t]\nowner: X\n%b%b---\nbody\n' \
-    "${TYPE:-concept}" "$2" "${aud:+audience: $aud\n}" "${rb:+review_by: $rb\n}" "${3:-}" > "$1"; }
+doc(){ # doc FILE STATUS "extra frontmatter lines"; TYPE=, AUD= override, AUD= / RB= / OWN= (empty) drop the field
+  local rb="${RB-2027-01-01}" aud="${AUD-internal}" own="${OWN-X}"
+  printf -- '---\ntype: %s\ntitle: t\ntimestamp: 2026-09-30\nauthor: X\nstatus: %s\n%blanguage: en\ntags: [t]\n%b%b%b---\nbody\n' \
+    "${TYPE:-concept}" "$2" "${aud:+audience: $aud\n}" "${own:+owner: $own\n}" "${rb:+review_by: $rb\n}" "${3:-}" > "$1"; }
 doc "$T/ap/a1.md" accepted 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
 V "$T/ap/a1.md" && no "approval: an ai: approver without approval: ai fails" || ok "approval: an ai: approver without approval: ai fails"
 doc "$T/ap/a2.md" accepted 'approval: ai\napproved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
@@ -346,7 +346,8 @@ printf 'skip_prefixes: [vendor/]\n' >> "$T/schema.local.yaml"
 out="$(km approve --root "$T" "$T/vendor/x.md" --by RPA 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "skip_prefixes" && cmp -s "$T/vendor/x.md" "$T/x.bak"; } \
   && ok "approve: refuses a doc under skip_prefixes" || no "approve: refuses a doc under skip_prefixes ($rc: $out)"
-printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [review_by]\n' >> "$T/schema.local.yaml"; rm -rf "$T/vendor"
+rbd(){ printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [owner, review_by]\n%b' "${1:-}" >> "$T/schema.local.yaml"; }
+rbd; rm -rf "$T/vendor"
 AUD=customer doc "$T/ap/p3.md" review ''
 km approve --root "$T" "$T/ap/p3.md" --by ai:model-x 2>&1 | grep -q "needs a human approver" \
   && ok "approve: ai: refused on a customer doc" || no "approve: ai: refused on a customer doc"
@@ -355,7 +356,7 @@ km approve --root "$T" "$T/ap/p2.md" --by RPA >/dev/null 2>&1 && grep -q '^appro
 doc "$T/ap/p4.md" draft ''
 km approve --root "$T" "$T/ap/p4.md" --by RPA 2>&1 | grep -q "only a review or accepted doc" && grep -q '^status: draft$' "$T/ap/p4.md" \
   && ok "approve: a draft is refused" || no "approve: a draft is refused"
-RB= doc "$T/ap/p5.md" review ''; cp "$T/ap/p5.md" "$T/p5.bak"
+OWN= doc "$T/ap/p5.md" review ''; cp "$T/ap/p5.md" "$T/p5.bak"
 km approve --root "$T" "$T/ap/p5.md" --by RPA 2>&1 | grep -q "km validate fails" && cmp -s "$T/ap/p5.md" "$T/p5.bak" \
   && ok "approve: a doc failing the gate after the change is restored" || no "approve: a doc failing the gate after the change is restored"
 km approve --root "$T" "$T/ap/p2.md" --by RPA --at 30.09.2026 >/dev/null 2>&1; [ $? -eq 2 ] && ok "approve: a bad --at is refused" || no "approve: a bad --at is refused"
@@ -379,7 +380,7 @@ printf '\xff\xfe---\n' > "$T/ap/bin.md"; cp "$T/ap/bin.md" "$T/bin.bak"; out="$(
 { [ "$rc" = 1 ] && out_has "not UTF-8" && ! out_has "Traceback" && cmp -s "$T/ap/bin.md" "$T/bin.bak"; } \
   && ok "approve: a doc that is not UTF-8 is refused" || no "approve: a doc that is not UTF-8 is refused ($rc: $out)"
 rm -f "$T/ap/bin.md" "$T/bin.bak"
-RB= doc "$T/ap/p7.md" review ''; { printf '\357\273\277'; cat "$T/ap/p7.md"; } > "$T/p7.tmp" && mv "$T/p7.tmp" "$T/ap/p7.md"; cp "$T/ap/p7.md" "$T/p7.bak"
+OWN= doc "$T/ap/p7.md" review ''; { printf '\357\273\277'; cat "$T/ap/p7.md"; } > "$T/p7.tmp" && mv "$T/p7.tmp" "$T/ap/p7.md"; cp "$T/ap/p7.md" "$T/p7.bak"
 km approve --root "$T" "$T/ap/p7.md" --by RPA 2>&1 | grep -q "km validate fails" && cmp -s "$T/ap/p7.md" "$T/p7.bak" \
   && ok "approve: a refused doc keeps its bytes, BOM included" || no "approve: a refused doc keeps its bytes, BOM included"
 # docs that link to each other: one call gates them together; a doc that fails takes back the one linking to it
@@ -389,7 +390,7 @@ km approve --root "$T" "$T/ap/l1.md" --by RPA >/dev/null 2>&1; grep -q '^status:
   && ok "approve: alone, a doc linking to a review doc is refused" || no "approve: alone, a doc linking to a review doc is refused"
 km approve --root "$T" "$T/ap/l1.md" "$T/ap/l2.md" --by RPA >/dev/null 2>&1 && grep -q '^status: accepted$' "$T/ap/l1.md" && grep -q '^status: accepted$' "$T/ap/l2.md" \
   && ok "approve: docs linking to each other are signed off together" || no "approve: docs linking to each other are signed off together"
-lk "$T/ap/l3.md" l4.md; RB= lk "$T/ap/l4.md" l3.md; cp "$T/ap/l3.md" "$T/l3.bak"; cp "$T/ap/l4.md" "$T/l4.bak"
+lk "$T/ap/l3.md" l4.md; OWN= lk "$T/ap/l4.md" l3.md; cp "$T/ap/l3.md" "$T/l3.bak"; cp "$T/ap/l4.md" "$T/l4.bak"
 out="$(km approve --root "$T" "$T/ap/l3.md" "$T/ap/l4.md" --by RPA 2>&1)"
 out_has "REFUSED ap/l4.md" && out_has "REFUSED ap/l3.md" && cmp -s "$T/ap/l3.md" "$T/l3.bak" && cmp -s "$T/ap/l4.md" "$T/l4.bak" \
   && ok "approve: a doc that fails takes back the one linking to it" || no "approve: a doc that fails takes back the one linking to it"
@@ -411,6 +412,71 @@ def count(*paths): calls.append(len(paths)); return gate(*paths)
 e.run_gate = count
 a.approve(sys.argv[1:], "RPA", datetime.date(2026, 9, 30), None); print("gate runs:", *calls)' "$T/ap/l5.md" "$T/ap/l6.md" 2>&1)"
 out_has "gate runs: 2$" && ok "approve: docs that pass are gated in one validate run" || no "approve: one gate run ($out)"
+# review_by_default: approve and promote set the type's review_by on a doc without one; null = no expiry
+read -r D30 D182 D365 <<< "$(kmpy -c 'import datetime as d; t = d.date.today(); print(*(t + d.timedelta(days=n) for n in (30, 182, 365)))')"
+rbd
+RB= doc "$T/ap/r1.md" review ''; RB= TYPE=note doc "$T/ap/r2.md" review ''
+out="$(km approve --root "$T" "$T/ap/r1.md" "$T/ap/r2.md" --by RPA 2>&1)"
+{ grep -q "^review_by: $D365$" "$T/ap/r1.md" && grep -q "^review_by: $D182$" "$T/ap/r2.md" && out_has "set review_by $D365, the default for a concept" \
+  && out_has "set review_by $D182, the default for a note" && V "$T/ap/r1.md" "$T/ap/r2.md"; } \
+  && ok "approve: sets review_by from the type's default, and says so" || no "approve: per-type review_by ($out)"
+RB=2099-01-01 TYPE=note doc "$T/ap/r3.md" review ''
+out="$(km approve --root "$T" "$T/ap/r3.md" --by RPA 2>&1)"
+{ grep -q '^review_by: 2099-01-01$' "$T/ap/r3.md" && grep -q '^status: accepted$' "$T/ap/r3.md" && ! out_has "set review_by"; } \
+  && ok "approve: keeps an existing review_by" || no "approve: keeps an existing review_by ($out)"
+RB= TYPE=decision doc "$T/ap/r4.md" review ''; RB= TYPE=transcript doc "$T/ap/r5.md" review 'participants: [X]\n'
+out="$(km approve --root "$T" "$T/ap/r4.md" "$T/ap/r5.md" --by RPA 2>&1)"
+{ grep -q '^status: accepted$' "$T/ap/r4.md" && grep -q '^status: accepted$' "$T/ap/r5.md" && ! grep -q review_by "$T/ap/r4.md" "$T/ap/r5.md" \
+  && V "$T/ap/r4.md" "$T/ap/r5.md"; } \
+  && ok "approve: a decision or transcript gets no review_by, and accepted_requires: review_by passes" || no "approve: no-expiry types ($out)"
+RB=2099-01-01 TYPE=decision doc "$T/ap/r6.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
+V "$T/ap/r6.md" && ok "validate: a decision that has a review_by keeps it" || no "validate: a decision with a review_by"
+RB= doc "$T/ap/r7.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
+errs "$T/ap/r7.md" | grep -q "accepted requires 'review_by'" && ok "validate: an accepted concept still needs review_by" || no "validate: concept still needs review_by"
+rbd 'review_by_default:\n  note: 30\n  decision: 365\n'
+RB= TYPE=note doc "$T/ap/r8.md" review ''; RB= TYPE=decision doc "$T/ap/r9.md" review ''; RB= doc "$T/ap/r10.md" review ''
+km approve --root "$T" "$T/ap/r8.md" "$T/ap/r9.md" "$T/ap/r10.md" --by RPA >/dev/null 2>&1
+{ grep -q "^review_by: $D30$" "$T/ap/r8.md" && grep -q "^review_by: $D365$" "$T/ap/r9.md" && grep -q "^review_by: $D365$" "$T/ap/r10.md"; } \
+  && ok "review_by_default: schema.local.yaml overrides single types, the rest keep km's" || no "review_by_default: override"
+V "$T/ap/r4.md" && no "review_by_default: a decision given an expiry needs review_by again" || ok "review_by_default: a decision given an expiry needs review_by again"
+rbd 'fields:\n  type:\n    enum: [note, concept, decision, transcript, artifact, summary, reference, verbatim-block, howto]\n'
+RB= TYPE=howto doc "$T/ap/r11.md" review ''
+km approve --root "$T" "$T/ap/r11.md" --by RPA >/dev/null 2>&1 && grep -q "^review_by: $D182$" "$T/ap/r11.md" \
+  && ok "review_by_default: a brain-local type falls back to \"*\" (182 days)" || no "review_by_default: unknown type fallback"
+rbd 'fields:\n  type:\n    enum: [note, concept, decision, transcript, artifact, summary, reference, verbatim-block, howto]\nreview_by_default:\n  howto: null\n'
+RB= TYPE=howto doc "$T/ap/r12.md" review ''
+km approve --root "$T" "$T/ap/r12.md" --by RPA >/dev/null 2>&1 && ! grep -q review_by "$T/ap/r12.md" && V "$T/ap/r12.md" \
+  && ok "review_by_default: a brain-local type set to null does not expire" || no "review_by_default: brain-local type null"
+for bad in 'review_by_default:\n  referenc: 365\n' 'review_by_default:\n  note: 0\n' 'review_by_default:\n  note: "6 months"\n' 'review_by_default: 182\n'; do
+  rbd "$bad"; out="$(errs "$T/ap/r6.md")"; rc=$?; [ "$rc" = 1 ] && out_has "review_by_default maps a type" && ok "review_by_default: fails fast on $(printf '%b' "$bad" | tr '\n' ' ')" \
+    || no "review_by_default: fails fast on $bad"
+done
+RB= TYPE=note doc "$T/ap/r13.md" review ''; cp "$T/ap/r13.md" "$T/r13.bak"; printf 'promoted\n' > "$T/rsrc.txt"
+out="$(km approve --root "$T" "$T/ap/r13.md" --by RPA 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && out_has "review_by_default maps a type" && cmp -s "$T/ap/r13.md" "$T/r13.bak"; } \
+  && ok "review_by_default: approve refuses a bad table before it computes a date" || no "approve with a bad table ($rc: $out)"
+out="$(km promote --root "$T" rb-bad "$T/rsrc.txt" --folder ap --type note --author X 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && out_has "review_by_default maps a type" && [ ! -e "$T/ap/rb-bad.md" ]; } \
+  && ok "review_by_default: promote refuses a bad table" || no "promote with a bad table ($rc: $out)"
+rbd 'fields:\n  type:\n    required: true\nreview_by_default:\n  playbook: 30\n'
+V "$T/ap/r6.md" && ok "review_by_default: a schema without a type enum takes any type as a key" || no "review_by_default: no type enum ($(errs "$T/ap/r6.md"))"
+rbd
+RB=2020-01-01 TYPE=decision doc "$T/ap/r14.md" review ''
+out="$(km approve --root "$T" "$T/ap/r14.md" --by RPA 2>&1)"
+{ out_has "has passed; pass --review-by with a new date, or remove it: a decision does not expire" && grep -q '^status: review$' "$T/ap/r14.md"; } \
+  && ok "approve: a decision with a passed review_by is refused, with the hint to remove it" || no "approve: passed review_by on a decision ($out)"
+sed -i.bak '/^review_by:/d' "$T/ap/r14.md" && rm -f "$T/ap/r14.md.bak"
+km approve --root "$T" "$T/ap/r14.md" --by RPA >/dev/null 2>&1 && ! grep -q review_by "$T/ap/r14.md" \
+  && ok "approve: once removed, the decision is approved without review_by" || no "approve: decision after removing review_by"
+rbd
+printf 'promoted\n' > "$T/rsrc.txt"
+for ty in reference:365 note:182 summary:182 decision:none artifact:none; do
+  t="${ty%%:*}" d="${ty#*:}"; f="$T/ap/rb-$t.md"
+  km promote --root "$T" "rb-$t" "$T/rsrc.txt" --folder ap --type "$t" --author X >/dev/null 2>&1
+  if [ "$d" = none ]; then [ -f "$f" ] && ! grep -q review_by "$f"; else want="D$d"; grep -q "^review_by: '${!want}'$" "$f"; fi \
+    && ok "promote: type $t gets review_by: $d" || no "promote: type $t gets review_by: $d ($(cat "$f" 2>&1))"
+done
+rm -f "$T"/ap/r[0-9]*.md "$T"/ap/rb-*.md "$T/rsrc.txt"
 doc "$T/ap/m1.md" review ''; printf -- '---\ntitle: broken\n---\nx\n' > "$T/ap/m2.md"
 out="$(KM_ROOT="$T" kmpy -c 'import sys, km.validate as v
 bad, good = sys.argv[1:3]
