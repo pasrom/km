@@ -115,6 +115,10 @@ jobs:
         env:
           PYTHON: python
         run: bash tests/doctor_smoke.sh && KM_TEST_UV=forbid bash tests/sync_smoke.sh && bash tests/hook_smoke.sh && bash tests/signoff_smoke.sh
+      - name: km validate, the gate, promote, approve and demote on Windows
+        env:
+          PYTHON: python
+        run: bash tests/gate_smoke.sh
       # then the same uv as in smoke, for sync_smoke's launcher cases
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
