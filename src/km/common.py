@@ -316,7 +316,7 @@ def _drop_objects() -> None:
 def fresh_run() -> None:
     """Forget what an earlier run in this process looked up: the file list, the index, the pins."""
     _drop_objects()
-    for cached in (_ls_md, _md_index, md_named, unstaged, staged_blob, pinned_blob, _body):
+    for cached in (_ls_md, _md_index, md_named, submodule_prefixes, unstaged, staged_blob, pinned_blob, _body):
         cached.cache_clear()
 
 
@@ -583,6 +583,25 @@ def md_named(name: str) -> tuple[str, ...]:
     return tuple(p for p in _md_index().get(name, ()) if (ROOT / p).is_file())
 
 
+def known_file(rel: str) -> bool:
+    """Whether a link written as a path to `rel` (brain-relative, normalised) resolves for everyone who
+    clones the brain, in md_named's sense: a .md file on disk that git tracks or would track (a draft
+    not yet `git add`ed counts, a gitignored file does not). On disk is enough for a file in a mounted
+    brain (a repository of its own, git lists none of its files), for any other file (an image, a PDF:
+    git lists the .md files only) and in a brain that is not a git work tree. Case-exact, as md_named."""
+    if not rel.endswith(".md") or under(rel, submodule_prefixes()):
+        return (ROOT / rel).is_file()
+    return rel in md_named(rel.rsplit("/", 1)[-1])
+
+
+def brain_path(p: Path) -> str | None:
+    """`p` resolved, as a brain-relative path; None outside the brain (or where it cannot be resolved)."""
+    try:
+        return p.resolve().relative_to(ROOT).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
 def is_article(rel: str) -> bool:
     name = rel.rsplit("/", 1)[-1]
     return not rel.startswith(SKIP) and name != "_index.md" and name not in EXEMPT and name not in RESERVED
@@ -592,7 +611,8 @@ def folder_of(path: str) -> str:
     return path.rsplit("/", 1)[0] if "/" in path else "."
 
 
-def submodule_prefixes() -> set[str]:
+@functools.cache
+def submodule_prefixes() -> frozenset[str]:
     """Where mounted brains live: brains/ and every path in .gitmodules."""
     prefixes = {"brains"}
     gm = ROOT / ".gitmodules"
@@ -601,7 +621,7 @@ def submodule_prefixes() -> set[str]:
             ln = ln.strip()
             if ln.startswith("path"):
                 prefixes.add(ln.split("=", 1)[1].strip().strip("/"))
-    return prefixes
+    return frozenset(prefixes)
 
 
 def under(rel: str, prefixes) -> bool:
