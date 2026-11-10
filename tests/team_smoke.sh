@@ -924,6 +924,17 @@ out="$(km upgrade --root "$D" --pin v1.99.0 --force 2>&1)"
 { ! grep -q approved_digest "$D/d/byhand.md" && ! out_has "approved_digest"; } \
   && ok "an upgrade on a brain already past the digest release records none (records once, on the crossing)" || no "upgrade after the crossing ($out)"
 
+# a schema km cannot read stops the upgrade before it moves the pins, so a run after the fix still records the digests
+D2="$F/digest2"; km init "$D2" --team --name D --desc d --initials DD --folder d=D --pin v0.9.0 >/dev/null
+acc_doc "$D2/d/legacy.md" legacy accepted 'approved_by: DD\napproved_at: 2026-01-15\n'; cp "$D2/schema.local.yaml" "$F/sl2.ok"
+printf 'fields: {title: 7}\n' >> "$D2/schema.local.yaml"; git -C "$D2" init -q && git -C "$D2" add -A && git -C "$D2" "${G[@]}" commit -qm init
+out="$(km upgrade --root "$D2" --pin v1.99.0 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "^schema.local.yaml: fields.title must be a mapping" && ! grep -rq "v1.99.0" "$D2/.github/workflows" && ! out_has Traceback; } \
+  && ok "upgrade over a schema km cannot read stops with the schema message before it moves the pins" || no "upgrade with a broken schema ($rc: $out)"
+cp "$F/sl2.ok" "$D2/schema.local.yaml"; out="$(km upgrade --root "$D2" --pin v1.99.0 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && grep -q '^approved_digest:' "$D2/d/legacy.md" && grep -rq "v1.99.0" "$D2/.github/workflows"; } \
+  && ok "the upgrade run after the schema is fixed records the digests and moves the pins" || no "upgrade after the schema fix ($rc: $out)"
+
 # --- a team brain: a type without expiry is accepted without review_by, the others still need it ---
 signed='approved_by: DD\napproved_at: 2026-01-15\n'
 RB= TYPE=decision acc_doc "$D/d/nx-decision.md" Decided accepted "$signed"

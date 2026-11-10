@@ -532,6 +532,24 @@ for broken in 'gate: [unclosed\n' '- a list\n'; do
 done
 { [ "$(km --root "$T" --version)" = "$(km --version)" ] && km --root "$T" --help | grep -q "usage: km <command>"; } \
   && ok "a broken schema leaves km --help and --version alone" || no "km --help/--version with a broken schema"
+# a setting of a type km cannot use stops every command with the schema message, never a traceback
+for bad in 'index_skip_prefixes: 7' 'skip_prefixes: 7' 'skip_prefixes: [7]' 'exempt_files: 7' 'exempt_files: [[a]]' \
+           'reserved_no_frontmatter: 7' 'gate: {customer_audience: [a]}' 'fields: 7' 'fields: {title: 7}' \
+           'type_rules: [a]' 'type_rules_soft: {note: 7}'; do
+  printf '%s\n' "$bad" > "$T/schema.local.yaml"; key="${bad%%:*}"; [ "$key" = gate ] && key=gate.customer_audience
+  [ "$key" = fields ] && [ "$bad" != 'fields: 7' ] && key=fields.title; [ "$key" = type_rules_soft ] && key=type_rules_soft.note
+  for c in validate list gen-index serve demote; do
+    [ "$key$c" = gate.customer_audiencevalidate ] && continue   # validate reports its gate config first, as before
+    out="$(km $c --root "$T" 2>&1)"; rc=$?
+    { [ "$rc" = 1 ] && out_has "^schema.local.yaml: $key must be" && ! out_has Traceback; } \
+      && ok "'$bad': km $c stops with the schema message" || no "'$bad': km $c ($rc: $out)"
+  done
+  out="$(km list --root "$T" --help 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && out_has "usage: km list"; } && ok "'$bad': km list --help answers" || no "'$bad': list --help ($rc: $out)"
+done
+printf 'status_rules: 7\n' > "$T/schema.local.yaml"; out="$(km validate --root "$T" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "status_rules must map" && ! out_has Traceback; } \
+  && ok "status_rules that is no mapping stops validate with the schema message" || no "status_rules: 7 ($rc: $out)"
 mv "$T/sl.bak" "$T/schema.local.yaml"
 RB= TYPE=note doc "$T/ap/r13.md" review ''; cp "$T/ap/r13.md" "$T/r13.bak"; printf 'promoted\n' > "$T/rsrc.txt"
 out="$(km approve --root "$T" "$T/ap/r13.md" --by RPA 2>&1)"; rc=$?

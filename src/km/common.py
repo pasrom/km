@@ -72,23 +72,58 @@ OVERLAY = ROOT / ("schema.local.yaml" if (ROOT / "schema.local.yaml").is_file() 
 def _specs(schema: dict) -> dict:
     """The merged schema with every field and type spec a mapping without empty keys: a field or type
     the overlay declares with no spec (`ticket:`) has an empty one, and a key left empty inside a spec
-    (`enum:` with every value commented out) is absent."""
+    (`enum:` with every value commented out) is absent. A section or spec of another type is a problem
+    (PROBLEMS), read as km's base section or an empty spec."""
     for section in ("fields", "type_rules", "type_rules_soft"):
-        if isinstance(specs := schema.get(section), dict):
-            schema[section] = {name: {k: v for k, v in spec.items() if v is not None} if isinstance(spec, dict)
-                               else {} if spec is None else spec for name, spec in specs.items()}
+        specs = schema.get(section)
+        if specs is not None and not isinstance(specs, dict):
+            PROBLEMS.append(f"schema.local.yaml: {section} must be a mapping")
+            specs = schema[section] = BASE.get(section)
+        if isinstance(specs, dict):
+            clean = schema[section] = {}
+            for name, spec in specs.items():
+                if not isinstance(spec, dict | None):
+                    PROBLEMS.append(f"schema.local.yaml: {section}.{name} must be a mapping")
+                clean[name] = {k: v for k, v in spec.items() if v is not None} if isinstance(spec, dict) else {}
     return schema
 
 
 BASE = _load(BASE_SCHEMA) or {}   # km's own schema, before the overlay
 SCHEMA = _specs(_merge(BASE, _load(OVERLAY)))
 
-EXEMPT = set(SCHEMA.get("exempt_files") or [])
-RESERVED = set(SCHEMA.get("reserved_no_frontmatter") or [])
-SKIP = tuple(SCHEMA.get("skip_prefixes") or [])
-INDEX_SKIP = tuple(SCHEMA.get("index_skip_prefixes") or [])
+
+def _setting(key: str, usable):
+    """A top-level list setting km reads at import: its value, or where km could not use it (it would
+    stop with a traceback) a problem (PROBLEMS) and None. A value km reads oddly but without failing
+    (a single string as skip_prefixes) is kept as it was read before."""
+    value = SCHEMA.get(key)
+    if value is None or usable(value):
+        return value
+    PROBLEMS.append(f"schema.local.yaml: {key} must be a list of strings")
+    return None
+
+
+def _names(v) -> bool:
+    """What set() takes without failing: a string, or a list or mapping of plain values."""
+    return isinstance(v, str | dict) or isinstance(v, list) and not any(isinstance(x, list | dict) for x in v)
+
+
+def _prefixes(v) -> bool:
+    """What str.startswith takes as a tuple without failing: strings only (a lone string reads as its letters)."""
+    return isinstance(v, str) or isinstance(v, list | dict) and all(isinstance(x, str) for x in v)
+
+
+EXEMPT = set(_setting("exempt_files", _names) or [])
+RESERVED = set(_setting("reserved_no_frontmatter", _names) or [])
+SKIP = tuple(_setting("skip_prefixes", _prefixes) or [])
+INDEX_SKIP = tuple(_setting("index_skip_prefixes", lambda v: isinstance(v, list) and _prefixes(v)) or [])   # validate always refused a lone string
 _gate = SCHEMA.get("gate")
 _gate = _gate if isinstance(_gate, dict) else {}   # a malformed gate is reported by `km validate`
+for _k in ("served_status", "customer_audience"):  # compared, hashed and put in patterns: a string
+    if not isinstance(_gate.get(_k, ""), str):
+        PROBLEMS.append(f"schema.local.yaml: gate.{_k} must be a string")
+        _gate = dict(_gate)
+        del _gate[_k]
 SERVED_STATUS = _gate.get("served_status", "accepted")
 RETIRED_STATUS = ("superseded", "obsolete")
 CUSTOMER_AUDIENCE = _gate.get("customer_audience", "customer")
