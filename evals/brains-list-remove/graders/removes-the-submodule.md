@@ -1,5 +1,6 @@
 ---
-type: tool_used
-tool: Bash
-input_match: 'git submodule deinit|git rm'
+type: regex
+target: {source: file, path: .git/index}
+pattern: 'brains/peer'
+match: not_contains
 ---
