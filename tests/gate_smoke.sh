@@ -846,4 +846,61 @@ out="$(km promote --root "$S/b" xr-path-ok "$N/p.md" --folder k --author X 2>&1)
 { [ "$rc" = 0 ] && [ -e "$S/b/k/xr-path-ok.md" ]; } && ok "promote cross-repo: a path link to a doc of the brain resolves" || no "promote cross-repo path link ($rc: $out)"
 rm -rf "$S" "$N"
 
+# bergab-old: a link to a superseded doc is quiet when its superseded_by chain reaches the linking doc or a doc
+# it also links (body or related:); a link to an obsolete doc, or one with no successor in sight, warns, once per target
+L="$(mktemp -d)"; mkdir -p "$L/d"; git -C "$L" init -q; printf '%s' "$GATE_ON" > "$L/schema.local.yaml"
+sup(){ doc "$L/d/$1" superseded "superseded_by: $2\n"; }
+sup old-design.md d/new-design.md; acc "$L/d/new-design.md" internal 'replaces [old](old-design.md), whose sections 2 and 3 still hold'
+sup a.md d/b.md; sup b.md '[d/c.md]'; acc "$L/d/c.md" internal c
+sup cy1.md d/cy2.md; sup cy2.md d/cy1.md; sup self.md d/self.md
+sup gone.md d/missing.md; draft "$L/d/wip.md"
+doc "$L/d/obs.md" obsolete
+page(){ printf -- '---\ntype: concept\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: accepted\naudience: internal\ntags: [t]\n%bowner: X\napproved_by: X\napproved_at: 2026-08-26\n---\n%s\n' "${3:+related: $3\n}" "$2" > "$L/d/$1"; }
+bo(){ out="$(km validate --root "$L" "$L/d/$1" 2>&1)"; rc=$?; }
+quiet(){ bo "$1"; { [ "$rc" = 0 ] && ! out_has gate-bergab && ! out_has Traceback; } && ok "bergab-old quiet: $2" || no "bergab-old quiet: $2 ($rc: $out)"; }
+warns(){ bo "$1"; { [ "$rc" = 0 ] && out_has " $2 x gate-bergab-old$" && out_has "$3"; } && ok "bergab-old warns: $4" || no "bergab-old warns: $4 ($rc: $out)"; }
+page both.md 'see [old](old-design.md) and [new](new-design.md)'
+page chain.md 'see [a](a.md) and [c](c.md)'
+page rel-old.md 'see [new](new-design.md)' '[d/old-design.md]'
+page rel-new.md 'see [old](old-design.md)' '[d/new-design.md]'
+page cy-both.md 'see [x](cy1.md) and [y](cy2.md)'
+quiet new-design.md "the successor links its predecessor"
+quiet both.md "a page links the old doc and its successor"
+quiet chain.md "a page links A and C of the chain A -> B -> C"
+quiet rel-old.md "the old doc in related:, the successor in the body"
+quiet rel-new.md "the old doc in the body, the successor in related:"
+quiet cy-both.md "two superseded docs that name each other, both linked (the rule as written)"
+page lone.md 'see [old](old-design.md), [again](old-design.md) and [[old-design]]' '[d/old-design.md]'
+warns lone.md 1 "links to superseded d/old-design.md, replaced by d/new-design.md: link d/new-design.md instead or as well" \
+  "no successor in sight, the successor named, once for a target linked four times"
+page to-a.md 'see [a](a.md)'
+warns to-a.md 1 "superseded d/a.md, replaced by d/c.md" "the warning names the first doc on the chain that is not retired"
+page to-cy.md 'see [x](cy1.md) and [s](self.md)'; warns to-cy.md 2 "superseded d/cy1.md, superseded_by d/cy2.md leads to no accepted doc" "a cycle in superseded_by ends the walk"
+out_has "superseded d/self.md, superseded_by d/self.md leads to no accepted doc" && ok "bergab-old warns: a doc superseded by itself" || no "bergab-old self ($rc: $out)"
+page to-gone.md 'see [g](gone.md)'; warns to-gone.md 1 "superseded d/gone.md, superseded_by d/missing.md leads to no accepted doc" "a superseded_by that resolves to no doc"
+page to-obs.md 'see [o](obs.md), [o2](obs.md) and [n](new-design.md)'
+warns to-obs.md 1 "served doc links to obsolete d/obs.md" "a link to an obsolete doc, once"
+page to-wip.md 'see [w](wip.md) and [[wip]]' '[d/wip.md]'; bo to-wip.md
+{ [ "$rc" = 1 ] && out_has "1 x gate-bergab$" && out_has "unfinished (draft) d/wip.md"; } \
+  && ok "bergab: a draft linked three times is one error" || no "bergab draft dedupe ($rc: $out)"
+git -C "$L" add -A; out="$(km validate --root "$L" 2>&1)"; rc=$?
+{ out_has "1 x gate-bergab$" && out_has "6 x gate-bergab-old" && ! out_has Traceback; } \
+  && ok "bergab-old: the whole-repo run reports the same findings" || no "bergab-old whole repo ($rc: $out)"
+mkdir -p "$L/brains/peer"; git -C "$L/brains/peer" init -q; acc "$L/brains/peer/p-new.md" internal p   # a mounted brain
+printf '[submodule "brains/peer"]\n  path = brains/peer\n  url = x\n' > "$L/.gitmodules"
+sup peer-old.md brains/peer/p-new.md; page to-peer.md 'see [o](peer-old.md) and [n](../brains/peer/p-new.md)'
+quiet to-peer.md "the successor is a mounted brain's doc the page links"
+printf -- '---\ntype: concept\ntitle: m\ntimestamp: 2026-08-26\nauthor: X\nstatus: superseded\ntags: [t]\nsuperseded_by: new-design\n---\nm\n' > "$L/brains/peer/p-mid.md"
+sup mid-old.md brains/peer/p-mid.md; page to-mid.md 'see [o](mid-old.md) and [n](new-design.md)'
+warns to-mid.md 1 "superseded d/mid-old.md, superseded_by brains/peer/p-mid.md leads to no accepted doc" \
+  "the chain stops at a mounted brain's doc (its superseded_by is that brain's)"
+rm -rf "$L/brains/peer"; warns to-peer.md 1 "superseded_by brains/peer/p-new.md leads to no accepted doc" "a successor in a mounted brain not checked out ends the chain"
+sup ds-old.md d/ds-new.md; draft "$L/d/ds-new.md"; page to-ds.md 'see [o](ds-old.md)'
+warns to-ds.md 1 "superseded d/ds-old.md, superseded_by d/ds-new.md leads to no accepted doc" "an unfinished successor is not offered as the link"
+sup o2.md n2.md; acc "$L/n2.md" internal n2; doc "$L/d/n2.md" obsolete; page to-o2.md 'see [o](o2.md) and [n](../n2.md)'
+quiet to-o2.md "superseded_by resolves from the brain root first, as CONVENTIONS.md writes it"
+printf 'meta: {profile: smoke}\n' > "$L/schema.local.yaml"; bo lone.md
+{ [ "$rc" = 0 ] && ! out_has gate-bergab; } && ok "bergab-old: with the gate off, no finding" || no "bergab-old gate off ($rc: $out)"
+rm -rf "$L"
+
 summary smoke || exit 1
