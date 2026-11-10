@@ -83,9 +83,9 @@ def record_digests() -> tuple[list[str], list[str]]:
     from the doc as committed with its last `approved_at` change (a shallow clone without that commit
     takes the text as it is). Imported here, not at the top: km.common reads the schema overlay,
     which this upgrade may have just renamed."""
-    from km.common import ROOT, SERVED_STATUS, approved_digest, is_article, set_digest, split_frontmatter, tracked_md
+    from km.common import ROOT, SERVED_STATUS, approved_digest, git_md, is_article, set_digest, split_frontmatter, tracked_md
     from km.edit import load_doc
-    if git("rev-parse", "--is-inside-work-tree", cwd=ROOT).returncode:
+    if git_md() is None:
         return [], []                 # not a git work tree: no tracked docs to look at (tracked_md would exit)
     dirty = set(git("diff", "HEAD", "--name-only", "--relative", "-z", cwd=ROOT).stdout.split("\0"))
 

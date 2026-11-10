@@ -133,4 +133,17 @@ out="$(cd "$GI" && git add -A && km gen-index --check 2>&1)"; rc=$?
 [ "$rc" = 0 ] && ok "gen-index --check: a number or date title" || no "gen-index --check: non-string title ($rc: $out)"
 rm -rf "$GI"
 
+# a bare [[slug]] in an _index.md is a file name, never a glob pattern
+GS="$(mktemp -d)"; mkdir -p "$GS/f"
+printf 'meta: {profile: idx}\ncheck_index: true\n' > "$GS/schema.local.yaml"
+doc "$GS/f/alpha.md"; doc "$GS/f/beta.md"; idx "$GS/f/_index.md" '# F\n- [[alph*]]\n- [[**x**]]'
+( cd "$GS" && git init -q && git add -A )
+out="$(cd "$GS" && km validate 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! has Traceback && has "does not link f/alpha.md" && has "does not link f/beta.md"; } \
+  && ok "index: a [[slug]] with glob characters credits no doc" || no "index: glob slug ($rc: $out)"
+idx "$GS/f/_index.md" '# F\n- [[alpha]]\n- [[beta]]'; ( cd "$GS" && git add -A )
+out="$(cd "$GS" && km validate 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! has "does not link f/"; } && ok "index: an exact [[slug]] still credits its doc" || no "index: exact slug ($rc: $out)"
+rm -rf "$GS"
+
 summary index-smoke || exit 1

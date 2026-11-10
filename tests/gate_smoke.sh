@@ -640,4 +640,42 @@ km promote --root "$T" cr-topic "$X/cr.md" --folder ap --author X >/dev/null 2>&
   && ok "promote cross-repo: the target decides the approval level" || no "promote cross-repo: the target decides the approval level"
 rm -rf "$X" "$T/ap" "$T/p2.bak" "$T/p5.bak" "$T/p7.bak"
 
+# bergab resolves a bare [[slug]] by exact file name among the docs on disk git tracks or would track: no glob
+S="$(mktemp -d)"; mkdir -p "$S/b/k" "$S/b/scratch"; git -C "$S" init -q   # the brain sits below the git top level
+GATE_ON=$'meta: {profile: smoke}\ngate:\n  enabled: true\n'; printf '%s' "$GATE_ON" > "$S/b/schema.local.yaml"
+draft(){ printf -- '---\ntype: note\ntitle: w\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nwip\n' > "$1"; }
+draft "$S/b/k/wip.md"
+acc "$S/b/k/glob.md" internal $'[Decision]: **use-LTC6813** for the stack\n\nsee [[wi*]] and [[w?p]] and [x](w[i]p)'
+git -C "$S" add b
+for m in "" "$S/b/k/glob.md"; do
+  out="$(km validate --root "$S/b" $m 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && ! out_has Traceback && ! out_has gate-bergab; } \
+    && ok "bergab: a link target with glob characters is a name, not a pattern ($([ -n "$m" ] && echo per file || echo whole repo))" \
+    || no "bergab glob target ${m:+per file} ($rc: $out)"
+done
+draft "$S/b/scratch/foo.md"; acc "$S/b/k/sl.md" internal 'see [[foo]]'; git -C "$S" add b/k/sl.md
+printf 'scratch/\n' > "$S/b/.gitignore"
+out="$(km validate --root "$S/b" "$S/b/k/sl.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! out_has gate-bergab; } && ok "bergab: a gitignored draft is not a link target" || no "bergab: ignored draft ($rc: $out)"
+rm "$S/b/.gitignore"   # the gate runs before `git add` (km approve, promote): a draft not yet staged counts
+out="$(km validate --root "$S/b" "$S/b/k/sl.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "scratch/foo.md"; } \
+  && ok "bergab: an untracked draft that is not ignored fails" || no "bergab: untracked draft ($rc: $out)"
+git -C "$S" add b/scratch/foo.md
+out="$(km validate --root "$S/b" "$S/b/k/sl.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "scratch/foo.md"; } && ok "bergab: a tracked draft slug still fails" || no "bergab: tracked draft slug ($rc: $out)"
+mkdir -p "$S/b/a" "$S/b/z"; draft "$S/b/a/dup.md"; draft "$S/b/z/dup.md"; acc "$S/b/k/sh.md" internal 'see [[dup]]'
+git -C "$S" add b; rm "$S/b/a/dup.md"   # deleted, the deletion not staged: it must not take the name from z/dup.md
+out="$(km validate --root "$S/b" "$S/b/k/sh.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "z/dup.md"; } \
+  && ok "bergab: a tracked doc deleted on disk does not shadow a live one of the same name" || no "bergab: deleted shadow ($rc: $out)"
+N="$(mktemp -d)"; printf '%s' "$GATE_ON" > "$N/schema.local.yaml"   # not a git repo
+draft "$N/nd.md"; acc "$N/nl.md" internal 'see [[nd]]'
+out="$(km validate --root "$N" "$N/nl.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "nd.md"; } && ok "bergab: outside git a draft on disk is a link target" || no "bergab: no git, draft ($rc: $out)"
+acc "$N/n.md" internal 'see [top](#top) and [[n2]]'
+out="$(km validate --root "$N" "$N/n.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! out_has Traceback; } && ok "bergab: a brain outside git still validates per file" || no "bergab: no git ($rc: $out)"
+rm -rf "$S" "$N"
+
 summary smoke || exit 1
