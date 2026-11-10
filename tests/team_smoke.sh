@@ -940,6 +940,46 @@ cp "$F/sl2.ok" "$D2/schema.local.yaml"; out="$(km upgrade --root "$D2" --pin v1.
 { [ "$rc" = 0 ] && grep -q '^approved_digest:' "$D2/d/legacy.md" && grep -rq "v1.99.0" "$D2/.github/workflows"; } \
   && ok "the upgrade run after the schema is fixed records the digests and moves the pins" || no "upgrade after the schema fix ($rc: $out)"
 
+# --- upgrade past 1.11.0 regenerates the '## Documents' lists, which km 1.11.0 wrote with titles as YAML reads them ---
+X="$F/xidx"; km init "$X" --team --name X --desc x --initials XX --folder d=D --pin v1.11.0 >/dev/null
+doc "$X/d/ver.md" 1.10; doc "$X/d/flag.md" false
+printf -- '---\ntitle: [unclosed\n---\nbroken\n' > "$X/d/broken.md"   # km gen-index lists it by its file name
+old_list(){ kmpy - "$1" <<'PY'   # the list as km 1.11.0 wrote it: YAML's reading of a title
+import re, sys
+p = sys.argv[1]; t = open(p, encoding="utf-8").read()
+open(p, "w", encoding="utf-8", newline="\n").write(re.sub(r"(?s)## Documents.*", "## Documents\n\n- [Broken](broken.md)\n- [False](flag.md)\n- [1.1](ver.md)\n", t))
+PY
+}
+git -C "$X" init -q && git -C "$X" add -A && (cd "$X" && km gen-index >/dev/null)
+old_list "$X/d/_index.md"; cp "$X/d/_index.md" "$F/xidx.old"; git -C "$X" add -A && git -C "$X" "${G[@]}" commit -qm init
+cp "$X/schema.local.yaml" "$F/xidx.sl"; printf 'fields: {title: 7}\n' >> "$X/schema.local.yaml"
+out="$(km upgrade --root "$X" --pin v1.99.0 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "^schema.local.yaml: fields.title must be a mapping" && cmp -s "$X/d/_index.md" "$F/xidx.old" \
+  && ! grep -rq "v1.99.0" "$X/.github/workflows" && ! out_has Traceback; } \
+  && ok "upgrade past 1.11.0 over a schema km cannot read stops before the lists and the pins" || no "index regen, broken schema ($rc: $out)"
+cp "$F/xidx.sl" "$X/schema.local.yaml"
+out="$(km upgrade --root "$X" --pin v1.99.0 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && grep -qx -- '- \[1.10\](ver.md)' "$X/d/_index.md" && grep -qx -- '- \[false\](flag.md)' "$X/d/_index.md" \
+  && grep -qx -- '- \[Broken\](broken.md)' "$X/d/_index.md" && out_has "regenerated the '## Documents' list of d/_index.md:" \
+  && grep -rq "v1.99.0" "$X/.github/workflows" && (cd "$X" && km gen-index --check >/dev/null 2>&1); } \
+  && ok "upgrade from 1.11.0 past it regenerates the lists (an unparseable doc by its name), says so, and gen-index --check passes" \
+  || no "index regen on upgrade ($rc: $out; $(cat "$X/d/_index.md"))"
+git -C "$X" add -A && git -C "$X" "${G[@]}" commit -qm upgrade
+cp "$X/d/_index.md" "$F/xidx.new"; out="$(km upgrade --root "$X" --pin v1.99.0 2>&1)"
+{ cmp -s "$X/d/_index.md" "$F/xidx.new" && ! out_has "regenerated"; } && ok "a second upgrade regenerates nothing" || no "index regen twice ($out)"
+cp "$F/xidx.old" "$X/d/_index.md"; out="$(km upgrade --root "$X" --pin v1.11.0 --force 2>&1)"
+{ cmp -s "$X/d/_index.md" "$F/xidx.old" && ! out_has "regenerated"; } \
+  && ok "upgrade --force back to 1.11.0 does not regenerate with the new rules" || no "index regen on a downgrade ($out)"
+doc "$X/e/x.md" X; git -C "$X" add -A && git -C "$X" "${G[@]}" commit -qm "a folder without an index"
+out="$(km upgrade --root "$X" --pin v1.99.0 2>&1)"
+out_has "e/ hold docs but no _index.md" && ok "upgrade past 1.11.0 names a folder gen-index --check fails on for its missing _index.md" || no "unindexed note ($out)"
+P="$F/pidx"; km init "$P" --initials PP --pin v1.11.0 >/dev/null; doc "$P/inbox/ver.md" 1.10
+printf 'fields: {title: 7}\n' >> "$P/schema.local.yaml"   # read by no step of this upgrade, as before
+git -C "$P" init -q && git -C "$P" add -A && git -C "$P" "${G[@]}" commit -qm init
+out="$(km upgrade --root "$P" --pin v1.99.0 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! out_has "regenerated" && [ -z "$(git -C "$P" status --porcelain -- '*_index.md')" ]; } \
+  && ok "a brain with no generated list is left alone, its schema not read" || no "index regen, personal brain ($rc: $out)"
+
 # --- a team brain: a type without expiry is accepted without review_by, the others still need it ---
 signed='approved_by: DD\napproved_at: 2026-01-15\n'
 RB= TYPE=decision acc_doc "$D/d/nx-decision.md" Decided accepted "$signed"

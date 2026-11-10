@@ -57,11 +57,9 @@ def render(idx_text: str, docs: list[str], subs: list[str]) -> str | None:
     return head + "\n\n" + block + "\n" + tail
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(prog="km gen-index", allow_abbrev=False,
-                                 description="Regenerate the '## Documents' list in every _index.md.")
-    ap.add_argument("--check", action="store_true", help="write nothing; exit 1 if an _index.md would change")
-    check = ap.parse_args().check
+def regenerate(check: bool = False) -> tuple[list[str], list[str]]:
+    """Rewrite every _index.md whose '## Documents' list is out of date (with check, write nothing):
+    (the indexes that changed, the folders with docs or a subfolder index to list but no _index.md)."""
     files = {p for p in tracked_md() if not p.startswith(SKIP) and not p.startswith(INDEX_SKIP)}
     by_folder: dict[str, list[str]] = defaultdict(list)
     for p in files:
@@ -89,7 +87,15 @@ def main() -> int:
             changed.append(idx)
             if not check:
                 write_text(ROOT / idx, new)
+    return changed, unindexed
 
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="km gen-index", allow_abbrev=False,
+                                 description="Regenerate the '## Documents' list in every _index.md.")
+    ap.add_argument("--check", action="store_true", help="write nothing; exit 1 if an _index.md would change")
+    check = ap.parse_args().check
+    changed, unindexed = regenerate(check)
     if check and changed:
         print("km gen-index: out of date, run `km gen-index`:")
         for c in changed:
