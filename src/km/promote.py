@@ -113,9 +113,7 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
     if not src.name.endswith(".md") or src.name in _NOT_STUBBABLE:
         print(f"stub: source {src.name} is exempt/reserved/non-md; left untouched.")
         return False
-    try:
-        src_rel = str(src.resolve().relative_to(ROOT))
-    except ValueError:
+    if (src_rel := brain_path(src)) is None:
         print(f"stub: source is outside this repo ({src}); stub it in its own repo.")
         return False
     if under(src_rel, prefixes):
@@ -266,33 +264,32 @@ def main() -> int:
     today = datetime.date.today().isoformat()
     prefixes = submodule_prefixes()
     src_resolved = Path(a.source).resolve()
-    try:                                            # cross-repo = outside this repo OR inside a mounted brain
-        cross_repo = under(str(src_resolved.relative_to(ROOT)), prefixes)
-    except ValueError:
-        cross_repo = True
+    # cross-repo = outside this repo OR inside a mounted brain
+    cross_repo = (src_in := brain_path(src_resolved)) is None or under(src_in, prefixes)
 
     hits = find_hits(a.slug, prefixes, exclude=src_resolved)   # the source is never its own "existing doc"
     if len(hits) > 1:
         print(f"promote: REFUSED — slug '{a.slug}' collides across {len(hits)} files:")
         for h in hits:
-            print(f"  - {h.relative_to(ROOT)}")
+            print(f"  - {h.relative_to(ROOT).as_posix()}")
         return 2
 
     existing = hits[0] if hits else None
     if existing:
+        ex_rel = existing.relative_to(ROOT).as_posix()
         try:
-            ex_fm, _old = split_fm(existing, str(existing.relative_to(ROOT)))
+            ex_fm, _old = split_fm(existing, ex_rel)
         except Unparsable as exc:
             print(f"promote: REFUSED — {exc}: the doc in the brain is broken; fix it first (km validate shows it)")
             return 2
         if ex_fm.get("type") == "verbatim-block":
-            print(f"promote: REFUSED — {existing.relative_to(ROOT)} is a verbatim-block; change it only via supersede, not --replace.")
+            print(f"promote: REFUSED — {ex_rel} is a verbatim-block; change it only via supersede, not --replace.")
             return 2
         if ex_fm.get("status") != SERVED_STATUS:
-            print(f"promote: REFUSED — target {existing.relative_to(ROOT)} is not served (status={ex_fm.get('status')!r}).")
+            print(f"promote: REFUSED — target {ex_rel} is not served (status={ex_fm.get('status')!r}).")
             return 2
         if not a.replace:
-            print(f"promote: REFUSED — {existing.relative_to(ROOT)} exists. Re-run with --replace")
+            print(f"promote: REFUSED — {ex_rel} exists. Re-run with --replace")
             print("         (that invalidates its approval and sets status: review).")
             return 2
         fm = ex_fm
@@ -350,16 +347,14 @@ def main() -> int:
 
     # containment: the target must live inside the repo and NOT inside a peer brain/submodule,
     # checked BEFORE any write (so a crafted slug/--folder can never escape the repo).
-    try:
-        rel_target = str(target.resolve().relative_to(ROOT))
-    except ValueError:
+    if (rel_target := brain_path(target)) is None:   # with `/` on Windows too: under(), the stub, the messages
         print(f"promote: REFUSED — target escapes the repository: {target}")
         return 2
     if under(rel_target, prefixes):
         print(f"promote: REFUSED — target {rel_target} is inside a peer brain/submodule.")
         print("         Correct a foreign brain via a PR against its own repo, never in the parent.")
         return 2
-    if existing is None and (bad := unportable_part(Path(rel_target).as_posix())):   # `\` on Windows
+    if existing is None and (bad := unportable_part(rel_target)):
         print(f"promote: REFUSED — target {rel_target}: the folder {bad[0]!r} {bad[1]}, so no Windows clone could "
               f"check it out; pick another --folder.")
         return 2

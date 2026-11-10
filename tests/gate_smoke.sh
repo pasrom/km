@@ -183,6 +183,10 @@ km promote --root "$T" "xr-link" "$XSRC/y.md" --folder bms --author MSO >/dev/nu
 printf -- '---\ntype: note\ntitle: Z\ntimestamp: 2026-08-26\nstatus: draft\ntags: [t]\n---\nz\n' > "$T/brains/peer/z.md"
 km promote --root "$T" "xr-sub" "$T/brains/peer/z.md" --folder bms >/dev/null 2>&1
 { [ $? -eq 2 ] && [ ! -f "$T/bms/xr-sub.md" ]; } && ok "submodule source treated cross-repo (needs --author)" || no "submodule source treated cross-repo (needs --author)"
+# ... and a target inside one is refused, on Windows too (where the path km builds has backslashes)
+out="$(km promote --root "$T" "into-peer" "$T/plain.txt" --folder brains/peer --type note --author X 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && out_has "target brains/peer/into-peer.md is inside a peer brain/submodule" && [ ! -e "$T/brains/peer/into-peer.md" ]; } \
+  && ok "promote refuses a target inside a mounted brain" || no "promote into a mounted brain ($rc: $out)"
 
 # X5: a code fence containing [[ is not a link -> not refused
 printf -- '---\ntype: note\ntitle: F\ntimestamp: 2026-08-26\nauthor: MSO\nstatus: draft\ntags: [t]\n---\nshell:\n```bash\nif [[ -f x ]]; then echo hi; fi\n```\n' > "$XSRC/f.md"
