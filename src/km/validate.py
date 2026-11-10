@@ -57,7 +57,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, md_named, pin_state, tracked_md, unportable_part
+from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, md_named, pin_state, tracked_md, unportable_part
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -662,6 +662,9 @@ def main() -> int:
             continue
 
         body = body_of(text)
+        for _where in colliding_keys(fm):
+            warnings.append(("key-collision", rel, f"{_where} read as the same text: quote both or rename one, "
+                                                  f"so nobody takes them for one key"))
         # the digest as km approve computes it: before the aliases below change the frontmatter
         digest = approved_digest(fm, body) if fm.get("approved_digest") else None
         if rel in changed and (_why := signoff_problem(fm, body, changed[rel] and doc_at(mb, changed[rel]))):

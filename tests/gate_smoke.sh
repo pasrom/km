@@ -814,6 +814,14 @@ for sl in 'x.' 'x '; do   # the file name is x..md, x .md: Windows keeps those
   { [ "$rc" = 0 ] && [ -e "$S/b/k/$sl.md" ]; } && ok "promote: the slug '$sl' becomes a file name Windows holds" || no "promote: slug '$sl' ($rc: $out)"
   rm -f "$S/b/k/$sl.md"
 done
+# two keys that read as the same text: a warning, and the digest covers both values
+out="$(kmpy "$REPO/tests/digest_check.py" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "approved_digest is unchanged for every doc without such keys, and covers both values of a pair" || no "digest_check.py ($out)"
+printf -- '---\ntype: note\ntitle: kc\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\nvalid_for:\n  1: a\n  "1": b\n  2026-01-01: c\n  "2026-01-01": d\n---\nx\n' > "$S/b/k/kc.md"
+out="$(km validate --root "$S/b" "$S/b/k/kc.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "2 x key-collision" && out_has 'valid_for: 1 (int) and "1" read as the same text' \
+  && out_has 'valid_for: 2026-01-01 (date) and "2026-01-01"'; } && ok "validate warns about two keys that read as the same text" || no "key-collision ($rc: $out)"
+rm -f "$S/b/k/kc.md"
 i=0; for l in 'ign.md' '/scratch/ign2.md' '../scratch/ign2.md'; do i=$((i+1))
   printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [x](%s)\n' "$l" > "$N/p.md"
   out="$(km promote --root "$S/b" "xr-path$i" "$N/p.md" --folder k --author X 2>&1)"; rc=$?
