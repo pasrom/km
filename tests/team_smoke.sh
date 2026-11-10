@@ -211,7 +211,13 @@ G add -A; out="$(kt serve)"
 { ! out_has Traceback && grep '"path": "process/keyed.md"' "$T/dist/served/internal.jsonl" | grep '"tags": \[{"2026-11-11": "t"}\]' \
     | grep -q '"ticket": {"2026-11-12": "x", "7": "y"}'; } \
   && ok "serve: a date read as a mapping key is served as text" || no "serve: date keys ($out)"
-G rm -qf --cached process/keyed.md; rm -f "$T/process/keyed.md"; kt serve >/dev/null
+G rm -qf --cached process/keyed.md; rm -f "$T/process/keyed.md"
+# a number title is served as written: YAML reads `1.10` as 1.1
+printf -- '---\ntype: concept\ntitle: 1.10\ntimestamp: 2026-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2099-01-01\n---\nx\n' > "$T/process/num.md"
+G add -A; out="$(kt serve)"
+grep '"path": "process/num.md"' "$T/dist/served/internal.jsonl" | grep -q '"title": "1.10"' \
+  && ok "serve: a number title as written in the file" || no "serve: number title ($out; $(grep num.md "$T/dist/served/internal.jsonl"))"
+G rm -qf --cached process/num.md; rm -f "$T/process/num.md"; kt serve >/dev/null
 
 # --- served_status is read from the gate config, as the validator does ---
 G add -A && G commit -q -m docs >/dev/null

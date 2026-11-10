@@ -70,6 +70,10 @@ out="$(cd "$T/a" && km list . --json --fields path 2>/dev/null)"; { grep -q "a/o
 out="$(cd "$T" && km list ../x 2>&1)"; grep -q "outside the brain" <<< "$out" && ok "a path outside the brain is refused" || no "outside ($out)"
 doc c/esc.md note 'Bad\e[2Jtitle' AA draft x; git -C "$T" add c
 L c; { grep -q 'Bad?\[2Jtitle' <<< "$out" && ! LC_ALL=C grep -q $'\033' <<< "$out"; } && ok "a control character in a title is not printed raw" || no "escape ($out)"
+printf -- '---\ntitle: 1.10\ndescription: 2.50\n---\nbody\n' > "$T/c/num.md"; git -C "$T" add c/num.md
+L c/num.md --fields title,description --json
+kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"title": "1.10", "description": "2.50"}])' <<< "$out" \
+  && ok "a number title or description is listed as written (YAML reads 1.10 as 1.1)" || no "number title ($out)"
 printf -- '---\n{}\n---\nbody\n' > "$T/e/empty.md"; git -C "$T" add e/empty.md
 out="$(cd "$T" && km list e 2>&1)"; ! grep -q "e/empty.md" <<< "$out" && grep -q "1 doc(s) whose" <<< "$out" && ok "empty frontmatter is not called unparseable" || no "empty fm ($out)"
 out="$(cd "$T" && km list --all e 2>&1)"; grep -q "listed without fields" <<< "$out" && ok "with --all an unparseable doc is listed, and said so" || no "all broken ($out)"

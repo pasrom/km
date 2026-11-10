@@ -21,7 +21,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from km.common import INDEX_SKIP, ROOT, SKIP, folder_of, frontmatter, is_article, read, tracked_md
+from km.common import INDEX_SKIP, ROOT, SKIP, fm_text, folder_of, is_article, read, split_frontmatter, tracked_md
 from km.paths import write_text
 
 _MARK = re.compile(r"(?m)^## Documents[ \t]*$")
@@ -29,12 +29,11 @@ _NEXT_H2 = re.compile(r"(?m)^## ")
 
 
 def _entry(path: str, link: str, fallback: str) -> str:
-    fm = frontmatter(read(path))
-    # As text: YAML reads `title: 2024` as a number, `2026-11-10` as a date, and km validate takes both;
-    # a block scalar has line breaks, which would split the list entry.
-    title, desc = (" ".join(str(v).splitlines()) for v in (fm.get("title"), fm.get("description")))   # None reads "None"
-    title = (fallback if fm.get("title") in (None, "") else title).replace("[", " ").replace("]", " ")
-    desc = "" if fm.get("description") is None else desc
+    fm, raw, _ = split_frontmatter(read(path))
+    # As written: YAML reads `title: 1.10` as 1.1 and km validate takes it; a block scalar has line
+    # breaks, which would split the list entry.
+    title, desc = (" ".join((fm_text(fm or {}, raw, k) or "").splitlines()) for k in ("title", "description"))
+    title = (title or fallback).replace("[", " ").replace("]", " ")
     return f"- [{title}]({link})" + (f": {desc}" if desc else "")
 
 
