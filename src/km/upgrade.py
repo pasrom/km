@@ -46,7 +46,7 @@ from pathlib import Path
 
 import yaml
 
-from km import KM_REF, paths
+from km import KM_REF
 from km.init import GEN_INDEX, TEAM, ensure_lf, gen_index_hook, pin_values, template, with_gen_index, with_team_hooks
 from km.paths import git, repo_root, write_text
 from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
@@ -89,19 +89,9 @@ def record_digests() -> tuple[list[str], list[str]]:
     content nobody approved yet: with uncommitted changes, or, where history has it, one that differs
     from the doc as committed with its last `approved_at` change (a shallow clone without that commit
     takes the text as it is). Imported here, not at the top: km.common reads the schema overlay,
-    which this upgrade may have just renamed. A schema km cannot read (km.common.PROBLEMS) records
-    none, with a note: the upgrade has written its other files by now and must not stop halfway."""
-    paths.defer_schema_problems = True
-    try:
-        from km.common import (PROBLEMS, ROOT, SERVED_STATUS, approved_digest, doc_at, git_md, is_article, set_digest,
-                               tracked_md)
-        from km.edit import load_doc
-    finally:
-        paths.defer_schema_problems = False
-    if PROBLEMS:
-        print(f"km upgrade: recorded no approved_digest, the schema stops km: {PROBLEMS[0]}; accepted docs without "
-              f"one are not checked for changes until they are approved again", file=sys.stderr)
-        return [], []
+    which this upgrade may have just renamed."""
+    from km.common import ROOT, SERVED_STATUS, approved_digest, doc_at, git_md, is_article, set_digest, tracked_md
+    from km.edit import load_doc
     if git_md() is None:
         return [], []                 # not a git work tree: no tracked docs to look at (tracked_md would exit)
     dirty = set(git("diff", "HEAD", "--name-only", "--relative", "-z", cwd=ROOT).stdout.split("\0"))

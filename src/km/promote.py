@@ -3,8 +3,9 @@
 Part of the km package, run as `km promote`. Moves a note into the brain as a
 `status: review` doc, dedups by topic slug, and prints a pointer (paste back into personal
 scratch instead of keeping a copy). Safety rules:
-  * The slug must be a single path segment and a file name Windows can hold too (none of
-    < > : " / \\ | ? * or a control character, no device name such as CON or AUX); the target is
+  * The slug must be a single path segment, and it and every --folder part a name Windows can hold
+    too (km.common.unportable: none of < > : " / \\ | ? * or a control character, no device name such
+    as CON or AUX, no trailing dot or space); the target is
     containment-checked (inside the repo, not inside a peer brain/submodule) BEFORE anything is
     written, and a file already there that the dedup does not count (gitignored) is never overwritten.
   * The candidate is gated in a temp file inside the repo, then atomically renamed onto the
@@ -44,7 +45,7 @@ from pathlib import Path
 import yaml
 
 from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, brain_path, default_review_by, known_file, md_named,
-                       review_by_default_problem, submodule_prefixes, under, yaml_reason)
+                       review_by_default_problem, submodule_prefixes, under, unportable, unportable_part, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
 
@@ -247,13 +248,9 @@ def main() -> int:
     if not a.slug or a.slug != Path(a.slug).name:
         print(f"promote: REFUSED — slug must be a single path segment (no '/' or '..'), got {a.slug!r}")
         return 2
-    if bad := sorted(set(re.findall(r'[<>:"\\|?*\x00-\x1f\x7f]', a.slug))):   # Windows cannot hold such a name; "/" is refused above
-        print(f"promote: REFUSED — slug {a.slug!r} holds {', '.join(map(repr, bad))}, which a file name on Windows "
-              f"cannot (< > : \" / \\ | ? * and control characters); pick another slug.")
-        return 2
-    if re.fullmatch(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", a.slug):   # reserved with any extension
-        print(f"promote: REFUSED — slug {a.slug!r} starts with a device name Windows reserves (CON, PRN, AUX, NUL, "
-              f"COM1-9, LPT1-9), so no Windows clone could check it out; pick another slug.")
+    if why := unportable(f"{a.slug}.md"):   # the file name it becomes
+        print(f"promote: REFUSED — slug {a.slug!r}: {a.slug}.md {why}, so no Windows clone could check it out; "
+              f"pick another slug.")
         return 2
 
     if not Path(a.source).is_file():
@@ -360,6 +357,10 @@ def main() -> int:
     if under(rel_target, prefixes):
         print(f"promote: REFUSED — target {rel_target} is inside a peer brain/submodule.")
         print("         Correct a foreign brain via a PR against its own repo, never in the parent.")
+        return 2
+    if existing is None and (bad := unportable_part(Path(rel_target).as_posix())):   # `\` on Windows
+        print(f"promote: REFUSED — target {rel_target}: the folder {bad[0]!r} {bad[1]}, so no Windows clone could "
+              f"check it out; pick another --folder.")
         return 2
     if target.resolve() == src_resolved:
         print("promote: REFUSED — source and target are the same file.")

@@ -35,6 +35,7 @@ Collect only **git-tracked** `.md` files via `git ls-files -z '*.md'`. Exclude f
 - Folders containing `.md` files but no `_index.md`
 - `_index.md` that doesn't link all non-index `.md` files in its folder
 - Files in `inbox/` with first git commit date >14 days ago
+- A tracked doc whose path a clone on Windows cannot check out: a file or folder name with `< > : " / \ | ? *` or a control character, a device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with any extension), or a trailing dot or space. `km validate` reports it as `portable-name`, a WARNING (gate on or off), never an error; rename it with `git mv`.
 
 **🔵 Suggestions** (nice to fix):
 - Orphaned pages: no incoming `related:` references AND not listed in any `_index.md`
@@ -87,6 +88,8 @@ Findings are redacted. The link scan strips code fences; the secret/leak scans s
 ### Promote (`km promote`)
 
 `km promote <slug> <source> --folder DIR [--type T] [--title T] [--author A] [--owner O] [--audience A] [--ticket KEY] [--replace] [--stub-source]` moves a note into the brain as a `status: review` doc, **dedups by slug** (updates the existing topic doc, never a duplicate), gates the candidate **before** placing it (a failing promote writes nothing), and prints a pointer to paste back into personal scratch instead of a copy. The source's own frontmatter is **carried forward** (`type`/`title`/`author`/`tags`/…) and its `status`/approval/ supersede fields are dropped and re-stamped, so a source that already has frontmatter never yields a double header; `--type`/`--title`/`--author` override it. A **new** doc needs `--folder` (no default) and a resolvable `type`+`author`. Author resolves `--author` > source frontmatter > `author_default` (a repo-local default in `schema.local.yaml`). **Cross-repo** (the source lives outside this repo, e.g. promoting from a personal brain into a team brain): `--author` is required (the target's `author_default` would mis-attribute the source's author), `related`/`sources`/`translates`/`project` are dropped (they point at the source repo) and any body link into the source repo is refused; `--ticket KEY` (optional, any key, need not be a Jira ticket) stamps the `ticket` field. `--replace` overwrites an existing served doc and **invalidates its approval** (`status: review`, `approved_*` dropped), but a `verbatim-block` is **never** `--replace`d (change it only via supersede); slug collisions across folders are a hard stop. `--stub-source` rewrites an in-repo source note into a superseded redirect stub pointing at the promoted doc (a source in another repo is left untouched), so the knowledge lives once, not twice.
+
+The slug and every `--folder` part must be names a clone on Windows can check out, the rule `portable-name` checks: `km promote` refuses any other (exit 2) and writes nothing.
 
 Known limitations (advisory scope, follow-ups): whole-repo mode sees TRACKED files only; per-file mode does not check reverse edges (a target flipping to `draft` is caught only in a full run); link-form coverage is inline/reference/wiki/HTML/angle-bracket (not exhaustive).
 

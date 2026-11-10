@@ -16,6 +16,9 @@ sign off may stay in review once an AI pre-review is recorded (`reviewed_by`); a
 `signoff` error. A doc whose status and approved content (the digest fields and body) match the
 merge base is skipped, so a ripple edit to `related:` or `tags:` never asks for a new sign-off.
 
+A tracked doc whose path has a part a clone on Windows cannot check out (km.common.unportable) is
+`portable-name`: a WARNING.
+
 A served doc whose content changed since its approval (`approved_digest`, see km.common.DIGEST_FIELDS)
 is `approval-stale`: an ERROR with the gate on (a team brain), a WARNING without it.
 
@@ -54,7 +57,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, md_named, pin_state, tracked_md
+from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, md_named, pin_state, tracked_md, unportable_part
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -633,6 +636,10 @@ def main() -> int:
             for _c, _n, _rx in CODE_NEEDLES:
                 if _c != _own and _n in _scan and _rx.search(_scan):   # substring first: the regex is slow
                     errors.append(("gate-leak:code", _sf, f"project code {_redact(_c)} outside its own folder"))
+
+    for _pf in secret_targets(given):   # a doc a clone on Windows cannot check out (any tracked doc, as the secret scan)
+        if _bad := unportable_part(_pf):
+            warnings.append(("portable-name", _pf, f"{_bad[0]!r} {_bad[1]}, so a clone on Windows cannot check it out: rename it"))
 
     _target_list = targets(given)
     for rel in _target_list:

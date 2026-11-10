@@ -792,6 +792,28 @@ i=0; for w in 'targe*' '**nope**' 'ign2'; do i=$((i+1))
     && ok "promote cross-repo: [[$w]] is a dead link$([ "$w" = ign2 ] && echo ': a gitignored file is none' || echo ', not a pattern')" \
     || no "promote cross-repo [[$w]] ($rc: $out)"
 done
+# a doc path a clone on Windows cannot check out is a warning, never an error; promote refuses it
+mkdir -p "$S/b/pn/dir." "$S/b/pn/ok"; draft "$S/b/pn/aux.md"; draft "$S/b/pn/q?.md"; draft "$S/b/pn/dir./d.md"; draft "$S/b/pn/ok/fine.md"
+git -C "$S" add b/pn
+out="$(km validate --root "$S/b" "$S/b/pn/aux.md" "$S/b/pn/q?.md" "$S/b/pn/dir./d.md" "$S/b/pn/ok/fine.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "3 x portable-name" && out_has "'dir.' ends in a dot" && out_has "pn/aux.md - 'aux.md' is a device name" \
+  && out_has "'q?.md' holds '?'" && ! out_has "fine.md"; } && ok "validate: an unportable doc path is a portable-name warning (per file)" \
+  || no "validate portable-name per file ($rc: $out)"
+out="$(km validate --root "$S/b" 2>&1)"
+{ out_has "3 x portable-name" && ! sed -n '/^ERRORS/,/^WARNINGS/p' <<< "$out" | grep -q portable; } \
+  && ok "validate: whole repo reports each unportable doc path as a warning" || no "validate portable-name whole repo ($out)"
+git -C "$S" rm -rq --cached b/pn; rm -rf "$S/b/pn"
+printf 'body\n' > "$N/pn.txt"
+for f in 'k/aux' 'k/dir.' 'k/a b ' 'x<y'; do
+  out="$(km promote --root "$S/b" pnew "$N/pn.txt" --folder "$f" --type note --author X 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && out_has "pick another --folder" && [ ! -e "$S/b/$f/pnew.md" ]; } \
+    && ok "promote: --folder '$f' is refused, nothing written" || no "promote: --folder '$f' ($rc: $out)"
+done
+for sl in 'x.' 'x '; do   # the file name is x..md, x .md: Windows keeps those
+  out="$(km promote --root "$S/b" "$sl" "$N/pn.txt" --folder k --type note --author X 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && [ -e "$S/b/k/$sl.md" ]; } && ok "promote: the slug '$sl' becomes a file name Windows holds" || no "promote: slug '$sl' ($rc: $out)"
+  rm -f "$S/b/k/$sl.md"
+done
 i=0; for l in 'ign.md' '/scratch/ign2.md' '../scratch/ign2.md'; do i=$((i+1))
   printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [x](%s)\n' "$l" > "$N/p.md"
   out="$(km promote --root "$S/b" "xr-path$i" "$N/p.md" --folder k --author X 2>&1)"; rc=$?

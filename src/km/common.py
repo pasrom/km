@@ -602,6 +602,29 @@ def brain_path(p: Path) -> str | None:
         return None
 
 
+_NOT_IN_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?")
+
+
+def unportable(name: str) -> str | None:
+    """Why a file or folder name is one a clone on Windows cannot check out, or None: a character no
+    Windows file name holds, a device name Windows reserves with any extension, or a trailing dot or
+    space, which Windows drops (`a.` and `a` would be one file)."""
+    if bad := sorted(set(_NOT_IN_NAME.findall(name))):
+        return (f"holds {', '.join(map(repr, bad))}, which a file name on Windows cannot "
+                f"(< > : \" / \\ | ? * and control characters)")
+    if _DEVICE.fullmatch(name):
+        return "is a device name Windows reserves (CON, PRN, AUX, NUL, COM1-9, LPT1-9), with any extension"
+    if name.endswith((".", " ")):
+        return "ends in a dot or a space, which Windows drops"
+    return None
+
+
+def unportable_part(rel: str) -> tuple[str, str] | None:
+    """The first part of a brain-relative path that a clone on Windows cannot check out, and why."""
+    return next(((part, why) for part in rel.split("/") if (why := unportable(part))), None)
+
+
 def is_article(rel: str) -> bool:
     name = rel.rsplit("/", 1)[-1]
     return not rel.startswith(SKIP) and name != "_index.md" and name not in EXEMPT and name not in RESERVED
