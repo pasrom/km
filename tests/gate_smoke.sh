@@ -796,7 +796,9 @@ i=0; for w in 'targe*' '**nope**' 'ign2'; do i=$((i+1))
     && ok "promote cross-repo: [[$w]] is a dead link$([ "$w" = ign2 ] && echo ': a gitignored file is none' || echo ', not a pattern')" \
     || no "promote cross-repo [[$w]] ($rc: $out)"
 done
-# a doc path a clone on Windows cannot check out is a warning, never an error; promote refuses it
+# a doc path a clone on Windows cannot check out is a warning, never an error; promote refuses it.
+# Windows cannot create such a path to check it with (aux.md, q?.md, a folder ending in a dot).
+if [ "$SEP" = ":" ]; then
 mkdir -p "$S/b/pn/dir." "$S/b/pn/ok"; draft "$S/b/pn/aux.md"; draft "$S/b/pn/q?.md"; draft "$S/b/pn/dir./d.md"; draft "$S/b/pn/ok/fine.md"
 git -C "$S" add b/pn
 out="$(km validate --root "$S/b" "$S/b/pn/aux.md" "$S/b/pn/q?.md" "$S/b/pn/dir./d.md" "$S/b/pn/ok/fine.md" 2>&1)"; rc=$?
@@ -807,6 +809,7 @@ out="$(km validate --root "$S/b" 2>&1)"
 { out_has "3 x portable-name" && ! sed -n '/^ERRORS/,/^WARNINGS/p' <<< "$out" | grep -q portable; } \
   && ok "validate: whole repo reports each unportable doc path as a warning" || no "validate portable-name whole repo ($out)"
 git -C "$S" rm -rq --cached b/pn; rm -rf "$S/b/pn"
+fi
 printf 'body\n' > "$N/pn.txt"
 for f in 'k/aux' 'k/dir.' 'k/a b ' 'x<y'; do
   out="$(km promote --root "$S/b" pnew "$N/pn.txt" --folder "$f" --type note --author X 2>&1)"; rc=$?
