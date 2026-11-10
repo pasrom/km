@@ -32,7 +32,7 @@ The author's own review before sign-off, run on the docs a branch adds or change
 
 ## Pull request preparation (`/km pr`)
 
-Runs on a brain branch before its first push, and again before pushing new commits to your own open PR: steps 1–5 before the push, step 6 once the PR exists. On a PR you did not open, run step 1 and the check in step 2 (no fixes), then post one review as below; never commit to or push their branch. `<base>` is the merge base with the brain's default branch.
+Runs on a brain branch before its first push, and again before pushing new commits to your own open PR: steps 1–5 before the push, step 6 once the PR exists. On a PR you did not open, run step 1 and the check in step 2 (no fixes), then post one review as below; never commit to or push their branch, but for the maintainer's sign-off commit (below). `<base>` is the merge base with the brain's default branch.
 
 1. **Review, sized to the PR.** The docs are the ones the branch adds or changes since `<base>`, or on an open PR since the head the PR body's `Last reviewed:` line records (all of them if that commit no longer resolves). Each reviewer is a separate agent running `/km review` steps 1–4 on its docs:
    - up to 4 docs: one reviewer, who also checks them against each other;
@@ -54,6 +54,7 @@ Runs on a brain branch before its first push, and again before pushing new commi
 - Never `APPROVE` or `REQUEST_CHANGES`: that is the human reviewer's call; recommend it in chat only.
 - Show the user the full review (body and line comments) and post only on their OK. Where gh cannot write (none, or 401/403 for this repo), post nothing, as in "GitHub access" (SKILL.md): give the user the payload and the exact `gh api` command. On a 422 for a line, move that comment into `body` and post again.
 - A new head gets a new review without the findings fixed since; never delete or resolve the old comments.
+- **Maintainer sign-off.** Where the missing sign-off is the only finding left, the brain's maintainer may push exactly one commit to a PR they did not open: only when the PR allows it (`gh pr view <N> -R <repo> --json maintainerCanModify,headRepository,headRefName`), after their own `/km review` of `<head>` and on the user's OK. It holds `km approve` on that head and nothing else (`--by ai:<model>`, or the maintainer's own initials, never another person's), committed as in "Approval" and pushed fast-forward to the PR's head branch, never forced. Any other change is a finding for the author.
 
 ## Approval (`km approve`)
 
