@@ -310,22 +310,70 @@ out="$(cd "$B" && "$REPO/skills/km/bin/km" sync --offline 2>&1)"; rc=$?
   && ok "nor what the launcher runs from inside the brain" || no "shadowing package via the launcher ($out)"
 printf 'python-preference = "only-managed"\npython-downloads = "never"\n' > "$B/uv.toml"   # read, this leaves uv no Python to run km with
 mkdir -p "$T/nopy"; out="$(cd "$B" && UV_PYTHON_INSTALL_DIR="$T/nopy" "$REPO/skills/km/bin/km" sync --offline 2>&1)"; rc=$?
-{ [ "$rc" = 0 ] && out_has "ok    branch main has everything the last fetched upstream main (offline) has"; } \
+{ [ "$rc" = 0 ] && out_has "ok    branch main has everything the last fetched upstream main (offline) has" && ! out_has "runs it$"; } \
   && ok "a uv.toml in the brain does not steer the launcher's uv" || no "uv.toml in the brain ($out)"
 rm -r "$B/km" "$B/uv.toml"
+expected="$(cd "$B" && km nosuch 2>&1)"; erc=$?   # what a failing km command prints, and its exit code
+printf 'x' > "$T/keep"; out="$(KM_PENDING_FILE="$T/keep" km --version 2>&1)"; rc=$?   # the launcher's file is empty
+{ [ "$rc" = 1 ] && [ -s "$T/keep" ] && out_has "^km: cannot remove KM_PENDING_FILE" && ! out_has "^$(km --version)$"; } \
+  && ok "km deletes no file with content for the launcher, and then runs nothing" || no "KM_PENDING_FILE with content ($rc: $out)"
+# km run by uv and failing: its output and exit code, once (where uv can set km up, online or cached)
+if command -v uv >/dev/null 2>&1 && uv run -q --no-config --no-project --python '>=3.11' --with pyyaml==6.0.3 python -c '' 2>/dev/null; then
+  out="$(cd "$B" && "$REPO/skills/km/bin/km" nosuch 2>&1)"; rc=$?
+  { [ "$rc" = "$erc" ] && [ "$rc" != 0 ] && [ "$out" = "$expected" ]; } \
+    && ok "a km command failing under uv fails the launcher with its own output, once" || no "km fails under the real uv ($rc/$erc: $out)"
+fi
 if [ "$SEP" = ":" ]; then   # a computer with git but nothing to run km with
   mkdir -p "$T/bare" && for c in bash git dirname find; do ln -s "$(command -v $c)" "$T/bare/$c"; done
   old
   out="$(cd "$B" && CLAUDE_PROJECT_DIR="$B" PATH="$T/bare" "$BASH" "$REPO/hooks/session-start.sh" 2>&1)"; rc=$?
   { [ "$rc" = 0 ] && [ -z "$out" ]; } && ok "without uv or Python the hook stays silent" || no "hook on a fresh computer ($out)"
   # without uv the launcher probes for a Python with PyYAML from inside the brain: a yaml.py there does not run
+  pyexe="$("$PY" -c 'import sys; print(sys.executable)')"
   mkdir -p "$T/pyonly" "$T/nohome" && ln -s "$(command -v dirname)" "$T/pyonly/dirname"
-  printf '#!/bin/sh\nexec "%s" "$@"\n' "$("$PY" -c 'import sys; print(sys.executable)')" > "$T/pyonly/python3" && chmod +x "$T/pyonly/python3"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$pyexe" > "$T/pyonly/python3" && chmod +x "$T/pyonly/python3"
   printf 'open(%s, "w").write("yaml")\n' "'$T/shadowed'" > "$B/yaml.py"
   out="$(cd "$B" && HOME="$T/nohome" PATH="$T/pyonly" "$BASH" "$REPO/skills/km/bin/km" --version 2>&1)"; rc=$?
   { [ "$rc" = 0 ] && [ ! -e "$T/shadowed" ] && [ "$out" = "$(km --version)" ]; } \
     && ok "without uv, a yaml.py in the brain is not what the launcher's Python probe imports" || no "yaml.py via the launcher's probe ($rc: $out)"
   rm -f "$B/yaml.py" "$T/shadowed"
+  # uv that cannot set km up (offline, nothing cached) hands over to a Python with PyYAML; a uv that
+  # ran km hands over nothing. python3 logs each run, so a km started twice shows.
+  mkdir -p "$T/uvfail"; for c in dirname mktemp rm; do ln -s "$(command -v $c)" "$T/uvfail/$c"; done
+  printf '#!/bin/sh\necho "$*" >> "%s"\nexec "%s" "$@"\n' "$T/pylog" "$pyexe" > "$T/uvfail/python3"
+  printf '#!/bin/sh\necho "error: Failed to fetch: https://pypi.org/simple/pyyaml/" >&2; exit 2\n' > "$T/uv-offline"
+  chmod +x "$T/uvfail/python3" "$T/uv-offline" && cp "$T/uv-offline" "$T/uvfail/uv"
+  plant(){ printf 'open(%s, "w").write("yaml")\n' "'$T/shadowed'" > "$B/yaml.py"; mkdir -p "$B/km"; : > "$B/km/__init__.py"
+    printf 'open(%s, "w").write("km")\n' "'$T/shadowed'" > "$B/km/__main__.py"; }
+  launch(){ : > "$T/pylog"; out="$(cd "$B" && PATH="$1" "$BASH" "$REPO/skills/km/bin/km" "${@:2}" 2>&1)"; rc=$?; runs="$(grep -c -- '-m km' "$T/pylog")"; }
+  plant; launch "$T/uvfail" --version
+  { [ "$rc" = 0 ] && [ "$runs" = 1 ] && [ "$(tail -n 1 <<< "$out")" = "$(km --version)" ] && out_has "Failed to fetch" \
+    && out_has "km: km did not start under uv (above), so python3 runs it" && [ ! -e "$T/shadowed" ]; } \
+    && ok "where uv cannot set km up, a Python with PyYAML runs it, and nothing from the brain" || no "uv fails, Python runs km ($rc, $runs runs: $out)"
+  launch "$T/uvfail" nosuch
+  { [ "$rc" = "$erc" ] && [ "$rc" != 0 ] && [ "$runs" = 1 ] && [ "${out#*runs it$'\n'}" = "$expected" ]; } \
+    && ok "km failing on that Python fails the launcher, unchanged, once" || no "km fails after uv fails ($rc/$erc, $runs runs: $out)"
+  printf '#!/bin/sh\nwhile [ "$1" != python ]; do shift; done; shift; exec python3 "$@"\n' > "$T/uvfail/uv"   # a uv that runs km
+  launch "$T/uvfail" nosuch
+  { [ "$rc" = "$erc" ] && [ "$runs" = 1 ] && [ "$out" = "$expected" ]; } \
+    && ok "km failing under uv fails the launcher, unchanged, and is not run again" || no "km fails under uv ($rc/$erc, $runs runs: $out)"
+  cp "$T/uv-offline" "$T/uvfail/uv"
+  rm "$T/uvfail/python3"; launch "$T/uvfail" --version
+  { [ "$rc" = 1 ] && out_has "Failed to fetch" && out_has "km cannot start: it did not start under uv" \
+    && out_has "no Python 3.11+ with PyYAML is installed here" && [ ! -e "$T/shadowed" ]; } \
+    && ok "where neither uv nor a Python can run km, the launcher names both" || no "uv fails, no Python ($rc: $out)"
+  # the same with the real uv, offline in an empty home, and a Python whose PyYAML uv does not see
+  # (no dist-info): uv has no pyyaml to resolve, the Python runs km
+  if command -v uv >/dev/null 2>&1 && "$PY" -m venv --without-pip "$T/venv" 2>/dev/null; then
+    mkdir -p "$T/yamlonly" "$T/uvhome" && ln -s "$("$PY" -c 'import os, yaml; print(os.path.dirname(yaml.__file__))')" "$T/yamlonly/yaml"
+    "$T/venv/bin/python" -c 'import site, sys; open(site.getsitepackages()[0] + "/yamlonly.pth", "w").write(sys.argv[1])' "$T/yamlonly"
+    rm "$T/uvfail/uv"; ln -s "$(command -v uv)" "$T/uvfail/uv"
+    out="$(cd "$B" && env -u UV_CACHE_DIR -u XDG_CACHE_HOME -u XDG_DATA_HOME -u UV_PYTHON_INSTALL_DIR -u UV_PYTHON -u VIRTUAL_ENV -u CONDA_PREFIX \
+      HOME="$T/uvhome" UV_OFFLINE=1 PATH="$T/venv/bin:$T/uvfail" "$BASH" "$REPO/skills/km/bin/km" --version 2>&1)"; rc=$?
+    { [ "$rc" = 0 ] && [ "$(tail -n 1 <<< "$out")" = "$(km --version)" ] && out_has "so python3 runs it" && [ ! -e "$T/shadowed" ]; } \
+      && ok "offline, the real uv hands over to a Python with PyYAML" || no "real uv offline ($rc: $out)"
+  fi
+  rm -rf "$B/yaml.py" "$B/km" "$T/shadowed"
 fi
 # the upstream renames its default branch: the stale ref is pruned, and the new name read from the host
 sync >/dev/null; git -C "$U" branch -m main trunk && git -C "$U" symbolic-ref HEAD refs/heads/trunk
