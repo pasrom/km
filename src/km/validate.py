@@ -591,8 +591,8 @@ def signoff_problem(fm: dict, body: str, then: tuple[dict | None, str] | None) -
     if st == SERVED_STATUS:
         if not fm.get("approved_by"):
             return f"is {st} without approved_by: sign it off with `km approve`, never by setting the status by hand"
-        if (dg := fm.get("approved_digest")) is not None:   # the content the approval saw; with the gate on approval-stale reports it
-            covered = GATE_ON or str(dg) == approved_digest(fm, body)
+        if "approved_digest" in fm:                  # the content the approval saw; with the gate on approval-stale reports it
+            covered = GATE_ON or str(fm["approved_digest"]) == approved_digest(fm, body)
         else:                                        # approved before km recorded a digest: a new approval in this PR covers it
             covered = old is None or any(old.get(k) != fm.get(k) for k in ("status", "approved_by", "approved_at"))
         return None if covered else ("changed since its sign-off: `km demote` it in this commit, then `km approve` it "
@@ -693,7 +693,7 @@ def main() -> int:
             warnings.append(("key-collision", rel, f"{_where} read as the same text: quote both or rename one, "
                                                   f"so nobody takes them for one key"))
         # the digest as km approve computes it: before the aliases below change the frontmatter
-        digest = approved_digest(fm, body) if fm.get("approved_digest") else None
+        digest = approved_digest(fm, body) if "approved_digest" in fm and fm.get("status") == SERVED_STATUS else None
         if rel in changed and (_why := signoff_problem(fm, body, changed[rel] and doc_at(mb, changed[rel]))):
             errors.append(("signoff", rel, _why))
         # apply field aliases declared in the schema (e.g. date -> timestamp)
@@ -758,8 +758,10 @@ def main() -> int:
         _why = approval_problem(fm, None if st == SERVED_STATUS else "")
         if _why:
             errors.append(("approval", rel, _why))
-        # an approval vouches for the content it saw; a doc approved before the digest existed has none
-        if st == SERVED_STATUS and (_dg := fm.get("approved_digest")) and str(_dg) != digest:
+        # an approval vouches for the content it saw; a doc approved before the digest existed has none.
+        # One that is there is compared whatever it holds: empty, null, a number or a boolean is no
+        # digest km wrote, so it never matches.
+        if st == SERVED_STATUS and digest is not None and str(fm["approved_digest"]) != digest:
             (errors if GATE_ON else warnings).append((
                 "approval-stale", rel, f"content changed since approved_by {fm.get('approved_by')} signed it off on "
                 f"{fm.get('approved_at')}: send it back to review in the same commit (`km demote {rel}`), then approve "
