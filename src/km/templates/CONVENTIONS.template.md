@@ -21,7 +21,7 @@ description: "One-sentence summary."
 resource: "https://…"                               # URI of the underlying asset (datasheet / repo / API)
 # Optional (governance):
 owner: <name>                                       # responsible for keeping the fact true
-review_by: 2027-01-15                               # review-by date
+review_by: 2027-01-15                               # review-by date; `km approve` sets the type's default
 project: <project-name>
 supersedes: <path.md>
 superseded_by: <path.md>
@@ -55,7 +55,7 @@ draft → review → accepted → superseded | obsolete
 
 - `draft`: Work in progress
 - `review`: Submitted for review, not yet approved
-- `accepted`: Reviewed, current, valid
+- `accepted`: Reviewed, current, valid. `km approve` and `km promote` give a doc without `review_by` its type's default: 365 days for `reference` and `concept`, 182 days for `note`, `summary` and any other type; none for `decision` (superseded, not stale), `transcript`, `verbatim-block` and `artifact` (fixed records); a `review_by` such a doc already carries still counts until removed. `review_by_default` in `schema.local.yaml` overrides single types, in days or `null` for no expiry.
 - `superseded`: Replaced by newer document (set `superseded_by:` field)
 - `obsolete`: No longer relevant, no replacement
 

@@ -34,6 +34,10 @@ gate:
 status_rules:
   accepted_requires: [owner, review_by]
 
+# review_by that `km approve` / `km promote` set on a doc without one, in days per type; null: the type
+# does not expire and needs no review_by. Only the types named here change km's defaults (see CONVENTIONS.md).
+# review_by_default: {note: 90}
+
 # Repo-only fields (shallow-merged over the base schema).
 fields:
   ticket:                 # provenance to the work item this doc came from

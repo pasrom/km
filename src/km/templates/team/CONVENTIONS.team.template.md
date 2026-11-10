@@ -38,7 +38,7 @@ language: <en|de>                                    # required on served docs
 # Optional:
 description: "One-sentence summary."
 owner: <initials>                                    # responsible for keeping it true (staleness)
-review_by: 2027-01-15                                # required once accepted
+review_by: 2027-01-15                                # required once accepted, unless the type does not expire
 approval: <human|ai>                                 # who may sign off; unset = approval_default (see Status lifecycle)
 approved_by: <initials | "ai:<model>">               # set by `km approve`, with approved_at and approved_digest
 reviewed_by: ["<reviewer or model> <date> (PR #N)"]  # pre-reviews, not an approval
@@ -78,7 +78,7 @@ On promote, `author` resolves `--author` > source frontmatter > `author_default`
 draft → review → accepted → superseded | obsolete
 ```
 
-- `accepted` = reviewed, current, in the served set. Requires `owner` + `review_by`.
+- `accepted` = reviewed, current, in the served set. Requires `owner` + `review_by`; `km approve` and `km promote` set `review_by` when it is missing, to the type's default: 365 days for `reference` and `concept`, 182 days for `note`, `summary` and any other type. A `decision` (superseded, not stale), `transcript`, `verbatim-block` or `artifact` (fixed records) does not expire: it needs no `review_by` and gets none. One it already carries still counts (CI demotes it when it lapses); remove the line to stop that. `review_by_default` in `schema.local.yaml` overrides single types, in days or `null` for no expiry (e.g. `review_by_default: {note: 90}`).
 - Sign-off is `km approve <doc> --by <initials>`, after the author's review (`/km review`). With `approval: ai`, or `approval_default: ai` in `schema.local.yaml` and no `approval` field, an AI review alone may sign off (`--by ai:<model>`); otherwise a person must. Only docs marked `audience: internal` can take an AI sign-off: customer-facing docs, any other audience, docs without an audience and verbatim-blocks always need a person.
 - An approval covers the content it saw: `km approve` records a digest of the body and the content fields (title, description, type, audience and the like; not tags, dates, owners, links, pins or cites). A change to that content afterwards fails `km validate`, so the commit that makes it also sends the doc back to review (`km demote <doc>`); the approval follows after review, in a commit of its own (`km approve <doc> --by <initials>`). Quote versions and numbers in those fields (`valid_for: "1.10"`).
 - CI **demotes** an `accepted` doc back to `review` when its `review_by` lapses, so it drops out of the served set automatically. Staleness is prevented, not just warned. An accepted doc that links to a demoted one then fails the gate; the weekly run turns red so the maintainer re-reviews either.
