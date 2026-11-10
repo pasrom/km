@@ -28,6 +28,14 @@
   that did not check it to one that does. This takes the current text as the approved one, so
   review `git diff` before committing. From then on `km validate` reports a change to its content as
   a stale approval (see km.common), and a later upgrade records nothing.
+- The generated '## Documents' list of each _index.md is regenerated (km.gen_index), once: when the
+  brain moves from a km at or below 1.11.0, which wrote a title as YAML reads it (`1.10` as 1.1,
+  `false` as False), to a later one, which writes it as written, so the brain's
+  `km gen-index --check` does not fail on the lists the old km wrote; a list stale for another reason
+  is brought up to date too, and a folder with docs but no _index.md gets a note. A brain with no such
+  list is left alone, its schema not read; `--force` back to an older km regenerates nothing. Like the
+  digests it runs before the pins move, so a schema km cannot read stops the upgrade there and the run
+  after the fix still does it.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
 
@@ -81,6 +89,7 @@ SHIPPED = {
 # a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
 KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f"}
 DIGEST_AFTER = (1, 10, 1)   # the last km release that does not record or check approved_digest
+INDEX_AFTER = (1, 11, 0)    # the last km release whose gen-index writes a title as YAML reads it (1.10 as 1.1)
 
 
 def record_digests() -> tuple[list[str], list[str]]:
@@ -115,6 +124,19 @@ def record_digests() -> tuple[list[str], list[str]]:
                 write_text(d.path, set_digest(d.raw, d.fm, d.body) + d.body)
                 done.append(rel)
     return done, left
+
+
+def regenerate_indexes(root: Path) -> tuple[list[str], list[str]]:
+    """Rewrite the generated '## Documents' lists, which this km writes differently (a title as
+    written, not as YAML reads it): (the _index.md files rewritten, the folders gen-index finds without
+    one). A brain with no tracked _index.md holding such a list, or no git work tree, is left alone
+    without reading its schema. km.gen_index is imported here for the reason record_digests gives."""
+    listed = git("ls-files", "-z", "--", "_index.md", "*/_index.md", cwd=root)
+    if listed.returncode or not any(re.search(r"(?m)^## Documents[ \t]*$", (root / p).read_text(encoding="utf-8", errors="replace"))
+                                    for p in listed.stdout.split("\0") if p and (root / p).is_file()):
+        return [], []
+    from km.gen_index import regenerate
+    return regenerate()
 
 
 USES = re.compile(r"(?m)^([ \t]*(?:-[ \t]+)?uses:[ \t]*([^@\s]+)@)\S+.*$")   # 1: up to the @, 2: the action
@@ -265,7 +287,11 @@ def main() -> int:
     rewrites = {rel: tpl for rel, (tpl, known) in OLD_COPIES.items()
                 if (root / rel).is_file() and fingerprint((root / rel).read_text(encoding="utf-8")) in known}
     current = all(p.is_commit and p.version == target for ps in pins.values() for p in ps)
-    crossing = any((k := version_key(p.version)) and k <= DIGEST_AFTER for ps in pins.values() for p in ps)
+    def crosses(after: tuple[int, ...]) -> bool:
+        """Whether this upgrade moves a pin at or below that release to a km past it (decided before the pins move)."""
+        return (version_key(target) or ()) > after and any(
+            (k := version_key(p.version)) and k <= after for ps in pins.values() for p in ps)
+    digest_crossing, index_crossing = crosses(DIGEST_AFTER), crosses(INDEX_AFTER)
     if rewrites or not current:               # decided before any write, so a failed lookup changes nothing
         values = pin_values(target)
     else:                                      # already on the release: still check it is the release's commit
@@ -396,7 +422,7 @@ def main() -> int:
     if note := ensure_lf(root):
         done.append(note)
     # once, when the brain crosses to a km that checks the digest: a later upgrade never takes text as approved
-    if (version_key(target) or ()) > DIGEST_AFTER and crossing:
+    if digest_crossing:
         signed, left = record_digests()
         if signed:
             done.append(f"recorded approved_digest for the current content of {len(signed)} accepted doc(s), taking "
@@ -404,6 +430,17 @@ def main() -> int:
         if left:
             done.append(f"recorded no approved_digest for {', '.join(left)}: nobody approved that text; send each back to "
                         f"review (`km demote <doc>`) and approve it after review, or revert the change")
+    # once, when the brain crosses to a km whose gen-index writes titles as written: its CI's
+    # `km gen-index --check` would fail on the lists the old rules wrote
+    if index_crossing:
+        rewritten, unindexed = regenerate_indexes(root)
+        if rewritten:
+            done.append(f"regenerated the '## Documents' list of {', '.join(rewritten)}: km {target} writes a title as "
+                        f"written, not as YAML reads it (1.10, not 1.1), and a list stale for another reason is brought "
+                        f"up to date too; check `git diff`")
+        if unindexed:
+            done.append(f"{', '.join(unindexed)} hold docs but no _index.md, which `km gen-index --check` fails on: "
+                        f"write one by hand (frontmatter, intro, an empty '## Documents' heading)")
 
     if values and (not current or stray):
         sha = values["<KM_SHA>"]
