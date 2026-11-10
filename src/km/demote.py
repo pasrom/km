@@ -19,8 +19,8 @@ import argparse
 import datetime
 import sys
 
-from km.common import (ROOT, SERVED_STATUS, demote_raw, is_article, read, review_by_default_problem, review_due,
-                       send_back, split_frontmatter, tracked_md)
+from km.common import (ROOT, SERVED_STATUS, approval_left, demote_raw, is_article, read, review_by_default_problem,
+                       review_due, send_back, split_frontmatter, tracked_md)
 from km.edit import edit_docs, load_doc
 from km.paths import write_text
 
@@ -72,9 +72,10 @@ def main() -> int:
         # bot's diff stays reviewable as "just the demotion": no YAML round-trip, no reformat.
         new_fm = demote_raw(d.raw)
         if new_fm is None:
-            stuck.append(f"{rel}: status line cannot be rewritten")      # never report it as demoted
+            stuck.append(f"{rel}: status line cannot be rewritten (or the block would no longer parse)")      # never report it as demoted
             continue
-        stale.append(rel)
+        left = approval_left(new_fm)
+        stale.append(f"{rel}: drop its {', '.join(left)} by hand" if left else rel)
         write_text(ROOT / rel, new_fm + d.body)
 
     if stale:
