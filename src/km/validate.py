@@ -30,7 +30,9 @@ When `schema.local.yaml` sets `gate.enabled: true`, extra checks run, keyed per 
                        forbidden terms also in any doc under `term_scan_prefixes`; and, with
                        `project_prefix`, a project folder's name in any doc outside that folder
   * bergab   (ERROR)   a served doc (status==served_status) links to an unfinished (draft/review) doc;
-                       a link to superseded/obsolete is a WARNING
+                       a link to obsolete is a WARNING, and so is one to superseded unless its
+                       superseded_by chain reaches the doc itself or a doc it also links; one finding
+                       per linked target
   * freshness(WARNING) a served doc whose `review_by` is in the past is stale
 Scans normalise NFKC + strip Unicode format chars (Cf) + emphasis. The LINK scan strips code fences;
 the secret/leak scans see the whole document (stricter: a forbidden term inside a code sample still
@@ -52,12 +54,12 @@ import re
 import sys
 import unicodedata
 import urllib.parse
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, tracked_md, unportable_part
+from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -311,20 +313,50 @@ def pin_problem(field: str, pin: str) -> tuple[str, str] | None:
 
 
 # --- gate helpers ---
-_status_cache: dict[str, str | None] = {}
+_meta_cache: dict[str, tuple[str | None, list[tuple[str, str | None]]]] = {}
+
+
+def _doc_meta(target_rel: str) -> tuple[str | None, list[tuple[str, str | None]]]:
+    """A link target's status and its `superseded_by` values, each with the doc it resolves to, or None:
+    missing, external, in a mounted brain not checked out. Repo-root-relative first, as CONVENTIONS.md writes
+    the field and resolve_ref checks it, then as a link from the target would (resolve_link). The
+    frontmatter is read once per run."""
+    if target_rel in _meta_cache:
+        return _meta_cache[target_rel]
+    p = ROOT / target_rel
+    st, succ = None, []
+    if p.is_file():
+        fm2 = frontmatter(p.read_text(encoding="utf-8-sig", errors="replace"))
+        if isinstance(fm2, dict) and "__error__" not in fm2:
+            st = fm2.get("status")
+            succ = [(v, resolve_path("_", v) or resolve_link(target_rel, v)) for v in   # "_": a doc at the root
+                    (str(x).strip() for x in as_list(fm2.get("superseded_by")) if isinstance(x, str)) if v]
+    _meta_cache[target_rel] = st, succ
+    return st, succ
 
 
 def doc_status(target_rel: str) -> str | None:
-    if target_rel in _status_cache:
-        return _status_cache[target_rel]
-    p = ROOT / target_rel
-    st = None
-    if p.is_file():
-        fm2 = frontmatter(p.read_text(encoding="utf-8-sig", errors="replace"))
-        if isinstance(fm2, dict):
-            st = fm2.get("status")
-    _status_cache[target_rel] = st
-    return st
+    return _doc_meta(target_rel)[0]
+
+
+def successor_in_sight(rel: str, target: str, linked: dict[str, None]) -> tuple[bool, str | None]:
+    """Whether the `superseded_by` chain of `target`, walked transitively, reaches the linking doc `rel` or a
+    doc `rel` also links; if not, the successor a warning can tell it to link: the first served doc on the
+    chain, or None. An unresolved value ends its branch, and so does a mounted brain's doc (its own
+    `superseded_by` is relative to that brain)."""
+    seen, todo, live = {target}, deque([target]), None
+    while todo:
+        for _raw, nxt in _doc_meta(todo.popleft())[1]:
+            if not nxt or nxt in seen:
+                continue
+            if nxt == rel or nxt in linked:
+                return True, None
+            if live is None and doc_status(nxt) == SERVED_STATUS:
+                live = nxt
+            seen.add(nxt)
+            if not under(nxt, submodule_prefixes()):
+                todo.append(nxt)
+    return False, live
 
 
 def resolve_path(rel: str, target: str) -> str | None:
@@ -339,6 +371,11 @@ def resolve_path(rel: str, target: str) -> str | None:
         if (rp := brain_path(cand)) and known_file(rp):   # a gitignored file is none, as for a slug
             return rp
     return None
+
+
+def resolve_link(rel: str, target: str) -> str | None:
+    """The doc a link or ref `target` in `rel` points at, as the gate reads it: a path, else a bare [[slug]]."""
+    return resolve_path(rel, target) or resolve_slug(target)
 
 
 def _norm(s: str) -> str:
@@ -602,7 +639,7 @@ def main() -> int:
     fresh_run()
     errors.clear()
     warnings.clear()
-    _status_cache.clear()
+    _meta_cache.clear()
     warnings.extend(("gate-config", "schema.local.yaml", _n) for _n in _gate_notices)
     warnings.extend(("km", _f, _n) for _f, _n in _repo_notices)
     # --- text pre-pass over ANY tracked doc (frontmatter or not): secrets, and the path-keyed leak
@@ -743,14 +780,23 @@ def main() -> int:
                     if _mm.group(0).rsplit("@", 1)[-1].lower() not in EMAIL_ALLOWLIST:
                         errors.append(("gate-leak:email", rel, f"external email {_redact(_mm.group(0))}"))
             if served:
-                _refs = as_list(fm.get("related"))
-                for _tgt in list(link_targets(text)) + [str(x) for x in _refs]:
-                    _tp = resolve_path(rel, str(_tgt)) or resolve_slug(str(_tgt))
-                    if not _tp or _tp == rel or _tp.startswith(SKIP_PREFIXES):
+                # every link once (one finding per target), resolved before any is judged: a successor the doc
+                # also links, a mounted brain's included, keeps the link to its predecessor quiet
+                _raw = dict.fromkeys([*link_targets(text), *map(str, as_list(fm.get("related")))])
+                _linked = dict.fromkeys(_tp for _tgt in _raw if (_tp := resolve_link(rel, _tgt)))
+                for _tp in _linked:
+                    if _tp == rel or _tp.startswith(SKIP_PREFIXES):
                         continue
                     _st2 = doc_status(_tp)
                     if _st2 in ("draft", "review"):
                         errors.append(("gate-bergab", rel, f"served doc links to unfinished ({_st2}) {_tp}"))
+                    elif _st2 == "superseded":
+                        _quiet, _by = successor_in_sight(rel, _tp, _linked)
+                        _first = _doc_meta(_tp)[1]
+                        if not _quiet:
+                            warnings.append(("gate-bergab-old", rel, f"served doc links to superseded {_tp}" + (
+                                f", replaced by {_by}: link {_by} instead or as well" if _by else
+                                f", superseded_by {_first[0][0]} leads to no {SERVED_STATUS} doc" if _first else "")))
                     elif _st2 in RETIRED_STATUS:
                         warnings.append(("gate-bergab-old", rel, f"served doc links to {_st2} {_tp}"))
                 if (_due := review_due(fm)) and _due < TODAY:   # none for a type that does not expire
