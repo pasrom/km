@@ -316,6 +316,9 @@ km approve --root "$T" "$T/ap/d4.md" --by ai:model-x --at 2026-09-30 >/dev/null 
   && ok "approve: approval_default: ai signs an internal doc off by ai:" || no "approve: approval_default: ai signs an internal doc off by ai:"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'approval_default: maybe\n' >> "$T/schema.local.yaml"
 km validate --root "$T" "$T/ap/a6.md" 2>&1 | grep -q "approval_default must be ai or human" && ok "approval_default: an unknown value fails fast" || no "approval_default: an unknown value fails fast"
+out="$(km validate --root "$T" --help 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "usage: km validate" && ! out_has "approval_default"; } \
+  && ok "approval_default: an unknown value still lets validate --help answer" || no "validate --help with a bad approval_default ($rc: $out)"
 printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [review_by]\n' >> "$T/schema.local.yaml"
 RB= doc "$T/ap/a8.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
 V "$T/ap/a8.md" && no "accepted_requires: a missing field fails" || ok "accepted_requires: a missing field fails"
@@ -493,6 +496,25 @@ for bad in 'review_by_default:\n  referenc: 365\n' 'review_by_default:\n  note: 
   rbd "$bad"; out="$(errs "$T/ap/r6.md")"; rc=$?; [ "$rc" = 1 ] && out_has "review_by_default maps a type" && ok "review_by_default: fails fast on $(printf '%b' "$bad" | tr '\n' ' ')" \
     || no "review_by_default: fails fast on $bad"
 done
+# --help answers whatever the schema holds; the schema check stops a real run only
+for c in validate list demote approve gen-index serve; do
+  out="$(km "$c" --root "$T" --help 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && out_has "usage: km $c" && ! out_has "review_by_default"; } \
+    && ok "review_by_default: a bad table still lets $c --help answer" || no "$c --help with a bad table ($rc: $out)"
+done
+cp "$T/schema.local.yaml" "$T/sl.bak"; printf 'gate: {enabled: maybe}\ncheck_index: 1\nindex_skip_prefixes: x\n' >> "$T/schema.local.yaml"
+out="$(km validate --root "$T" --help 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "usage: km validate" && ! out_has "gate config"; } \
+  && ok "a bad gate, check_index and index_skip_prefixes still let validate --help answer" || no "validate --help with a bad gate ($rc: $out)"
+out="$(km validate --root "$T" "$T/ap/r6.md" 2>/dev/null)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "gate config error(s)" && out_has "gate.enabled must be true/false"; } \
+  && ok "a bad gate config still stops a run first, on stdout, exit 1" || no "bad gate run ($rc: $out)"
+mv "$T/sl.bak" "$T/schema.local.yaml"
+cp "$T/schema.local.yaml" "$T/sl.bak"; printf 'status_rules:\n  acepted_requires: [review_by]\n' >> "$T/schema.local.yaml"
+out="$(km validate --root "$T" --help 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "usage: km validate" && ! out_has "status_rules"; } \
+  && ok "a mistyped status_rules key still lets validate --help answer" || no "validate --help with bad status_rules ($rc: $out)"
+mv "$T/sl.bak" "$T/schema.local.yaml"
 RB= TYPE=note doc "$T/ap/r13.md" review ''; cp "$T/ap/r13.md" "$T/r13.bak"; printf 'promoted\n' > "$T/rsrc.txt"
 out="$(km approve --root "$T" "$T/ap/r13.md" --by RPA 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && out_has "review_by_default maps a type" && cmp -s "$T/ap/r13.md" "$T/r13.bak"; } \
