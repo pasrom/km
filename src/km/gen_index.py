@@ -14,6 +14,7 @@ Run:  km gen-index [--root DIR] [--check]
 """
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import sys
@@ -58,7 +59,10 @@ def render(idx_text: str, docs: list[str], subs: list[str]) -> str | None:
 
 
 def main() -> int:
-    check = "--check" in sys.argv[1:]
+    ap = argparse.ArgumentParser(prog="km gen-index", allow_abbrev=False,
+                                 description="Regenerate the '## Documents' list in every _index.md.")
+    ap.add_argument("--check", action="store_true", help="write nothing; exit 1 if an _index.md would change")
+    check = ap.parse_args().check
     files = {p for p in tracked_md() if not p.startswith(SKIP) and not p.startswith(INDEX_SKIP)}
     by_folder: dict[str, list[str]] = defaultdict(list)
     for p in files:

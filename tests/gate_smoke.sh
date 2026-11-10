@@ -676,6 +676,25 @@ out="$(km validate --root "$N" "$N/nl.md" 2>&1)"; rc=$?
 acc "$N/n.md" internal 'see [top](#top) and [[n2]]'
 out="$(km validate --root "$N" "$N/n.md" 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && ! out_has Traceback; } && ok "bergab: a brain outside git still validates per file" || no "bergab: no git ($rc: $out)"
+# km validate takes FILEs only: an unknown option is a usage error, --help validates nothing, -- ends the options
+out="$(km validate --root "$S/b" --help 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "usage: km validate" && ! out_has "ERRORS" && ! out_has "WARNINGS"; } \
+  && ok "validate --help: usage, nothing validated" || no "validate --help ($rc: $out)"
+out="$(km validate --root "$S/b" --strict 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && out_has "unrecognized arguments: --strict" && ! out_has "ERRORS"; } \
+  && ok "validate: an unknown option is a usage error" || no "validate --strict ($rc: $out)"
+# a FILE whose name starts with '-' after `--` (the hook's entry ends with it), --root before or after the command
+printf -- '---\ntitle: no type\n---\nx\n' > "$S/b/-dash.md"
+for r in "--root $S/b validate" "validate --root $S/b"; do
+  out="$(cd "$S/b" && km $r -- -dash.md 2>&1)"; rc=$?
+  { [ "$rc" = 1 ] && out_has "required field 'type' absent" && out_has "[-]dash.md" && ! out_has "unrecognized"; } \
+    && ok "validate: a FILE named -dash.md after -- is checked (km ${r%% *} ...)" || no "validate -- -dash.md ($r; $rc: $out)"
+done
+rm "$S/b/-dash.md"
+grep -qE '^  entry: km validate --( |$)' "$REPO/.pre-commit-hooks.yaml" \
+  && ok "the km-validate hook ends its entry with --: a staged name never reads as an option" || no "km-validate hook entry lacks --"
+out="$(km validate --root "$S/b" -- "$S/b/k/sl.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "gate-bergab"; } && ok "validate: -- ends the options, the FILE is checked" || no "validate -- FILE ($rc: $out)"
 rm -rf "$S" "$N"
 
 summary smoke || exit 1

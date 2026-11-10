@@ -36,6 +36,7 @@ mistakes before commit, does NOT stop a determined author (that is the publish/r
 """
 from __future__ import annotations
 
+import argparse
 import datetime
 import re
 import sys
@@ -211,13 +212,8 @@ def is_validatable(p: str) -> bool:
     return name != "_index.md" and name not in EXEMPT
 
 
-def _args() -> list[str]:
-    return [a for a in sys.argv[1:] if not a.startswith("-")]
-
-
-def targets() -> list[str]:
-    """Files passed as args (e.g. pre-commit staged files) else the whole repo."""
-    given = _args()
+def targets(given: list[str]) -> list[str]:
+    """The FILEs given (e.g. pre-commit staged files) else the whole repo."""
     if given:
         out = []
         for a in given:
@@ -232,10 +228,9 @@ def targets() -> list[str]:
     return [p for p in tracked_md() if is_validatable(p)]
 
 
-def secret_targets() -> list[str]:
+def secret_targets(given: list[str]) -> list[str]:
     """Files to secret-scan: like targets() but WITHOUT the exempt/reserved/_index exclusion
     (a key needs no frontmatter), still honouring skip_prefixes."""
-    given = _args()
     if given:
         out = []
         for a in given:
@@ -535,6 +530,10 @@ def report(title: str, items: list[tuple[str, str, str]]) -> None:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(prog="km validate", allow_abbrev=False,
+                                 description="Validate the brain's docs; with FILEs only those (pre-commit).")
+    ap.add_argument("files", nargs="*", metavar="FILE", help="files to check (others are skipped); none: the whole repo")
+    given = ap.parse_args().files
     fresh_run()
     errors.clear()
     warnings.clear()
@@ -544,7 +543,7 @@ def main() -> int:
     # --- text pre-pass over ANY tracked doc (frontmatter or not): secrets, and the path-keyed leak
     # scans (terms under term_scan_prefixes, project codes outside their own folder) ---
     if GATE_ON:
-        for _sf in secret_targets():
+        for _sf in secret_targets(given):
             _stext = _norm((ROOT / _sf).read_text(encoding="utf-8-sig", errors="replace"))
             for _snm, _spat in SECRET_PATTERNS.items():
                 for _smm in _spat.finditer(_stext):
@@ -563,7 +562,7 @@ def main() -> int:
                 if _c != _own and _n in _scan and _rx.search(_scan):   # substring first: the regex is slow
                     errors.append(("gate-leak:code", _sf, f"project code {_redact(_c)} outside its own folder"))
 
-    _target_list = targets()
+    _target_list = targets(given)
     for rel in _target_list:
         name = rel.rsplit("/", 1)[-1]
         text = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
@@ -684,9 +683,9 @@ def main() -> int:
                     warnings.append(("gate-stale", rel, f"review_by {fm.get('review_by')} is in the past"))
 
 
-    if CHECK_INDEX and not _args():   # whole-repo lint only; skip on per-file (pre-commit) runs
+    if CHECK_INDEX and not given:   # whole-repo lint only; skip on per-file (pre-commit) runs
         check_index_tree()
-    if not _args():                  # code the brain runs from a movable ref instead of a commit (see km.pins)
+    if not given:                    # code the brain runs from a movable ref instead of a commit (see km.pins)
         for _f, _what in movable_refs(ROOT):
             warnings.append(("movable-ref", _f, f"runs {_what}, a ref that can be moved; pin it by commit "
                                                 f"(`km upgrade` does it for km)"))
@@ -694,7 +693,7 @@ def main() -> int:
     report("ERRORS", errors)
     report("WARNINGS", warnings)
     print()
-    if GATE_ON and _args() and not (_target_list or secret_targets()):
+    if GATE_ON and given and not (_target_list or secret_targets(given)):
         print("no validatable .md matched the given paths", file=sys.stderr)
         return 2
     return 1 if errors else 0

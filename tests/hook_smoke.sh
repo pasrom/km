@@ -143,6 +143,10 @@ if command -v pre-commit >/dev/null 2>&1; then
   (cd "$A" && km approve d/a.md --by X >/dev/null); out="$(git -C "$A" "${G[@]}" commit -qam approve 2>&1)"; rc=$?
   { [ "$rc" = 0 ] && [ "$(git -C "$A" rev-list --count HEAD)" = 4 ]; } \
     && ok "the approval then commits on its own" || no "approval commit (rc $rc: $out)"
+  printf -- '---\ntitle: no type\n---\nx\n' > "$A/-n.md"; git -C "$A" add -- -n.md   # pre-commit passes it as "-n.md"
+  out="$(git -C "$A" "${G[@]}" commit -qm dash 2>&1)"; rc=$?
+  { [ "$rc" != 0 ] && out_has "required field 'type' absent" && ! out_has "unrecognized"; } \
+    && ok "km-validate checks a staged file whose name starts with -, not as an option" || no "km-validate on -n.md (rc $rc: $out)"
   unset PRE_COMMIT_HOME
 else
   echo "  skip: pre-commit is not installed, the pre-push and km-gen-index hooks are not exercised"
