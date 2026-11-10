@@ -8,7 +8,8 @@ whose approval key it cannot find (quoted: `"approved_by": x`) is demoted all th
 the served set, but the key stays and the run exits 1 after demoting the others: drop it by hand.
 
 With docs named, it sends those accepted docs back to review now, whatever their date: their
-approval and pre-reviews (`reviewed_by`) dropped, as `km repin` does. That is how a change to an
+approval and pre-reviews (`reviewed_by`) dropped, as `km repin` does; a key it cannot find (quoted)
+stays, named, and the run exits 1. That is how a change to an
 accepted doc is committed: the doc goes back to review in the same commit, and its approval follows
 in a commit of its own (`km validate` reports a changed doc that is still accepted as approval-stale).
 
@@ -20,9 +21,10 @@ from __future__ import annotations
 import argparse
 import datetime
 import sys
+from pathlib import Path
 
 from km.common import (ROOT, SERVED_STATUS, approval_left, demote_raw, is_article, read, review_by_default_problem,
-                       review_due, send_back, split_frontmatter, tracked_md)
+                       review_due, send_back, sent_back_left, split_frontmatter, tracked_md)
 from km.edit import edit_docs, load_doc
 from km.paths import write_text
 
@@ -30,15 +32,25 @@ TODAY = datetime.date.today()
 
 
 def send_back_docs(docs: list[str]) -> int:
-    """Send the named accepted docs back to review; a doc that is not accepted is refused."""
+    """Send the named accepted docs back to review; a doc that is not accepted is refused. A doc
+    left with a key to drop by hand fails the run, as with --apply."""
+    left: set[str] = set()   # the blocks written with a key left in
     def change(fm: dict, raw: str, _body: str):
         if fm.get("status") != SERVED_STATUS:
             return f"not {SERVED_STATUS} (status: {fm.get('status')!r}), nothing to send back"
-        return send_back(fm, raw, "sent back")
+        res = send_back(fm, raw, "sent back")
+        if not isinstance(res, str) and sent_back_left(res[0]):
+            left.add(res[0])
+        return res
     refused = edit_docs(docs, change, "demote")
     for why in refused:
         print(f"demote: REFUSED {why}")
-    return 1 if refused else 0
+    # counted from what is on disk now: a doc the gate refused was restored, still accepted
+    partial = sum(not isinstance(d := load_doc(p, p), str) and d.raw in left
+                  for p in {Path(doc).resolve() for doc in docs})
+    if partial:
+        print(f"km demote: {partial} doc(s) sent back still carry a key km cannot find (quoted?); drop it by hand")
+    return 1 if refused or partial else 0
 
 
 def main() -> int:

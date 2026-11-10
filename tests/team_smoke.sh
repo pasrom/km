@@ -157,10 +157,21 @@ cp "$T/process/q.md" "$T/q.bak"; cp "$T/process/q2.md" "$T/q2.bak"; G add -A; ou
   && ok "--apply demotes a doc whose approval key it cannot find, the rest byte for byte, and exits 1 after demoting the others" || no "--apply on a quoted approved_by (rc=$rc: $out; $(cat "$T/process/q.md"))"
 rm -f "$T/process/q2.md" "$T/q2.bak"
 cp "$T/q.bak" "$T/process/q.md"; G add -A; out="$(kt demote process/q.md)"; rc=$?
-{ [ "$rc" = 0 ] && out_has "process/q.md sent back; back to review, but drop its approved_by by hand" \
-  && demoted_clean "$T/process/q.md" "$T/q.bak"; } \
-  && ok "demote DOC sends it back too and says which approval key is left to drop" || no "demote DOC on a quoted approved_by (rc=$rc: $out)"
-rm -f "$T/process/q.md" "$T/q.bak"; G add -A
+{ [ "$rc" = 1 ] && out_has "process/q.md sent back; back to review, but drop its approved_by by hand" \
+  && out_has "1 doc(s) sent back still carry a key" && demoted_clean "$T/process/q.md" "$T/q.bak"; } \
+  && ok "demote DOC sends it back too, says which approval key is left to drop and exits 1" || no "demote DOC on a quoted approved_by (rc=$rc: $out)"
+# a quoted reviewed_by: sent back all the same, the key named, exit 1
+sed 's/^"approved_by": TT$/approved_by: TT\n"reviewed_by": [AB]/' "$T/q.bak" > "$T/process/q.md"
+G add -A; out="$(kt demote process/q.md)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "process/q.md sent back; back to review, but drop its reviewed_by by hand" \
+  && grep -qx 'status: review' "$T/process/q.md" && ! grep -q '^approved_' "$T/process/q.md" && grep -q '^"reviewed_by"' "$T/process/q.md"; } \
+  && ok "demote DOC sends back a doc with a quoted reviewed_by, names the key and exits 1" || no "demote DOC on a quoted reviewed_by (rc=$rc: $out; $(cat "$T/process/q.md"))"
+# the gate refuses it for another reason (an unknown type): restored, not counted as sent back with a key left
+sed 's/^type: concept$/type: bogus/' "$T/q.bak" > "$T/process/q.md"; cp "$T/process/q.md" "$T/qb.bak"
+G add -A; out="$(kt demote process/q.md)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "REFUSED process/q.md: km validate fails" && ! out_has "still carry" && cmp -s "$T/process/q.md" "$T/qb.bak"; } \
+  && ok "demote DOC: a doc the gate restores is not reported as sent back with a key left" || no "demote DOC gate restore (rc=$rc: $out)"
+rm -f "$T/process/q.md" "$T/q.bak" "$T/qb.bak"; G add -A
 # a block that would no longer parse without the approval line (a flow mapping over several lines): refused, unchanged
 printf -- '---\n{type: concept, title: FM, timestamp: 2025-01-15, author: TT, review_by: 2025-06-01, tags: [t],\nstatus: accepted\n,\napproved_by: TT}\n---\nx\n' > "$T/process/fm.md"
 cp "$T/process/fm.md" "$T/fm.bak"; G add -A; out="$(kt demote --apply)"; rc=$?

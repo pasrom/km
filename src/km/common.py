@@ -362,17 +362,25 @@ def approval_left(raw: str) -> list[str]:
     return [k for k in APPROVAL_FIELDS if k in frontmatter(raw)]
 
 
+def sent_back_left(raw: str) -> list[str]:
+    """The keys a sent-back '---' block still holds that send_back drops: approval keys and
+    `reviewed_by` it cannot find (quoted)."""
+    fm = frontmatter(raw)
+    return [k for k in (*APPROVAL_FIELDS, "reviewed_by") if k in fm]
+
+
 def send_back(fm: dict, raw: str, message: str):
     """A doc whose sources changed under its approval: a signed-off one goes back to `status: review`
     without its approval and pre-reviews (`reviewed_by`, which saw the old sources), to be approved
-    again. The refusal, or `(new_raw, message)` for `edit_docs`."""
+    again. A key it cannot find (quoted) stays and is named; the doc goes back to review all the
+    same, as `km demote --apply` does. The refusal, or `(new_raw, message)` for `edit_docs`."""
     if fm.get("status") != SERVED_STATUS:
         return raw, message
     if (raw := demote_raw(raw)) is None:
         return "signed off, but its status line cannot be rewritten to review (or the block would no longer parse)"
-    if "reviewed_by" in fm and (raw := set_fm_block(raw, "reviewed_by", "")) is None:
-        return "cannot find the `reviewed_by:` line to drop"
-    if left := approval_left(raw):   # unparsable: the gate refuses it
+    while (dropped := set_fm_block(raw, "reviewed_by", "")) is not None:   # every entry, as demote_raw does
+        raw = dropped
+    if left := sent_back_left(raw):   # unparsable: the gate refuses it
         return raw, message + f"; back to review, but drop its {', '.join(left)} by hand, then `km approve` after review"
     return raw, message + "; back to review without its approval, run `km approve` after review"
 
