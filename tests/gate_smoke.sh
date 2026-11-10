@@ -412,6 +412,14 @@ def count(*paths): calls.append(len(paths)); return gate(*paths)
 e.run_gate = count
 a.approve(sys.argv[1:], "RPA", datetime.date(2026, 9, 30), None); print("gate runs:", *calls)' "$T/ap/l5.md" "$T/ap/l6.md" 2>&1)"
 out_has "gate runs: 2$" && ok "approve: docs that pass are gated in one validate run" || no "approve: one gate run ($out)"
+# the gate's child process runs from the brain: a km package or a yaml.py there must not stand in for km or PyYAML
+mkdir -p "$T/km" && printf 'open(%s, "w").write("km")\nraise SystemExit(0)\n' "'$T/shadowed'" > "$T/km/__main__.py" && : > "$T/km/__init__.py"
+printf 'open(%s, "w").write("yaml")\nraise SystemExit(0)\n' "'$T/shadowed'" > "$T/yaml.py"
+RB=2099-01-01 TYPE=note doc "$T/ap/sh1.md" review ''
+out="$(km approve --root "$T" "$T/ap/sh1.md" --by RPA 2>&1)"
+{ [ ! -e "$T/shadowed" ] && grep -q '^status: accepted$' "$T/ap/sh1.md"; } \
+  && ok "approve: the gate's child process does not run a km package or yaml.py from the brain" || no "gate child shadowed ($(cat "$T/shadowed" 2>/dev/null): $out)"
+rm -rf "$T/km" "$T/yaml.py" "$T/shadowed"
 # review_by_default: approve and promote set the type's review_by on a doc without one; null = no expiry
 read -r D30 D182 D365 <<< "$(kmpy -c 'import datetime as d; t = d.date.today(); print(*(t + d.timedelta(days=n) for n in (30, 182, 365)))')"
 rbd

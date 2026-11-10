@@ -5,7 +5,7 @@ branding:
   color: blue
 inputs:
   python-version:
-    description: Python km runs on (installed for km only; the job's own python is left as it is)
+    description: Python km runs on, 3.11 or newer (installed for km only; the job's own python is left as it is)
     default: '3.11'
 runs:
   using: composite
@@ -21,10 +21,13 @@ runs:
         # km is pure Python: run it from the action's checkout, with only its dependency (pyproject's
         # `dependencies`, same exact version) in a venv of its own; no wheel to build on every job.
         venv="$RUNNER_TEMP/km-venv"
-        "${{ steps.py.outputs.python-path }}" -m venv "$venv"
-        "$venv/bin/python" -m pip install --quiet --disable-pip-version-check "pyyaml==6.0.3"
+        # -P and PYTHONSAFEPATH keep the working directory (the brain's checkout) off sys.path, for
+        # this step and for km and every Python it starts: a `venv/`, `pip/` or `km/` folder or a
+        # `yaml.py` in a pull request must not stand in for the module it names
+        "${{ steps.py.outputs.python-path }}" -P -m venv "$venv"
+        "$venv/bin/python" -P -m pip install --quiet --disable-pip-version-check "pyyaml==6.0.3"
         mkdir -p "$RUNNER_TEMP/km-bin"
-        printf '#!/usr/bin/env bash\nPYTHONPATH="%s/src" exec "%s/bin/python" -m km "$@"\n' \
+        printf '#!/usr/bin/env bash\nPYTHONSAFEPATH=1 PYTHONPATH="%s/src" exec "%s/bin/python" -P -m km "$@"\n' \
           "${{ github.action_path }}" "$venv" > "$RUNNER_TEMP/km-bin/km"
         chmod +x "$RUNNER_TEMP/km-bin/km"
         echo "$RUNNER_TEMP/km-bin" >> "$GITHUB_PATH"

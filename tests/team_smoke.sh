@@ -286,7 +286,7 @@ out="$(cd "$T" && km --root "$B" validate 2>&1)"; echo "$out" | grep -q "x.md - 
 printf '#!/usr/bin/env bash\necho "$@" > "%s/runner-args"\n' "$F" > "$F/fake-uvx"; chmod +x "$F/fake-uvx"
 repin "$KM_SHA" "$KM_REF" "$S99" v99.0.0 "$O"/.github/workflows/*.yml "$O/.pre-commit-config.yaml"
 KM_PINNED_RUNNER="$F/fake-uvx" km validate --root "$O" >/dev/null 2>&1
-grep -q -- "--from git+$KM_REPO_URL@$S99 km validate" "$F/runner-args" 2>/dev/null \
+grep -q -- "--no-config --from git+$KM_REPO_URL@$S99 km validate" "$F/runner-args" 2>/dev/null \
   && ok "a brain command runs the km version the brain pins" || no "pinned run ($(cat "$F/runner-args" 2>/dev/null))"
 repin "$S99" v99.0.0 "$V09_SHA" v0.9.0 "$O"/.github/workflows/*.yml "$O/.pre-commit-config.yaml"
 rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$O" any.md 2>&1)"; rc=$?

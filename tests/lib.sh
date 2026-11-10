@@ -6,7 +6,7 @@ G=(-c user.name=t -c user.email=t@t -c commit.gpgsign=false -c protocol.file.all
 # Any read, write or subprocess call in km that relies on the system's default encoding fails the
 # tests: on Windows that default is cp1252, not UTF-8.
 km(){ PYTHONWARNDEFAULTENCODING=1 PYTHONWARNINGS=error::EncodingWarning \
-      PYTHONPATH="$REPO/src${PYTHONPATH:+$SEP$PYTHONPATH}" "$PY" -m km "$@"; }
+      PYTHONPATH="$REPO/src${PYTHONPATH:+$SEP$PYTHONPATH}" "$PY" -P -m km "$@"; }
 pass=0; fail=0
 ok(){ echo "  ok:   $1"; pass=$((pass+1)); }
 no(){ echo "  FAIL: $1"; fail=$((fail+1)); }

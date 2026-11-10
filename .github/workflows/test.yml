@@ -45,7 +45,12 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+      - name: plant a venv and a pip package where the action installs km
+        run: |
+          for m in venv pip; do mkdir "$m" && : > "$m/__init__.py" && printf 'raise SystemExit("planted %s ran")\n' "$m" > "$m/__main__.py"; done
       - uses: ./
+      - name: the planted venv and pip did not run (the install above succeeded)
+        run: rm -r venv pip
       - name: the job's own python is untouched
         run: python --version | grep -q "3\.12" && ! python -c "import km" 2>/dev/null
       - name: a fresh team brain is clean
@@ -60,6 +65,14 @@ jobs:
           km gen-index --check
           km validate
           km serve
+      - name: a km/ package or yaml.py in the brain's checkout does not replace km or PyYAML
+        working-directory: ${{ runner.temp }}/b
+        run: |
+          printf 'raise SystemExit("planted yaml ran")\n' > yaml.py
+          km validate                      # yaml.py alone: the km found first would import it
+          mkdir km && printf 'raise SystemExit("planted km ran")\n' > km/__main__.py && touch km/__init__.py
+          km validate
+          rm -r km yaml.py
       # the steps a team brain's ci.yml runs, including uploading the served bundle
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
