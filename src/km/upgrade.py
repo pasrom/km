@@ -257,7 +257,7 @@ def with_signoff(text: str) -> str | None:
         return None
     i, m = hits[0]
     pad = m.group(1) + ("  " if m.group(2) else "")
-    run = f'run: km validate ${{BASE:+--signoff-since "origin/$BASE"}}\n'
+    run = 'run: km validate ${BASE:+--signoff-since "origin/$BASE"}\n'
     step = [f"{m.group(1)}{m.group(2) or ''}env:\n", f"{pad}  BASE: {SIGNOFF_BASE}\n", f"{pad}{run}"]
     out = "".join(lines[:i] + step + lines[i + 1:])
     def steps(d):
