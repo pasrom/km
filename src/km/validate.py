@@ -582,8 +582,39 @@ def changed_since(base: str) -> tuple[str, dict[str, str | None]] | None:
     return mb, out
 
 
-def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str] | None) -> str | None:
-    """Why the changed doc `rel` may not be merged yet (`then`: its frontmatter and body at the merge base), or None."""
+def _blank(value) -> bool:
+    """Whether a field holds nothing: absent or null, or an empty or blank string, list or mapping."""
+    return value is None or (isinstance(value, str) and not value.strip()) or value in ([], {})
+
+
+def sent_back(mb: str, rel: str, now: dict) -> bool:
+    """Whether the branch (merge base `mb` to HEAD, following renames) sent the doc `rel` back to review
+    and approved it again: at the last commit that has it not served (`km demote` in a commit of its own,
+    as the sign-off message asks), and the next commit that changes its status line has it served with the
+    approval its frontmatter `now` carries, approved_digest included, which `km approve` writes. A doc
+    served at every commit, or served again without a digest (a reverted demote), kept the merge base's
+    approval: a kept approved_by and approved_at read the same as ones written again on the same day, so
+    only this tells them apart. One git log over the commits that change a status line, newest first, then
+    one git show per commit until the answer is known."""
+    log = git("log", "-z", "--no-merges", "--follow", "--relative", "--diff-filter=d", "-G^status:",
+              "--format=%H", "--name-only", f"{mb}..HEAD", "--", rel, cwd=ROOT)
+    toks = log.stdout.split("\0") if not log.returncode else []
+    newer = None                                    # the frontmatter at the next newer such commit
+    for sha, path in zip(toks[::2], toks[1::2]):    # "sha", "\npath": the path at that commit
+        d = doc_at(sha, path[1:]) if path.startswith("\n") else None
+        then = d[0] if d and isinstance(d[0], dict) else None
+        if then is None:
+            continue                                # unreadable there: says nothing either way
+        if then.get("status") != SERVED_STATUS:
+            return newer is not None and "approved_digest" in newer and all(
+                newer.get(k) == now.get(k) for k in ("approved_by", "approved_at", "approved_digest"))
+        newer = then
+    return False
+
+
+def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str] | None, mb: str) -> str | None:
+    """Why the changed doc `rel` may not be merged yet (`then`: its frontmatter and body at the merge base
+    `mb`), or None."""
     st = fm.get("status")
     if st in RETIRED_STATUS:
         return None
@@ -598,7 +629,8 @@ def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str]
         if "approved_digest" not in fm:              # an approval written by hand: nothing ties it to this text
             return f"is {st} without approved_digest, so no approval is bound to this text: {fix}"
         if (old is not None and old.get("status") == st and "approved_digest" not in old
-                and all(old.get(k) == fm.get(k) for k in ("approved_by", "approved_at"))):
+                and all(old.get(k) == fm.get(k) for k in ("approved_by", "approved_at"))
+                and not sent_back(mb, rel, fm)):
             # km approve 1.12.0 and earlier kept the approval of a doc with no digest and recorded the text it found
             return (f"changed since approved_by {fm.get('approved_by')} signed it off on {fm.get('approved_at')}, "
                     f"before km recorded digests, and that approval was kept for the new text: {fix}")
@@ -701,7 +733,7 @@ def main() -> int:
                                                   f"so nobody takes them for one key"))
         # the digest as km approve computes it: before the aliases below change the frontmatter
         digest = approved_digest(fm, body) if "approved_digest" in fm and fm.get("status") == SERVED_STATUS else None
-        if rel in changed and (_why := signoff_problem(rel, fm, body, changed[rel] and doc_at(mb, changed[rel]))):
+        if rel in changed and (_why := signoff_problem(rel, fm, body, changed[rel] and doc_at(mb, changed[rel]), mb)):
             errors.append(("signoff", rel, _why))
         # apply field aliases declared in the schema (e.g. date -> timestamp)
         for _field, _spec in FIELDS.items():
@@ -755,8 +787,8 @@ def main() -> int:
                 continue
             for r in _fields:
                 # review_by is the one field whose need depends on the type: one that does not expire has none
-                if _kind == "requires" and r not in fm and (r != "review_by" or review_by_days(t)):
-                    errors.append(("status-rule", rel, f"{st} requires '{r}'"))
+                if _kind == "requires" and _blank(fm.get(r)) and (r != "review_by" or review_by_days(t)):
+                    errors.append(("status-rule", rel, f"{st} requires '{r}'" + (" with a value; it is empty" if r in fm else "")))
                 elif _kind == "forbids" and r in fm:
                     warnings.append(("status-rule", rel, f"{st} should not set '{r}'"))
                 elif _kind == "recommends" and r not in fm:

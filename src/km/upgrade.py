@@ -41,6 +41,10 @@
   list is left alone, its schema not read; `--force` back to an older km regenerates nothing. Like the
   digests it runs before the pins move, so a schema km cannot read stops the upgrade there and the run
   after the fix still does it.
+- A team brain's km staleness workflow (one that pins km) whose checkout step sets no fetch-depth
+  (km 1.3.0 and earlier wrote it so, and some brains dropped it) gets `fetch-depth: 0`: its run
+  validates after demoting, and source pins need the full history. A checkout step this edit cannot
+  handle gets a note instead; a staleness workflow of the brain's own is left as it is.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
 
@@ -88,7 +92,7 @@ OLD_COPIES = {
 SHIPPED = {
     "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
-    "team/approve-fork-ci.yml": {"accf1785f4710b4e"},
+    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd"},
 }
 # ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
 # a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
@@ -263,6 +267,13 @@ SIGNOFF_SINCE = (1, 12, 0)   # the first km release with `km validate --signoff-
 SIGNOFF_BASE = "${{ github.base_ref || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || '' }}"
 
 
+def _steps(d) -> list[dict]:
+    """The steps of every job of a parsed workflow, whatever shape it has."""
+    jobs = d.get("jobs") if isinstance(d, dict) else None
+    return [s for job in (jobs.values() if isinstance(jobs, dict) else ()) if isinstance(job, dict)
+            for s in (job.get("steps") if isinstance(job.get("steps"), list) else ()) if isinstance(s, dict)]
+
+
 def with_signoff(text: str) -> str | None:
     """The workflow with its one `run: km validate` step also checking sign-offs on a pull request
     (unchanged when it does), or None when there is no single such step with no `env:` of its own,
@@ -278,14 +289,32 @@ def with_signoff(text: str) -> str | None:
     run = 'run: km validate ${BASE:+--signoff-since "origin/$BASE"}\n'
     step = [f"{m.group(1)}{m.group(2) or ''}env:\n", f"{pad}  BASE: {SIGNOFF_BASE}\n", f"{pad}{run}"]
     out = "".join(lines[:i] + step + lines[i + 1:])
-    def steps(d):
-        jobs = d.get("jobs") if isinstance(d, dict) else None
-        return [s for job in (jobs.values() if isinstance(jobs, dict) else ()) if isinstance(job, dict)
-                for s in (job.get("steps") if isinstance(job.get("steps"), list) else ()) if isinstance(s, dict)]
-    old, new = steps(_parse(text)), steps(_parse(out))
+    old, new = _steps(_parse(text)), _steps(_parse(out))
     want = [{**s, "env": {"BASE": SIGNOFF_BASE}, "run": run.removeprefix("run: ").strip()} if s.get("run") == "km validate" and "env" not in s else s
             for s in old]
     return out if len(old) == len(new) and new == want and want != old else None
+
+
+def with_full_history(text: str) -> str | None:
+    """The staleness workflow with `fetch-depth: 0` given to its one actions/checkout step (unchanged when
+    every checkout step sets a fetch-depth, or there is none), or None when the edit cannot be made safely
+    (several checkout steps, a `with:` of its own, a layout this edit does not handle): the result must
+    parse to the same workflow with exactly that input added."""
+    before = _parse(text)
+    steps = [s for s in _steps(before) if str(s.get("uses", "")).startswith("actions/checkout@")]
+    if all(isinstance(s.get("with"), dict) and "fetch-depth" in s["with"] for s in steps):
+        return text                             # set, or no checkout to give it to
+    lines = text.splitlines(keepends=True)
+    hits = [(i, m) for i, ln in enumerate(lines) if (m := re.match(r"(\s*)(- )?uses:\s*actions/checkout@", ln))]
+    if len(hits) != 1 or len(steps) != 1 or "with" in steps[0]:
+        return None
+    i, m = hits[0]
+    pad = m.group(1) + ("  " if m.group(2) else "")
+    depth = next(ln.strip() for ln in template("team/staleness.yml", {}).splitlines()   # with the template's comment
+                 if ln.strip().startswith("fetch-depth:"))
+    out = "".join(lines[:i + 1] + [f"{pad}with:\n", f"{pad}  {depth}\n"] + lines[i + 1:])
+    steps[0]["with"] = {"fetch-depth": 0}      # `before` now reads as the workflow should
+    return out if _parse(out) == before else None
 
 
 def main() -> int:
@@ -413,6 +442,14 @@ def main() -> int:
                 write_text(root / ci, got)
                 done.append(f"turned on the sign-off check in {ci}: a pull request now fails on a doc it changes that is "
                             f"not signed off (docs already on main are checked once a pull request changes their content)")
+        rel = ".github/workflows/staleness.yml"                 # km's only (it pins km), as with ci.yml
+        if str(Path(rel)) in pins and (got := with_full_history(text := (root / rel).read_text(encoding="utf-8"))) != text:
+            if got is None:
+                done.append(f"could not give the checkout step of {rel} `fetch-depth: 0`: add `with: {{fetch-depth: 0}}` "
+                            f"to it by hand, so its run validates source pins against the full history")
+            else:
+                write_text(root / rel, got)
+                done.append(f"gave the checkout step of {rel} `fetch-depth: 0`, so its run validates source pins")
         hook = root / ".pre-commit-config.yaml"
         if not hook.is_file():
             done.append(f"no {hook.name}: nothing refuses a commit on main or a push to main locally; `km init` writes one")

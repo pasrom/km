@@ -327,6 +327,20 @@ printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  acc
 RB= doc "$T/ap/a8.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
 V "$T/ap/a8.md" && no "accepted_requires: a missing field fails" || ok "accepted_requires: a missing field fails"
 V "$T/ap/a6.md" && ok "accepted_requires: a doc with the field passes" || no "accepted_requires: a doc with the field passes"
+# a required field that is there but holds nothing (null, [], "") is missing all the same
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"; printf 'status_rules:\n  accepted_requires: [owner, review_by, reviewed_by]\n' >> "$T/schema.local.yaml"
+blank=""; i=0
+for v in 'reviewed_by:\nowner: X' 'reviewed_by: []\nowner: X' 'reviewed_by: ""\nowner: X' 'reviewed_by: ["ai:m 2026-09-30"]\nowner: " "'; do i=$((i+1))
+  OWN= doc "$T/ap/e$i.md" accepted "approved_by: RPA\napproved_at: 2026-09-30\n$v\n"
+  out="$(errs "$T/ap/e$i.md")"; rc=$?
+  { [ "$rc" = 1 ] && out_has "requires '[a-z_]*' with a value; it is empty"; } || blank="$blank e$i"
+done
+OWN= doc "$T/ap/e5.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\nowner: X\nreviewed_by: ["ai:m 2026-09-30"]\n'
+V "$T/ap/e5.md" || blank="$blank e5-filled-fails"
+RB= doc "$T/ap/e6.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\nreviewed_by: ["ai:m 2026-09-30"]\n'
+out="$(errs "$T/ap/e6.md")"; rc=$?; { [ "$rc" = 1 ] && out_has "requires 'review_by'" && ! out_has "it is empty"; } || blank="$blank e6-absent"
+[ -z "$blank" ] && ok "accepted_requires: a field that is empty (null, [], \"\", blank) fails and says so; filled it passes" || no "accepted_requires on empty fields:$blank"
+rm -f "$T/ap/e"?.md
 printf 'meta: {profile: smoke}\ngate:\n  enabled: true\n  served_status: published\nfields:\n  status:\n    enum: [draft, review, published, superseded, obsolete]\n' > "$T/schema.local.yaml"
 doc "$T/ap/a9.md" published 'approved_by: "ai:model-x"\napproved_at: 2026-09-30\n'
 km validate --root "$T" "$T/ap/a9.md" 2>&1 | grep -q "an AI approver needs 'approval: ai'" && ok "approval: the rule follows a renamed served status" || no "approval: the rule follows a renamed served status"
