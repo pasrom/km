@@ -372,6 +372,11 @@ rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$
 rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km repin --root "$O" --cites any.md --dir . 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.8.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
   && ok "an option the pinned km lacks says to upgrade" || no "option newer than the pin ($rc: $out)"
+for a in "--signoff-since main" --signoff-since=main; do   # an option with a value, in either spelling
+  rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km validate --root "$O" $a 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.12.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
+    && ok "km validate $a with an older pin says to upgrade" || no "km validate $a newer than the pin ($rc: $out)"
+done
 rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km demote --root "$O" some.md 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && echo "$out" | grep -q "needs km v1.11.0, the brain pins v0.9.0" && [ ! -e "$F/runner-args" ]; } \
   && ok "a positional argument the pinned km ignores says to upgrade" || no "demote DOC newer than the pin ($rc: $out)"

@@ -105,7 +105,8 @@ def run_pinned(root: Path, cmd: str, rest: list[str]) -> int | None:
            f"{pin.ref} is a movable tag, not a commit (`km upgrade` pins the commit)" if not pin.is_commit else
            f"{RUNNER} is not installed" if not shutil.which(RUNNER) else None)
     source = ["--from", f"git+{repo_url()}@{pin.ref}", "km"]
-    need = max([v for (c, opt), v in OPTION_SINCE.items() if c == cmd and opt in rest]   # exact: no allow_abbrev
+    given = {a.split("=", 1)[0] for a in _split(rest)[0]}   # exact names, `--opt=VALUE` as `--opt`: no allow_abbrev
+    need = max([v for (c, opt), v in OPTION_SINCE.items() if c == cmd and opt in given]
                + ([SINCE[cmd]] if cmd in SINCE else [])
                + ([ARGS_SINCE[cmd]] if cmd in ARGS_SINCE and positional(rest) else []), key=version_key, default=None)
     if not why and need and (have := version_key(pin.version)) and have < version_key(need):
