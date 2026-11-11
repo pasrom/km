@@ -366,6 +366,17 @@ if [ "$SEP" = ":" ]; then   # a computer with git but nothing to run km with
   launch "$T/uvfail" nosuch
   { [ "$rc" = "$erc" ] && [ "$runs" = 1 ] && [ "$out" = "$expected" ]; } \
     && ok "km failing under uv fails the launcher, unchanged, and is not run again" || no "km fails under uv ($rc/$erc, $runs runs: $out)"
+  # a bare mktemp that cannot write (on macOS it ignores TMPDIR, and a sandbox may deny its folder):
+  # the launcher makes its file under $TMPDIR (here with a space and a trailing slash), so the fallback runs
+  rm "$T/uvfail/mktemp" "$T/uvfail/uv"   # mktemp is a symlink to the real one: never write through it
+  printf '#!/bin/sh\n[ $# -gt 0 ] || exit 1\nexec "%s" "$@"\n' "$(command -v mktemp)" > "$T/uvfail/mktemp"
+  printf '#!/bin/sh\necho "$KM_PENDING_FILE" > "%s"\nexec "%s"\n' "$T/pendlog" "$T/uv-offline" > "$T/uvfail/uv"
+  chmod +x "$T/uvfail/mktemp" "$T/uvfail/uv"; mkdir -p "$T/tmp dir"
+  TMPDIR="$T/tmp dir/" launch "$T/uvfail" --version; pend="$(cat "$T/pendlog")"
+  { [ "$rc" = 0 ] && [ "$runs" = 1 ] && out_has "km: km did not start under uv (above), so python3 runs it" \
+    && [ "${pend#"$T/tmp dir/km-pending."}" != "$pend" ] && [ ! -e "$pend" ]; } \
+    && ok "where a bare mktemp cannot write, the launcher's file goes under TMPDIR and the fallback runs" || no "mktemp under TMPDIR ($rc, $runs runs, $pend: $out)"
+  ln -sf "$(command -v mktemp)" "$T/uvfail/mktemp"
   cp "$T/uv-offline" "$T/uvfail/uv"
   rm "$T/uvfail/python3"; launch "$T/uvfail" --version
   { [ "$rc" = 1 ] && out_has "Failed to fetch" && out_has "km cannot start: it did not start under uv" \

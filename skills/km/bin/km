@@ -17,7 +17,10 @@ if [ -n "$uv" ]; then
   # nothing cached), so the Pythons below get their turn. Once km started, its exit code and output
   # are the launcher's, and nothing runs it again.
   run=("$uv" run --quiet --no-config --no-project --python '>=3.11' --with pyyaml==6.0.3 python -P -m km "$@")
-  pending="$(mktemp 2>/dev/null)" || exec "${run[@]}"   # no mktemp: run as before, without the fallback
+  # Under a set TMPDIR first: a bare mktemp on macOS ignores it and writes to the per-user temp
+  # folder, which a sandbox allowing writes only under its TMPDIR denies. Neither: no fallback.
+  pending="$({ [ -n "${TMPDIR:-}" ] && mktemp "${TMPDIR%/}/km-pending.XXXXXX"; } 2>/dev/null || mktemp 2>/dev/null)" \
+    || exec "${run[@]}"
   rc=0; KM_PENDING_FILE="$pending" "${run[@]}" || rc=$?
   [ -e "$pending" ] || exit "$rc"   # gone: km ran (a builtin test, no rm process on this path)
   rm -f "$pending"
