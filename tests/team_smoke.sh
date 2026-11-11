@@ -944,6 +944,212 @@ SINCE=garbage refuse event-time-unreadable '[{"filename":"d/a.md"}]'
   || no "approve-fork-ci approved or crashed on:$refused"
 else no "the approve-fork-ci tests need jq"; fi
 
+# --- review-request-guide: one comment that says what comes before asking the maintainer ---
+RG=.github/workflows/review-request-guide.yml; RGT="$REPO/src/km/templates/team/review-request-guide.yml"
+cmp -s "$T/$RG" "$RGT" && ok "init --team writes the review-request-guide workflow" || no "init --team review-request-guide"
+rm "$O/$RG"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$RG" "$RGT" && out_has "added $RG" && out_has "until the repository variable KM_MAINTAINERS"; } && ok "upgrade adds review-request-guide to a team brain that lacks it" || no "upgrade adds review-request-guide ($out)"
+# its script, run with a stand-in gh that serves the pull request's files, the blobs, schema.local.yaml and the
+# comments from files, and keeps what it posts or patches
+if command -v jq >/dev/null && command -v yq >/dev/null; then
+RB="$F/rg-stub"; RGD="$F/rg"; mkdir -p "$RB" "$RGD"
+cat > "$RB/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$RG_DIR/calls"
+[ -n "${RG_FAIL:-}" ] && case "$*" in *"$RG_FAIL"*) exit 1 ;; esac
+case "$*" in
+  *"-X POST "*) echo "$4" > "$RG_DIR/posted.url"; jq -r .body > "$RG_DIR/posted" ;;
+  *"-X PATCH "*) echo "$4" > "$RG_DIR/patched.url"; jq -r .body > "$RG_DIR/patched" ;;
+  */pulls/9/files*) cat "$RG_DIR/files.json" ;;
+  */pulls/9) cat "$RG_DIR/pr.json" ;;
+  *contents/schema.local.yaml*) cat "$RG_DIR/schema.yaml" 2>/dev/null || exit 1 ;;
+  */git/blobs/*) u="${@: -1}"; cat "$RG_DIR/blobs/${u##*/}" 2>/dev/null || exit 1 ;;
+  */comments*) cat "$RG_DIR/comments.json" ;;
+esac
+SH
+chmod +x "$RB/gh"
+command -v timeout >/dev/null || { printf '#!/usr/bin/env bash\nshift; exec "$@"\n' > "$RB/timeout"; chmod +x "$RB/timeout"; }   # stock macOS has none
+kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["guide"]["steps"][0]["run"])' "$T/$RG" > "$F/rg.sh"
+fmd(){ printf -- '---\n%s\n---\nbody\n' "$1"; }       # a doc with this frontmatter
+EVIL='d/`'$'\n''```'$'\n''@everyone ::error::pwned.md'   # a file name that would close a code block, mention and pose as a command
+# rgrun: run the script on the pull request of the docs in rg_docs (path<TAB>content, one per
+# entry of RG_FILES); RG_LABELS, RG_REVIEWERS (the pull request as it is now), RG_MAINT, RG_DRAFT, RG_SCHEMA,
+# RG_COMMENTS, RG_ACTION, RG_LABEL (the event's), RG_STATE, RG_REQUESTED and RG_FAIL override the stand-in. Returns 3 when the script failed; its log is $RGD/out
+rgrun(){ local i=0 files='[]' p
+  rm -rf "$RGD"/*; mkdir -p "$RGD/blobs"
+  for p in "${RG_PATHS[@]}"; do
+    i=$((i + 1)); local sha; sha="$(printf '%040d' "$i")"
+    printf '%s' "${RG_TEXTS[$((i - 1))]}" > "$RGD/blobs/$sha"
+    files="$(jq -c --arg f "$p" --arg s "$sha" --arg st "${RG_STATUS[$((i - 1))]:-modified}" '. + [{filename: $f, sha: $s, status: $st}]' <<<"$files")"
+  done
+  printf '%s' "$files" > "$RGD/files.json"
+  [ -n "${RG_SCHEMA:-}" ] && printf '%s' "$RG_SCHEMA" > "$RGD/schema.yaml"
+  printf '%s' "${RG_COMMENTS:-[]}" > "$RGD/comments.json"
+  jq -n --argjson l "${RG_LABELS:-[]}" --argjson r "${RG_REVIEWERS:-[\"Maint\"]}" --arg d "${RG_DRAFT:-false}" --arg c "${RG_CHANGED:-$i}" \
+    --arg s "${RG_STATE:-open}" '{state: $s, labels: ($l | map({name: .})), requested_reviewers: ($r | map({login: .})), draft: ($d == "true"),
+      changed_files: ($c | tonumber), head: {sha: "abcdef0123456789"}}' > "$RGD/pr.json"
+  RG_DIR="$RGD" PATH="$RB:$SB:$PATH" REPO=o/r PR=9 ACTION="${RG_ACTION:-review_requested}" LABEL="${RG_LABEL:-km:ready}" REQUESTED="${RG_REQUESTED-Maint}" \
+    MAINTAINERS="${RG_MAINT-other, maint}" bash "${RG_SCRIPT:-$F/rg.sh}" > "$RGD/out" 2>&1 || return 3; }
+has(){ grep -qxF -- "$2" "$RGD/$1"; }
+section(){ sed -n "/^\*\*$1/,/^\$/p" "$RGD/posted"; }   # a list of the comment, by its heading
+RG_PATHS=(d/a.md d/b.md d/c.md d/old.md d/_index.md README.md brains/p/x.md d/n.md d/p.png "$EVIL" d/e.md d/gone.md)
+RG_TEXTS=("$(fmd $'status: review\naudience: internal\napproval: ai')"
+  "$(fmd $'status: review\nreviewed_by: ["ai:m 2026-01-01"]')"
+  "$(fmd $'status: accepted\napproved_by: TT\napproved_digest: x')"
+  "$(fmd 'status: superseded')" "$(fmd 'status: draft')" "$(fmd 'status: draft')" "$(fmd 'status: draft')"
+  "no frontmatter" "png" "$(fmd 'status: draft')"
+  "$(fmd $'status: accepted\napproved_by: TT\naudience: internal')" "$(fmd 'status: draft')")
+RG_STATUS=(modified added modified modified modified modified modified added added added modified removed)
+rgrun; rc=$?
+EVILQ="$(jq -nr --arg f "$EVIL" '$f | @json')"
+{ [ $rc = 0 ] && [ ! -e "$RGD/patched" ] && has posted.url "repos/o/r/issues/9/comments" && has posted "<!-- km:review-request-guide -->" \
+  && [ "$(section 'No AI review' | grep -c '^"')" = 3 ] \
+  && section 'No AI review' | grep -qxF '"d/a.md"' \
+  && section 'No AI review' | grep -qxF '"d/e.md"' \
+  && has posted '"d/a.md"  level ai  status review' && has posted '"d/b.md"  level human  status review' \
+  && has posted "$EVILQ  level human  status draft" && has posted '"d/e.md"  level human  status accepted' \
+  && section 'No frontmatter' | grep -qxF '"d/n.md"' \
+  && ! grep -q 'c\.md\|old\.md\|_index\.md\|README\.md\|brains/\|p\.png\|gone\.md' "$RGD/posted" \
+  && grep -q "needs the sign-off of a person who knows its subject" "$RGD/posted" && grep -q "as of abcdef012345:" "$RGD/posted"; } \
+  && ok "review-request-guide comments with the docs that lack an AI review, those not signed off at their level, and those without frontmatter" \
+  || no "review-request-guide comment (rc $rc; $(cat "$RGD/calls" "$RGD/out" "$RGD/posted" 2>/dev/null))"
+{ [ "$(grep -c '^```$' "$RGD/posted")" = 6 ] && ! grep -q '^@everyone\|^::error' "$RGD/posted" "$RGD/out" && grep -qF "$EVILQ" "$RGD/out"; } \
+  && ok "review-request-guide quotes a hostile file name as JSON, in the comment and the log" || no "review-request-guide hostile name ($(cat "$RGD/out" "$RGD/posted"))"
+( RG_SCHEMA=$'approval_default: ai\nskip_prefixes: [d/x/]'; RG_PATHS=(d/e.md d/f.md d/x/y.md); RG_STATUS=()
+  RG_TEXTS=("$(fmd $'status: draft\naudience: internal')" "$(fmd $'status: draft\naudience: customer')" "$(fmd 'status: draft')"); rgrun )
+{ has posted '"d/e.md"  level ai  status draft' && has posted '"d/f.md"  level human  status draft' && ! grep -q "d/x/y.md" "$RGD/posted"; } \
+  && ok "review-request-guide takes the level default and the skipped folders from schema.local.yaml at the base" || no "review-request-guide schema ($(cat "$RGD/out" "$RGD/posted"))"
+# the level of each doc is km's approval_level, for a spread of frontmatter (km as the oracle)
+LVL=($'audience: internal\napproval: ai' $'audience: internal\napproval: human' $'approval: ai' $'audience: customer\napproval: ai'
+  $'audience: internal\napproval: ai\ntype: verbatim-block' $'audience: internal\napproval: ""' $'audience: internal\napproval: false'
+  $'audience: [internal]\napproval: ai' $'audience: internal\napproval: [ai]' $'audience: internal')
+for sch in "" "ai"; do
+  ( RG_SCHEMA="${sch:+approval_default: $sch}"; RG_PATHS=(); RG_TEXTS=(); RG_STATUS=()
+    for i in "${!LVL[@]}"; do RG_PATHS+=("d/l$i.md"); RG_TEXTS+=("$(fmd $'status: draft\n'"${LVL[$i]}")"); done; rgrun )
+  want="$(printf '%s\0' "${LVL[@]}" | kmpy -c 'import sys, yaml, km.common as c
+c.APPROVAL_DEFAULT = sys.argv[1] or "human"
+for i, fm in enumerate(sys.stdin.read().split("\0")[:-1]):
+    print(f"\"d/l{i}.md\"  level {c.approval_level(yaml.safe_load(fm))}  status draft")' "$sch")"
+  got="$(grep '^"d/l[0-9]*\.md"  level' "$RGD/posted")"
+  [ "$want" = "$got" ] && ok "review-request-guide gives each doc km's approval level (approval_default ${sch:-unset})" \
+    || no "review-request-guide levels differ from km's (approval_default ${sch:-unset}): $(diff <(echo "$want") <(echo "$got") | tr "\n" " ")"
+done
+kmpy -c 'import sys, yaml
+from km.paths import TEMPLATES
+base = yaml.safe_load((TEMPLATES.parent / "schema.base.yaml").read_text())
+text = open(sys.argv[1]).read()
+sys.exit(any(f"\"{v}\"" not in text for k in ("exempt_files", "skip_prefixes", "reserved_no_frontmatter") for v in base[k]))' "$RGT" \
+  && ok "review-request-guide knows the skipped folders and exempt names of km's base schema" || no "review-request-guide misses a default of schema.base.yaml"
+( RG_PATHS=(d/c.md); RG_TEXTS=("$(fmd $'status: accepted\napproved_by: TT\napproved_digest: x')"); RG_STATUS=(); rgrun )
+{ grep -q "^Every changed doc carries a sign-off" "$RGD/posted" && ! grep -q '^\*\*' "$RGD/posted"; } \
+  && ok "review-request-guide on signed-off docs only points to km:ready" || no "review-request-guide all signed off ($(cat "$RGD/posted"))"
+BOT='{"id":5,"user":{"login":"github-actions[bot]"},"body":"<!-- km:review-request-guide -->\nold"}'
+SPOOF='{"id":4,"user":{"login":"someone"},"body":"<!-- km:review-request-guide -->\nmine"}'
+RG_COMMENTS="[$SPOOF,$BOT]" rgrun
+{ [ ! -e "$RGD/posted" ] && has patched.url "repos/o/r/issues/comments/5" && has patched '"d/a.md"  level ai  status review'; } \
+  && ok "review-request-guide updates its own comment instead of adding one, and never another's with the marker" || no "review-request-guide update ($(cat "$RGD/calls" "$RGD/out"))"
+RG_COMMENTS="[$SPOOF]" rgrun
+{ [ ! -e "$RGD/patched" ] && [ -e "$RGD/posted" ]; } && ok "review-request-guide posts its own comment beside a marker someone else wrote" || no "review-request-guide spoofed marker ($(cat "$RGD/calls"))"
+RG_MAINT='Other,MAINT' RG_REVIEWERS='["maint"]' rgrun; [ -e "$RGD/posted" ] && ok "review-request-guide matches a maintainer's login whatever its case" || no "review-request-guide login case ($(cat "$RGD/out"))"
+quiet=""; silent(){ local name="$1"; shift; "$@"; rc=$?
+  { [ $rc = 0 ] && [ ! -e "$RGD/posted" ] && [ ! -e "$RGD/patched" ] && grep -q "^::notice::" "$RGD/out"; } || quiet="$quiet $name"; }
+RG_LABELS='["x","km:ready"]' silent km-ready rgrun
+RG_REVIEWERS='["someone"]' silent not-a-maintainer rgrun
+RG_MAINT='' silent maintainers-unset rgrun; grep -q 'KM_MAINTAINERS is not set' "$RGD/out" || quiet="$quiet maintainers-unset-notice"
+RG_MAINT=' , ' silent maintainers-blank rgrun
+RG_DRAFT=true silent draft rgrun
+RG_FAIL=/files silent files-fail rgrun
+RG_FAIL=pulls/9 silent pr-read-fails rgrun
+RG_REVIEWERS='["maint","expert"]' RG_REQUESTED=expert silent maintainer-asked-earlier rgrun
+RG_MAINT=joanna RG_REVIEWERS='["joanna","ann"]' RG_REQUESTED=ann silent login-substring rgrun
+RG_ACTION=ready_for_review RG_REVIEWERS='["expert"]' silent ready-no-maintainer rgrun
+RG_LABELS='["x"]' RG_ACTION=labeled RG_LABEL=x silent other-label rgrun
+RG_ACTION=unlabeled RG_LABEL=wip RG_COMMENTS="[$BOT]" silent other-label-removed rgrun
+RG_STATE=closed RG_ACTION=unlabeled RG_COMMENTS="[$BOT]" silent closed rgrun
+[ -z "$quiet" ] && ok "review-request-guide stays silent on a km:ready pull request, no maintainer requested now or by this request (a login that is part of one included), KM_MAINTAINERS unset, a draft, another label set or removed, a closed pull request, and a failed read of the pull request or its files" \
+  || no "review-request-guide commented or failed on:$quiet"
+RG_ACTION=ready_for_review RG_REVIEWERS='["expert","Maint"]' rgrun; a=$?; [ -e "$RGD/posted" ] || a=1
+RG_REVIEWERS='["expert","Maint"]' rgrun; [ -e "$RGD/posted" ] || a=1
+[ "$a" = 0 ] && ok "review-request-guide decides from the reviewers requested now, whichever event's run it is" || no "review-request-guide current reviewers ($(cat "$RGD/out"))"
+( RG_PATHS=(); RG_TEXTS=(); RG_STATUS=(); long="$(printf 'x%.0s' {1..1500})"
+  for i in $(seq 1 60); do RG_PATHS+=("d/$i-$long.md"); RG_TEXTS+=("$(fmd 'status: draft')"); done; rgrun )
+{ [ "$(wc -c < "$RGD/posted")" -lt 65536 ] && grep -qx '\.\.\. and [0-9]* more' "$RGD/posted"; } \
+  && ok "review-request-guide shortens its lists to stay under GitHub's comment limit" || no "review-request-guide long comment ($(wc -c < "$RGD/posted"))"
+( RG_PATHS=(d/a.md d/s.md d/e.md d/w.md d/shift.md); RG_STATUS=()
+  RG_TEXTS=("$(fmd 'status: draft')" $'---\nstatus: draft\n--- \nbody\n' $'---\n---\nbody\n' $'\xef\xbb\xbf---\r\nstatus: review\r\n---\r\nbody\r\n'
+    "$(fmd $'title: "Using << for the frame"\nstatus: draft')"); rgrun )
+{ [ "$(section 'No frontmatter' | grep '^"')" = '"d/e.md"' ] && has posted '"d/s.md"  level human  status draft' && has posted '"d/w.md"  level human  status review' \
+  && has posted '"d/shift.md"  level human  status draft'; } \
+  && ok "review-request-guide reads the frontmatter block as km does: after a BOM, CRLF too, closed by a line that starts with ---, never empty" || no "review-request-guide frontmatter end ($(cat "$RGD/posted"))"
+# data that would cost yq time or memory, or that yq reads otherwise than PyYAML, is left to ci, and
+# a large doc is read to its end (awk stopping early must not fail a writer under pipefail)
+BOMB='a: &a ["x","x","x","x","x","x","x","x","x"]'; for v in b c d e f g h i; do BOMB="$BOMB"$'\n'"$v: &$v [$(printf "*${p:-a},%.0s" 1 2 3 4 5 6 7 8)*${p:-a}]"; p=$v; done; unset p
+BIG="$(fmd 'status: draft')$(head -c 600000 /dev/zero | tr '\0' 'x')"
+EDGE="$(fmd 'status: draft')"; EDGE="$EDGE$(head -c $((1000000 - ${#EDGE})) /dev/zero | tr '\0' x)"$'\n'"$(head -c 500000 /dev/zero | tr '\0' x)"   # byte 1 000 001 is a newline
+WIDE="$(fmd 'status: draft')$(for i in $(seq 1 6000); do printf '\303\251%.0s' $(seq 1 100); done)"   # 1.2 MB, 600 000 characters
+( RG_PATHS=(d/bomb.md d/merge.md d/big.md d/huge.md d/flow.md d/merge2.md d/merge3.md d/wide.md d/edge.md); RG_STATUS=()
+  RG_TEXTS=("$(fmd "$BOMB")" "$(fmd $'<<: {status: accepted}')" "$BIG" "$BIG$BIG" "$(fmd 'x: {"a":&a [1], "b":*a}')" "$(fmd $'"<<" : {status: accepted}')" \
+    "$(fmd $'? <<\n: {status: accepted}')" "$WIDE" "$EDGE"); rgrun ); rc=$?
+left="$(section 'No frontmatter' | grep '^"' | tr '\n' ' ')"
+{ [ $rc = 0 ] && [ "$left" = '"d/bomb.md" "d/merge.md" "d/huge.md" "d/flow.md" "d/merge2.md" "d/merge3.md" "d/wide.md" "d/edge.md" ' ] \
+  && has posted '"d/big.md"  level human  status draft'; } \
+  && ok "review-request-guide leaves an alias bomb, merge keys and a doc over 1 MB (counted in bytes, cut while read) to ci, and reads a 600 KB doc" \
+  || no "review-request-guide unsafe or large docs (rc $rc; left to ci: $left; $(cat "$RGD/out"))"
+# (whether the cut also stops the download depends on the platform's pipes: on GitHub's runners the
+# writer finished every read, so only the call count is checked)
+api="$(grep -c '^api' "$RGD/calls")"
+[ "$api" -lt 16 ] && ok "review-request-guide makes one API call per doc" || no "review-request-guide API calls: $api"
+# an AI sign-off does not count at level human: km's is_ai_approver decides, over a spread of approvers
+APV=('"ai:m"' '[" AI:m"]' '"  ai:m"' '"\tai:m "' '["ai:x", "TT"]' '[null, "ai:x"]' 'TT' '""')
+( RG_PATHS=(d/lvl-ai.md); RG_STATUS=(); RG_TEXTS=("$(fmd $'status: accepted\napproved_by: "ai:m"\napproved_digest: x\naudience: internal\napproval: ai')")
+  for i in "${!APV[@]}"; do RG_PATHS+=("d/p$i.md"); RG_TEXTS+=("$(fmd $'status: accepted\napproved_digest: x\napproved_by: '"${APV[$i]}")"); done; rgrun )
+want="$(printf '%s\0' "${APV[@]}" | kmpy -c 'import sys, yaml, km.common as c
+for i, v in enumerate(sys.stdin.read().split("\0")[:-1]):
+    by = yaml.safe_load("a: " + v)["a"]
+    if not by or c.is_ai_approver(by):
+        print(f"\"d/p{i}.md\"  level human  status accepted")')"
+got="$(grep '^"d/\(p[0-9]*\|lvl-ai\)\.md"  level' "$RGD/posted")"
+[ "$want" = "$got" ] && ok "review-request-guide counts an AI sign-off only at level ai, as km's is_ai_approver reads the approver" \
+  || no "review-request-guide AI approvers differ from km's: $(diff <(echo "$want") <(echo "$got") | tr '\n' ' ')"
+( RG_PATHS=(d/no.md d/qno.md d/on.md d/qon.md); RG_STATUS=()
+  RG_TEXTS=("$(fmd $'status: review\nreviewed_by: no')" "$(fmd $'status: review\nreviewed_by: "no"')" "$(fmd $'status: accepted\napproved_by: "ON"\napproved_digest: x')" "$(fmd $'status: "On"\nreviewed_by: [x]')"); rgrun )
+{ [ "$(section 'No AI review' | grep '^"')" = '"d/no.md"' ] && ! grep -q '"d/on.md"' "$RGD/posted" && has posted '"d/qon.md"  level human  status other'; } \
+  && ok "review-request-guide reads a plain YAML 1.1 bool word as PyYAML does, and a quoted one as a string" || no "review-request-guide YAML 1.1 words ($(cat "$RGD/posted"))"
+RG_LABELS='["km:ready"]' RG_ACTION=labeled RG_COMMENTS="[$BOT]" rgrun
+{ [ ! -e "$RGD/posted" ] && has patched.url "repos/o/r/issues/comments/5" && grep -q "is labelled \`km:ready\`: once ci is green" "$RGD/patched"; } \
+  && ok "review-request-guide turns its comment into a km:ready note once the label is set" || no "review-request-guide km:ready note ($(cat "$RGD/calls" "$RGD/out"))"
+NOTE="$(jq -c --rawfile b "$RGD/patched" '{id: 5, user: {login: "github-actions[bot]"}, body: ($b | rtrimstr("\n"))}' <<<null)"
+RG_LABELS='["km:ready"]' RG_ACTION=labeled RG_COMMENTS="[$NOTE]" rgrun; a=$?; [ -e "$RGD/patched" ] && a=1
+RG_LABELS='["km:ready"]' RG_ACTION=labeled rgrun; [ -e "$RGD/patched" ] || [ -e "$RGD/posted" ] && a=1
+[ "$a" = 0 ] && ok "review-request-guide leaves an up-to-date comment alone, and adds no km:ready note where it never commented" || no "review-request-guide note rewrite ($(cat "$RGD/calls"))"
+RG_ACTION=unlabeled RG_REVIEWERS='[]' RG_DRAFT=true RG_COMMENTS="[$NOTE]" rgrun
+{ has patched.url "repos/o/r/issues/comments/5" && has patched '"d/a.md"  level ai  status review' && grep -q "^This pull request is no longer labelled" "$RGD/patched"; } \
+  && ok "review-request-guide lists the docs again when km:ready is removed, on a draft and with no maintainer requested too" || no "review-request-guide unlabeled ($(cat "$RGD/out"))"
+RG_ACTION=unlabeled RG_REVIEWERS='[]' rgrun; { [ ! -e "$RGD/posted" ] && [ ! -e "$RGD/patched" ]; } \
+  && ok "review-request-guide adds no comment when km:ready is removed from a pull request it never commented on" || no "review-request-guide unlabeled without comment"
+# the job filter keeps other reviewers' events out of the concurrency group, where they would cancel a
+# maintainer's waiting run
+kmpy - "$RGT" <<'KMPY' && ok "review-request-guide lets only a maintainer's request, ready_for_review and km:ready set or removed into its per-job concurrency group" \
+  || no "review-request-guide job filter or concurrency"
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1])); j = w["jobs"]["guide"]; c = " ".join(j.get("if", "").split())
+needles = ("vars.KM_MAINTAINERS != ''", "contains(vars.KM_MAINTAINERS, github.event.requested_reviewer.login)",
+           "github.event.action == 'unlabeled'", "github.event.label.name == 'km:ready'")
+types = set(w[True]["pull_request_target"]["types"])   # YAML 1.1 reads the key `on` as True
+sys.exit("concurrency" in w or "concurrency" not in j or any(n not in c for n in needles)
+         or types != {"review_requested", "ready_for_review", "labeled", "unlabeled"})
+KMPY
+RG_FAIL=/git/blobs/ rgrun; rc=$?
+{ [ $rc = 0 ] && section 'Could not be read' | grep -qxF '"d/a.md"' && ! section 'No frontmatter' | grep -q .; } \
+  && ok "review-request-guide lists a doc it could not read as such, not as one without frontmatter" || no "review-request-guide unread doc (rc $rc; $(cat "$RGD/out"))"
+sed 's/"\$SECONDS" -le 420/"$SECONDS" -le -1/' "$F/rg.sh" > "$F/rg0.sh"   # the read budget already spent
+RG_SCRIPT="$F/rg0.sh" rgrun; rc=$?
+{ ! cmp -s "$F/rg.sh" "$F/rg0.sh" && [ $rc = 0 ] && section 'Could not be read' | grep -qxF '"d/a.md"' && ! grep -q '/git/blobs/' "$RGD/calls"; } \
+  && ok "review-request-guide stops reading docs when its time budget is spent, and still comments" || no "review-request-guide read budget (rc $rc; $(cat "$RGD/out"))"
+RG_FAIL="-X POST" rgrun; rc=$?
+{ [ $rc = 0 ] && grep -q "^::warning::could not comment" "$RGD/out"; } && ok "review-request-guide on a failed comment warns and ends green" || no "review-request-guide failed post (rc $rc)"
+else no "the review-request-guide tests need jq and yq"; fi
+
 # --- upgrade records approved_digest for docs approved before km recorded it ---
 D="$F/digest"; km init "$D" --team --name D --desc d --initials DD --folder d=D --pin v0.9.0 >/dev/null
 acc_doc(){ # acc_doc FILE TITLE STATUS "extra lines"; TYPE= overrides concept, RB= (empty) drops review_by
