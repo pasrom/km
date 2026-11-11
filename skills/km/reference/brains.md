@@ -117,6 +117,7 @@ Add or update a doc in a brain you have READ (not write) on, e.g. a shared team 
 
 - **Merged:** take each merged path from `.files` (canonical, even if a reviewer renamed or changed it on the branch). On a branch (`git switch -c chore/bump-<name>`), `git submodule update --remote -- brains/<name>` to pin the brain to the merged state, then for each source `km promote stub <source> --to brains/<name>/<merged-path>`. It rewrites the source into a gated `superseded` redirect stub and drops `contribution:`; after the bump `superseded_by` resolves. Commit the stubs plus the bumped submodule pointer and open the PR (see "Pin-bump PR"); the stubs resolve once it merges and `km sync` brings main there.
 - **Closed unmerged:** delete the `contribution:` line; the doc is an ordinary doc of your brain again.
+- **Still open:** nothing to finish yet. Where it has unresolved review threads, offer to work them on its PR head (`contribute` step 2; "Review comments: reply and resolve" in `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`).
 
 ### Hard rules
 
