@@ -1,0 +1,203 @@
+# Written by `km init --team`; owned by this repo.
+name: review-request-guide
+
+# The maintainer merges pull requests that are ready (label km:ready); the review and the sign-off
+# come before, from the contributor's Claude (`/km pr`) and, for docs at level human, from a person
+# who knows the subject. When a maintainer is asked to review a pull request that is not km:ready,
+# this run posts one comment that says, for this pull request, which changed docs have no AI review
+# recorded (reviewed_by) and which are not signed off at which level, and what to do next. A later
+# request updates that comment instead of adding one. It leaves the review request in place: the
+# contributor may have a question only the maintainer can answer, and the comment is enough to say
+# what comes first. Once the pull request is km:ready, the comment says so instead, and when the
+# label goes again, the comment lists the docs again. It is guidance
+# only: the ci check (`km validate --signoff-since`) decides, and it also passes a doc whose approved
+# content did not change, which this list cannot tell.
+#
+# Setup: set the repository variable KM_MAINTAINERS (Settings, Secrets and variables, Actions,
+# Variables) to the GitHub logins of the maintainers, separated by spaces or commas. Unset, the
+# workflow does nothing.
+#
+# It never checks out or runs the pull request's code: pull_request_target runs this file from the
+# default branch, and the docs are read from the API as data, by the blob ids of the pull request's
+# file list (no file name enters a URL). Only the YAML frontmatter is parsed (yq, from the runner image,
+# bounded in time and memory; a block with anchors or merge keys, or over 64 KB, is left to ci), and
+# only fixed words derived from it go into the comment; file names are quoted as JSON inside a code
+# block, so a name cannot pose as Markdown, a mention or a workflow command.
+on:
+  pull_request_target:
+    types: [review_requested, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read        # read the docs and schema.local.yaml
+  pull-requests: write  # list the files and comments of the pull request, post or update the one comment
+
+jobs:
+  guide:
+    # GitHub sends one review_requested event per reviewer, and a newer run waiting in the concurrency
+    # group cancels an older waiting one: only a maintainer's request, ready_for_review and the km:ready
+    # label set or removed get that far (contains() is a case-insensitive substring test: the script
+    # compares the login exactly). It then decides from the pull request as it is now.
+    if: >-
+      vars.KM_MAINTAINERS != ''
+      && ((github.event.action == 'review_requested' && github.event.requested_reviewer.login != ''
+           && contains(vars.KM_MAINTAINERS, github.event.requested_reviewer.login))
+          || github.event.action == 'ready_for_review'
+          || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name == 'km:ready'))
+    concurrency:
+      group: review-request-guide-${{ github.event.pull_request.number }}
+      cancel-in-progress: false   # one request after another: the second finds the first one's comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10   # one read per changed doc, at most 300
+    steps:
+      - name: tell the contributor what comes before the maintainer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          REQUESTED: ${{ github.event.requested_reviewer.login }}
+          MAINTAINERS: ${{ vars.KM_MAINTAINERS }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C   # bytes: sizes are counted in bytes, and every tool reads the data alike
+          if [ -z "${MAINTAINERS//[[:space:],]/}" ]; then
+            echo "::notice::the repository variable KM_MAINTAINERS is not set: nothing to do"; exit 0
+          fi
+          marker='<!-- km:review-request-guide -->'
+          # post BODY [update]: update this workflow's comment (anyone can write the marker: only the bot's
+          # counts), or add one; with `update` only an existing one. An unchanged comment is left as it is
+          post(){ local own m=POST u="issues/$PR/comments"
+            own="$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100" | jq -cs --arg m "$marker" \
+              'add // [] | map(select(.user.login == "github-actions[bot]" and (.body | startswith($m)))) | first // {}')" \
+              || { echo "::warning::could not read the comments of #$PR"; return 0; }
+            if [ "$(jq -r '.body // empty' <<<"$own")" = "$1" ]; then echo "the comment is up to date"; return 0; fi
+            if id="$(jq -r '.id // empty' <<<"$own")" && [ -n "$id" ]; then m=PATCH; u="issues/comments/$id"
+            elif [ -n "${2:-}" ]; then echo "no comment to update"; return 0; fi
+            jq -n --arg body "$1" '{body: $body}' | gh api -X "$m" "repos/$REPO/$u" --input - >/dev/null \
+              && echo "$m $u: done" || echo "::warning::could not comment on #$PR ($m $u)"; }
+          # the pull request as it is now, not as this event saw it
+          pr="$(gh api "repos/$REPO/pulls/$PR")" || { echo "::notice::could not read #$PR: no comment"; exit 0; }
+          if ! jq -e '.state == "open"' <<<"$pr" >/dev/null; then echo "::notice::#$PR is not open: nothing to do"; exit 0; fi
+          if jq -e 'any(.labels[]?; .name == "km:ready")' <<<"$pr" >/dev/null; then
+            # an earlier comment would still say what is missing
+            post "$marker"$'\n'"This pull request is labelled \`km:ready\`: once ci is green, it waits for the maintainer's merge." update
+            echo "::notice::the pull request is km:ready: nothing else to do"; exit 0
+          fi
+          # the job's filter lets only km:ready through; kept should that filter change
+          if [[ "$ACTION" = *labeled && "$LABEL" != km:ready ]]; then echo "::notice::not the km:ready label: nothing to do"; exit 0; fi
+          # with km:ready removed, an existing comment is brought up to date whoever is requested
+          # shellcheck disable=SC2016  # jq's variables, not the shell's
+          if [ "$ACTION" != unlabeled ]; then
+            if jq -e '.draft == true' <<<"$pr" >/dev/null; then echo "::notice::a draft pull request: nothing to do"; exit 0; fi
+            # the login this request asks for is a maintainer's, and a maintainer is requested now (case-insensitive)
+            maintainer(){ jq -e --arg m "$MAINTAINERS" --arg one "$REQUESTED" \
+              'def ms: $m | ascii_downcase | [splits("[\\s,]+")] | map(select(. != "")); '"$1" >/dev/null; }
+            if { [ "$ACTION" = review_requested ] && ! maintainer '$one | ascii_downcase | IN(ms[])' <<<null; } \
+              || ! maintainer 'any(.requested_reviewers[]?.login | ascii_downcase; IN(ms[]))' <<<"$pr"; then
+              echo "::notice::no maintainer is requested: nothing to do"; exit 0
+            fi
+          fi
+          head="$(jq -r '.head.sha' <<<"$pr")"; base="$(jq -r '.base.sha' <<<"$pr")"; changed="$(jq -r '.changed_files' <<<"$pr")"
+
+          # yq on data from the pull request: at most 5 seconds, 2 GB (where the system allows a limit) and
+          # 256 KB of output (past a bound the pipe fails and the doc is left to ci). A plain YAML 1.1 bool
+          # word (no, On, ...) becomes a bool, as PyYAML reads it; a quoted one stays a string
+          yqj(){ ( ulimit -v 2097152 2>/dev/null || true
+            timeout 5 yq -p=yaml -o=json -I=0 '(.. | select(tag == "!!str" and style == ""
+              and test("^(yes|Yes|YES|on|On|ON|no|No|NO|off|Off|OFF)$"))) |= test("^(yes|Yes|YES|on|On|ON)$")' 2>/dev/null | head -c 262144 ); }
+          # the pull request's own file list (up to 3000 files, unlike compare), with each file's blob id
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" | jq -cs 'add // []')" \
+            || { echo "::notice::could not list the files of #$PR: no comment"; exit 0; }
+          # the brain's settings at the base (trusted), on km's base defaults; lists add to them as in km
+          schema="$(gh api -H "Accept: application/vnd.github.raw" "repos/$REPO/contents/schema.local.yaml?ref=$base" 2>/dev/null \
+            | yqj | jq -cs '.[0] | if type == "object" then . else {} end')" || schema='{}'
+          settings="$(jq -c 'def strs: if type == "array" then map(select(type == "string")) else [] end;
+            {def: (if .approval_default == "ai" then "ai" else "human" end),
+             served: (.gate.served_status | if type == "string" then . else "accepted" end),
+             skip: (["brains/"] + (.skip_prefixes | strs)),
+             names: (["CLAUDE.md", "README.md", "CONVENTIONS.md", "SKILL.md", "index.md", "log.md", "_index.md"]
+                     + (.exempt_files | strs) + (.reserved_no_frontmatter | strs))}' <<<"$schema")"
+          # the docs km checks: Markdown the head adds or changes, outside the skipped folders
+          docs="$(jq -c --argjson s "$settings" '[.[] | select(.status != "removed"
+            and (.filename | endswith(".md")) and (.filename | split("/") | last | IN($s.names[]) | not)
+            and (.filename as $f | any($s.skip[]; . as $p | $f | startswith($p)) | not)) | {path: .filename, blob: .sha}]' <<<"$files")"
+          ndocs="$(jq length <<<"$docs")"   # read at most 300 of them: one API call each
+          listed="$(jq length <<<"$files")"
+          rows=()
+          while IFS= read -r blob && IFS= read -r doc; do
+            # a budget for all reads, so the comment is posted within the job's timeout; a doc over 1 MB is
+            # cut while it is read, and then has no frontmatter this check reads
+            # (the last byte says whether the read worked: a cut read fails its writer, a trailing newline is kept)
+            text=n
+            if [ "$SECONDS" -le 420 ] && [[ "$blob" =~ ^[0-9a-f]{40,64}$ ]]; then
+              text="$(timeout 30 gh api -H "Accept: application/vnd.github.raw" "repos/$REPO/git/blobs/$blob" | head -c 1000001 && echo y || echo n)"
+            fi
+            ok="${text: -1}"; text="${text%?}"
+            if [ "$ok" = n ] && [ "${#text}" -le 1000000 ]; then
+              rows+=("$(jq -c '{path, unread: true}' <<<"$doc")"); continue
+            fi
+            fm=null
+            # the block from a first line '---' (after a BOM) to the next line that starts with '---', as km
+            # reads it (awk reads a here-string: no writer to break when it stops early, and no shell pattern
+            # match on the whole text); nothing else is parsed.
+            # Anchors (an alias bomb, or text such as `&x`) and `<<` before a colon or a line end (a merge key,
+            # which PyYAML reads otherwise) are left to ci
+            if [ "${#text}" -le 1000000 ] \
+              && block="$(awk '{ sub(/\r$/, "") } NR == 1 { sub(/^\357\273\277/, ""); if ($0 != "---") exit; next } /^---/ { found = NR > 2; exit } { print } END { exit !found }' <<<"$text")" \
+              && [ "${#block}" -le 65536 ] && ! grep -Eq "(^|[^[:alnum:]])&[^[:space:]]|(<<|\"<<\"|'<<')[[:space:]]*(:|\$)" <<<"$block"; then
+              fm="$(yqj <<<"$block" | jq -cs 'if length == 0 then {} elif length == 1 then (.[0] // {}) else null end')" || fm=null
+            fi
+            # km's rules (approval_level, signoff_problem), as fixed words: no frontmatter value is echoed
+            rows+=("$(jq -c --argjson d "$doc" --argjson s "$settings" '
+              def str: if type == "string" then . else null end;
+              def set: . != null and . != false and . != "" and . != [] and . != {} and . != 0;   # truthy, as Python takes it
+              def ai_approver: [(if type == "array" then .[] else . end) | select(set) | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "")]
+                | length > 0 and all(.[]; startswith("ai:"));
+              if type != "object" then {path: $d.path, nofm: true}
+              else (.status | str) as $st
+              | (if (.audience | str) == "internal" and (.type | str) != "verbatim-block"
+                    and (if .approval | set then .approval else $s.def end) == "ai" then "ai" else "human" end) as $level
+              | if $st == "superseded" or $st == "obsolete" then empty
+                else {path: $d.path,
+                      reviewed: (.reviewed_by | set),
+                      signed: ($st == $s.served and (.approved_by | set) and has("approved_digest")
+                               and ($level == "ai" or (.approved_by | ai_approver | not))),
+                      level: $level,
+                      status: (if $st == null then "none" elif $st | IN("draft", "review", $s.served) then $st else "other" end)}
+                end end' <<<"$fm")")
+          done < <(jq -r '.[:300][] | .blob, tojson' <<<"$docs")   # two lines per doc: the blob id is hex, the rest is JSON
+          all="$(printf '%s\n' ${rows[@]+"${rows[@]}"} | jq -cs .)"
+          jq -r '.[] | "\(.path | @json) \(del(.path) | tojson)"' <<<"$all"   # quoted for the log
+
+          comment(){ jq -nr --argjson cap "$1" --arg m "$marker" --argjson all "$all" --argjson ndocs "$ndocs" --arg listed "$listed" --arg changed "$changed" --arg head "$head" --arg action "$ACTION" '
+            def block(rows): (rows | length) as $n | if $n == 0 then empty else
+              "```", (rows[:$cap][]), (if $n > $cap then "... and \($n - $cap) more" else empty end), "```" end;
+            ($all | map(select(.nofm))) as $nofm
+            | ($all | map(select(.unread))) as $unread
+            | ($all | map(select((.nofm or .unread | not) and (.signed | not)))) as $open
+            | ($open | map(select(.reviewed | not))) as $unreviewed
+            | ($open | map(select(.level == "human"))) as $human
+            | $m,
+              (if $action == "unlabeled" then "This pull request is no longer labelled `km:ready`." else "A maintainer was asked to review this pull request, but it is not marked `km:ready` yet." end)
+              + " In this brain the maintainer merges ready pull requests; the review and the sign-off come first. The changed docs as of \($head[:12]):",
+              "",
+              (if $listed != $changed then "The API listed \($listed) of \($changed) changed files, so the lists below may be incomplete.\n" else empty end),
+              (if ($all | length) == 0 then "This pull request changes no brain docs.\n" else empty end),
+              (if $ndocs > 300 then "It changes \($ndocs) docs; only the first 300 were read.\n" else empty end),
+              (if ($unreviewed | length) > 0 then "**No AI review recorded** (`reviewed_by` is empty):", block($unreviewed | map(.path | @json)), "" else empty end),
+              (if ($open | length) > 0 then "**No sign-off recorded** (level: who may sign off; status):",
+                block($open | map("\(.path | @json)  level \(.level)  status \(.status)")), "" else empty end),
+              (if ($nofm | length) > 0 then "**No frontmatter this check reads** (none, or one it leaves to ci: with `&` or `<<`, over 64 KB, or in a doc over 1 MB):", block($nofm | map(.path | @json)), "" else empty end),
+              (if ($unread | length) > 0 then "**Could not be read now** (the next review request tries again):", block($unread | map(.path | @json)), "" else empty end),
+              (if ($all | length) > 0 and ($open + $nofm + $unread | length) == 0 then "Every changed doc carries a sign-off; the ci check confirms that it covers the current text.\n" else empty end),
+              "Next steps:",
+              "1. In Claude, run `/km pr` on this branch: it reviews the changed docs, records the AI review in `reviewed_by`, applies the fixes and signs off the docs at level `ai`.",
+              (if ($human | length) > 0 then "1. A doc at level `human` needs the sign-off of a person who knows its subject: any team member, not necessarily the maintainer (`km approve <doc> --by <their initials>`, after their review)." else empty end),
+              "1. Once every changed doc is signed off, `/km pr` sets the label `km:ready` (or, without the rights to set labels, asks for it in the pull request). Then ask the maintainer, to merge.",
+              "",
+              "<sub>Guidance from the review-request-guide workflow, updated on each new review request and when `km:ready` is set or removed. The ci check (`km validate --signoff-since`) is what decides.</sub>"'; }
+          for cap in 50 10 3 0; do   # GitHub takes up to 65536 characters; without rows the comment is short
+            body="$(comment "$cap")"; [ "${#body}" -le 60000 ] && break
+          done
+          if [ "$ACTION" = unlabeled ]; then post "$body" update; else post "$body"; fi

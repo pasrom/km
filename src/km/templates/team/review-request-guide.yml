@@ -1,4 +1,5 @@
-# Written by `km init --team`; owned by this repo.
+# Shipped by km (`km init --team` or `km upgrade`); km upgrade replaces it while it is unchanged; once
+# changed it is owned by this repo.
 name: review-request-guide
 
 # The maintainer merges pull requests that are ready (label km:ready); the review and the sign-off

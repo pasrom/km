@@ -606,6 +606,11 @@ import sys, km.upgrade as u
 from km.init import template
 sys.exit(any(u.shipped_hash(template(t, {})) not in h for t, h in u.SHIPPED.items()))
 PY
+kmpy - <<'PY' && ok "every SHIPPED template says in its header that km upgrade replaces it" || no "a SHIPPED template header does not say km upgrade replaces it"
+import sys, km.upgrade as u
+from km.init import template
+sys.exit(any(not all(w in " ".join(template(t, {}).splitlines()[:5]) for w in ("km upgrade", "replaces it")) for t in u.SHIPPED))
+PY
 kmpy -c 'import km.upgrade as u
 h = u.shipped_hash
 assert h("  - uses: a/b@1 # v1\n") == h("  - uses: a/b@2 # v2\n") and h("    uses: \"a/b@1\"\n") == h("    uses: \"a/b@2\"\n")
@@ -949,6 +954,9 @@ RG=.github/workflows/review-request-guide.yml; RGT="$REPO/src/km/templates/team/
 cmp -s "$T/$RG" "$RGT" && ok "init --team writes the review-request-guide workflow" || no "init --team review-request-guide"
 rm "$O/$RG"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$RG" "$RGT" && out_has "added $RG" && out_has "until the repository variable KM_MAINTAINERS"; } && ok "upgrade adds review-request-guide to a team brain that lacks it" || no "upgrade adds review-request-guide ($out)"
+cp "$REPO/tests/fixtures/review-request-guide-1.13.1.yml" "$O/$RG"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$RG" "$RGT" && out_has "updated $RG to this km's version"; } \
+  && ok "upgrade replaces the review-request-guide km 1.13.1 shipped" || no "upgrade replaces the 1.13.1 review-request-guide ($out)"
 # its script, run with a stand-in gh that serves the pull request's files, the blobs, schema.local.yaml and the
 # comments from files, and keeps what it posts or patches
 if command -v jq >/dev/null && command -v yq >/dev/null; then
