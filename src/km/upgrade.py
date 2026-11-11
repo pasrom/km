@@ -27,7 +27,12 @@
   `approved_digest`) gets the digest of its current content, once: when the brain moves from a km
   that did not check it to one that does. This takes the current text as the approved one, so
   review `git diff` before committing. From then on `km validate` reports a change to its content as
-  a stale approval (see km.common), and a later upgrade records nothing.
+  a stale approval (see km.common), and a later upgrade records nothing. Where the pins moved past
+  1.10.1 without km upgrade (Dependabot, `pre-commit autoupdate`), no upgrade crosses, and none
+  records a digest: an approval typed by hand since looks the same, and the commit history and pin
+  comments that could tell them apart are written by whoever pushes. An upgrade to a km whose ci runs
+  the sign-off check lists those docs instead: each needs `km demote` and `km approve` once a pull
+  request changes its content.
 - The generated '## Documents' list of each _index.md is regenerated (km.gen_index), once: when the
   brain moves from a km at or below 1.11.0, which wrote a title as YAML reads it (`1.10` as 1.1,
   `false` as False), to a later one, which writes it as written, so the brain's
@@ -124,6 +129,19 @@ def record_digests() -> tuple[list[str], list[str]]:
                 write_text(d.path, set_digest(d.raw, d.fm, d.body) + d.body)
                 done.append(rel)
     return done, left
+
+
+def undigested(root: Path) -> list[str]:
+    """The accepted docs with an approver but no approved_digest, the ones record_digests looks at.
+    Asked of git first (an approved_by line), so a brain without an approved doc is left alone, its
+    schema not read; km.common is imported here for the reason record_digests gives."""
+    if not (candidates := set(git("grep", "-lz", "-e", "^approved_by:", "--", "*.md", cwd=root).stdout.split("\0")) - {""}):
+        return []
+    from km.common import ROOT, SERVED_STATUS, is_article
+    from km.edit import load_doc
+    return sorted(rel for rel in filter(is_article, candidates) if (ROOT / rel).is_file()
+                  and not isinstance(d := load_doc(rel, ROOT / rel), str) and d.fm.get("status") == SERVED_STATUS
+                  and d.fm.get("approved_by") and "approved_digest" not in d.fm)
 
 
 def regenerate_indexes(root: Path) -> tuple[list[str], list[str]]:
@@ -347,6 +365,7 @@ def main() -> int:
         if (new := MARKER.sub("", text)) != text:
             write_text(local, new)
             done.append("dropped team_brain from schema.local.yaml (no longer used)")
+    signoff = False                           # whether km's ci workflow runs the sign-off check after this upgrade
     if team:
         km_ci = ".github/workflows/ci.yml" in rewrites or ci_hash(ci_text) in KM_CI   # km's, or km's copy-in rewritten to it
         for tpl in ("team/dependabot.yml", "team/main-guard.yml", *SHIPPED):
@@ -384,9 +403,10 @@ def main() -> int:
             else:
                 write_text(root / ci, got)
                 done.append(f"added the workflow_dispatch trigger to {ci}")
-        if (ci in pins and (version_key(target) or ()) >= SIGNOFF_SINCE
-                and (got := with_signoff(text := (root / ci).read_text(encoding="utf-8"))) != text):
+        signoff = ci in pins and (version_key(target) or ()) >= SIGNOFF_SINCE
+        if signoff and (got := with_signoff(text := (root / ci).read_text(encoding="utf-8"))) != text:
             if got is None:
+                signoff = False
                 done.append(f"could not turn on the sign-off check in {ci}: change its `km validate` step as in km's "
                             f"templates/team/ci.yml by hand, so a pull request fails on a changed doc that is not signed off")
             else:
@@ -421,7 +441,14 @@ def main() -> int:
                 write_text(hook, new)
     if note := ensure_lf(root):
         done.append(note)
-    # once, when the brain crosses to a km that checks the digest: a later upgrade never takes text as approved
+    # once, when the brain crosses to a km that checks the digest: a later upgrade never takes text as approved,
+    # since nothing it can read offline tells an approval from before digests from one typed by hand later
+    if not digest_crossing and signoff and (unbound := undigested(root)):
+        done.append(f"{len(unbound)} accepted doc(s) have approved_by but no digest, and this upgrade does not move the brain "
+                    f"from a km at or below {'.'.join(map(str, DIGEST_AFTER))}, so km cannot tell their approval from one "
+                    f"typed by hand and records none: {', '.join(unbound)}. Each passes the sign-off check until a pull "
+                    f"request changes its content; that pull request then sends it back to review (`km demote <doc>`) "
+                    f"and approves it after review (`km approve <doc> --by <approver>`)")
     if digest_crossing:
         signed, left = record_digests()
         if signed:
