@@ -14,6 +14,9 @@ S99="$(printf '9%.0s' {1..40})"; S98="$(printf '8%.0s' {1..40})"           # com
 PINW="pasrom/km@$KM_SHA # $KM_REF"; PINH="rev: $KM_SHA  # frozen: $KM_REF"
 git -C "$F/remote" "${G[@]}" commit -q --allow-empty -m three && git -C "$F/remote" tag v1.99.0   # a release that has the km-gen-index hook
 NEW_SHA="$(git -C "$F/remote" rev-parse v1.99.0)"
+# km 1.11.0, which the index-regen cases pin, whatever this km's version is (a commit off the branch)
+git -C "$F/remote" rev-parse -q --verify refs/tags/v1.11.0 >/dev/null || git -C "$F/remote" tag v1.11.0 \
+  "$(git -C "$F/remote" "${G[@]}" commit-tree -p v0.9.0 -m 1.11 'v0.9.0^{tree}')"
 GI="$(kmpy -c 'import km.init as i; print(" km:km-gen-index:" if i.gen_index_hook(i.KM_REF) else "")')"   # whether this km's own pin gets it
 
 G(){ git -C "$T" -c user.name=t -c user.email=t@t "$@"; }
