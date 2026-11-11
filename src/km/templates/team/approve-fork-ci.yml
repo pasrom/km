@@ -1,4 +1,5 @@
-# Written by `km init --team`; owned by this repo.
+# Shipped by km (`km init --team` or `km upgrade`); km upgrade replaces it while it is unchanged; once
+# changed it is owned by this repo.
 name: approve-fork-ci
 
 # A pull request from a fork by someone with read access only waits for "Approve and run" before CI
@@ -36,7 +37,7 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository
       && github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: approve the CI run when the pull request changes nothing CI executes
         env:
@@ -85,43 +86,68 @@ jobs:
           fi
           # a fork's run carries no pull_requests, so a waiting run cannot be tied to this pull request:
           # every pull request ever opened from the branch shares this commit's runs, a closed one against
-          # another base too. Approve only while all of them target the default branch, exactly one is
-          # open and none ever changed its base (a run made for the old base would wait under this sha);
-          # checked again right before each approval
+          # another base too. Approve only while all of them target the default branch and exactly one is
+          # open, and only a run made after the last base change of any of them (a run made for the old
+          # base would wait under this sha); one_pr sets `changed` to that time, 0 when none (an event
+          # time it cannot read counts as the far future). Checked again right before each approval
           head="$(jq -rn --arg h "${HEAD_REPO%%/*}:$HEAD_REF" '$h | @uri')"   # the branch name is the fork's: encoded
           one_pr() {
             local prs n
             prs="$(gh api --paginate "repos/$REPO/pulls?state=all&per_page=100&head=$head" | jq -sc 'add // []')" || return 1
             jq -e --arg base "$DEFAULT" 'all(.base.ref == $base) and (map(select(.state == "open")) | length == 1)' \
               <<<"$prs" >/dev/null || return 1
+            changed=0
             for n in $(jq -r '.[].number' <<<"$prs"); do
-              gh api --paginate "repos/$REPO/issues/$n/timeline?per_page=100" \
-                | jq -se 'add // [] | all(.[]; .event | IN("base_ref_changed", "automatic_base_change_succeeded",
-                    "automatic_base_change_failed") | not)' >/dev/null || return 1
+              changed="$(gh api --paginate "repos/$REPO/issues/$n/timeline?per_page=100" \
+                | jq -s --argjson was "$changed" 'add // [] | [$was, (.[] | select(.event | IN("base_ref_changed",
+                    "automatic_base_change_succeeded", "automatic_base_change_failed"))
+                  | try (.created_at | fromdateiso8601) catch 1e15)] | max')" || return 1
             done
           }
           if ! one_pr; then
-            echo "::notice::not exactly one open pull request from this branch, or one against another base or with a changed base; a person approves"
+            echo "::notice::not exactly one open pull request from this branch, or one against another base; a person approves"
             exit 0
           fi
           # the CI run of this commit may not exist yet (it has come two minutes late): wait up to three
-          # minutes for it, then approve each waiting run of this fork's branch made for this event; an
-          # older one, such as a run made while the pull request had another base, is for a person
-          for try in $(seq 1 18); do
-            # the fork names its branch: pass it to jq as data, never inside the expression
-            ids="$( { gh api "repos/$REPO/actions/runs?head_sha=$SHA&status=action_required&event=pull_request" || echo '{}'; } \
-              | jq -r --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --arg since "$SINCE" \
-                '.workflow_runs[]? | select(.path == ".github/workflows/ci.yml"
-                  and .head_repository.full_name == $repo and .head_branch == $ref and .created_at >= $since) | .id')"
-            [ -n "$ids" ] || [ "$try" = 18 ] && break
-            sleep 10
-          done
-          if [ -z "$ids" ]; then
-            echo "::notice::no run of $SHA waits for approval"
+          # minutes for it, then approve each waiting run of this fork's branch made for this event and
+          # after the last base change; an older one, such as a run made while a pull request from the
+          # branch had another base, is for a person. GitHub may stamp a run a second before the pull
+          # request's update: allow 30 s before the event (a run in that window is still bound to this
+          # commit, fork, branch and ci.yml). A run for the old base may appear minutes after the event
+          # that made it, so a run counts only from 5 minutes after the last base change, longer than
+          # this job waits: no auto-approval for 5 minutes after a pull request from the branch is retargeted
+          since="$(jq -rn --arg s "$SINCE" '$s | fromdateiso8601 - 30')" \
+            || { echo "::notice::cannot read the event time $SINCE; not approved, a person approves"; exit 0; }
+          cutoff() { jq -n --argjson a "$since" --argjson b "$changed" '[$a, $b + 300] | max'; }
+          cut="$(cutoff)"
+          if ! jq -ne --argjson at "$changed" '$at <= now + 60' >/dev/null; then
+            echo "::notice::a base change is dated in the future or cannot be read; not approved, a person approves"
             exit 0
           fi
-          for id in $ids; do
-            one_pr || { echo "::notice::another pull request from this branch appeared; a person approves"; exit 0; }
+          if ! jq -ne --argjson cut "$cut" '$cut <= now + 180' >/dev/null; then   # past the end of the wait below
+            echo "::notice::a pull request from this branch was retargeted less than 5 minutes ago, or the event is dated in the future; not approved, a person approves"
+            exit 0
+          fi
+          for try in $(seq 1 18); do
+            # the fork names its branch: pass it to jq as data, never inside the expression
+            runs="$( { gh api "repos/$REPO/actions/runs?head_sha=$SHA&status=action_required&event=pull_request" || echo '{}'; } \
+              | jq -r --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --argjson cut "$cut" \
+                '.workflow_runs[]? | select(.path == ".github/workflows/ci.yml"
+                  and .head_repository.full_name == $repo and .head_branch == $ref)
+                | {id, at: (try (.created_at | fromdateiso8601) catch 0)} | select(.at >= $cut) | "\(.id):\(.at)"')"
+            [ -n "$runs" ] || [ "$try" = 18 ] && break
+            sleep 10
+          done
+          if [ -z "$runs" ]; then
+            echo "::notice::no run of $SHA made for this event and after the last base change waits for approval"
+            exit 0
+          fi
+          for run in $runs; do
+            id="${run%%:*}"
+            if ! { one_pr && jq -ne --argjson at "${run#*:}" --argjson cut "$(cutoff)" '$at >= $cut' >/dev/null; }; then
+              echo "::notice::another pull request from this branch appeared, or a base changed; a person approves"
+              exit 0
+            fi
             if gh api -X POST "repos/$REPO/actions/runs/$id/approve" >/dev/null; then
               echo "approved run $id"
             else

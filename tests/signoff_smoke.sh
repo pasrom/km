@@ -20,10 +20,13 @@ fails_both_gates(){ local g n hit; for g in false true; do
   for n in "${@:3}"; do has_signoff "$n" || hit=0; done
   [ "$hit" = 1 ] && ok "gate $g: $1" || no "gate $g: $1 (rc=$rc: $out)"
 done; git -C "$T" checkout -q schema.local.yaml; }
-# signoff_as_told DOC APPROVER: as the message says, back to review, then km approve in a commit of its own
+# signoff_as_told DOC APPROVER [KM-APPROVE-ARGS]: as the message says, back to review, then km approve in a commit of its own
 signoff_as_told(){ local o
   o="$(km demote --root "$T" "$T/$1" 2>&1)" || no "km demote $1 refused: $o"; commit "demote $1"
-  o="$(km approve --root "$T" "$T/$1" --by "$2" 2>&1)" || no "km approve $1 refused: $o"; commit "approve $1"; }
+  o="$(km approve --root "$T" "$T/$1" --by "$2" "${@:3}" 2>&1)" || no "km approve $1 refused: $o"; commit "approve $1"; }
+# kept_by_old_km DOC: record the digest of DOC's text and keep its approval, as km approve 1.12.0 and earlier did
+kept_by_old_km(){ KM_ROOT="$T" kmpy -c 'import sys, km.common as c, km.edit as e
+d = e.load_doc(sys.argv[1], c.ROOT / sys.argv[1]); open(d.path, "w", encoding="utf-8", newline="\n").write(c.set_digest(d.raw, d.fm, d.body) + d.body)' "$1"; }
 
 doc old/ai-review.md review internal
 doc old/human-review.md review customer
@@ -32,6 +35,10 @@ doc old/legacy.md accepted internal 'review_by: 2099-01-01\n'   # served before 
 doc old/kept.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n' "$(seq 200 240 | tr "\n" " ") approved before km recorded a digest"
 doc old/signed.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n' "$(seq 100 140 | tr "\n" " ") approved before km recorded a digest"
 doc old/moved.md review internal "" "$(seq 50 90 | tr "\n" " ") moved as it is"
+doc old/again.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n' "$(seq 300 340 | tr "\n" " ") re-approved on the day of its first approval"
+doc old/revert.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n' "$(seq 500 540 | tr "\n" " ") sent back, and the send-back reverted"
+doc old/swap.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n' "$(seq 600 640 | tr "\n" " ") re-approved, then the old approval put back"
+doc old/same.md accepted internal 'review_by: 2099-01-01\napproved_by: ai:m\napproved_at: 2026-01-10\n' "$(seq 400 440 | tr "\n" " ") its approval kept for a new text"
 doc old/gone.md review internal "" "$(seq 1 40 | tr "\n" " ") a body no other doc shares, so git sees no rename"
 commit base
 git -C "$T" switch -q -c topic
@@ -70,12 +77,41 @@ S; [ "$rc" = 0 ] && ok "signed off again with km approve, it passes" || no "serv
 # km approve 1.12.0 and earlier, on a doc with no digest, recorded the text as it found it and kept its
 # approver: after a change in this PR that approver never saw the new text
 printf 'changed in this PR\n' >> "$T/old/kept.md"; commit "edit kept"
-KM_ROOT="$T" kmpy -c 'import sys, km.common as c, km.edit as e
-d = e.load_doc(sys.argv[1], c.ROOT / sys.argv[1]); open(d.path, "w", encoding="utf-8", newline="\n").write(c.set_digest(d.raw, d.fm, d.body) + d.body)' old/kept.md
+kept_by_old_km old/kept.md
 commit "record kept as an older km approve did"
 fails_both_gates "changed, then its old approval kept with the digest of the new text, it still fails" old/kept.md "km demote old/kept.md"
 signoff_as_told old/kept.md ai:m2
 S; [ "$rc" = 0 ] && ok "approved again after km demote, it passes" || no "kept re-approved (rc=$rc: $out)"
+# the same approver signing off again on the day of the first approval writes the approved_by and
+# approved_at the merge base has: km demote in a commit of its own shows the approval is new
+printf 'changed in this PR\n' >> "$T/old/again.md"
+signoff_as_told old/again.md ai:m --at 2026-01-10   # the edit goes in with the demote
+mkdir -p "$T/moved"; git -C "$T" mv old/again.md moved/again.md; commit "move again"   # the send-back is found across the move
+for g in false true; do gate $g; S
+  { [ "$rc" = 0 ] && grep -q '^approved_at: 2026-01-10$' "$T/moved/again.md" && grep -q '^approved_digest:' "$T/moved/again.md"; } \
+    && ok "gate $g: sent back, approved again by the same approver on the same day and moved, it passes" || no "gate $g: same-day re-approval (rc=$rc: $out)"
+done; git -C "$T" checkout -q schema.local.yaml
+# without a send-back the approval of the merge base was kept: a ripple commit in between changes nothing
+printf 'changed in this PR\n' >> "$T/old/same.md"; commit "edit same"
+sed -i.bak 's/^tags: \[t\]/tags: [t, u]/' "$T/old/same.md" && rm -f "$T/old/same.md.bak"; commit "ripple same"
+kept_by_old_km old/same.md
+commit "record same as an older km approve did"
+fails_both_gates "changed, a ripple commit, then its old approval kept with the digest of the new text, it still fails" old/same.md "km demote old/same.md"
+signoff_as_told old/same.md ai:m2
+# a send-back reverted is none: the approval of the merge base is back, then kept for a new text
+o="$(km demote --root "$T" "$T/old/revert.md" 2>&1)" || no "km demote revert refused: $o"; commit "demote revert"
+git -C "$T" "${G[@]}" revert --no-edit HEAD >/dev/null
+printf 'changed in this PR\n' >> "$T/old/revert.md"; commit "edit revert"
+kept_by_old_km old/revert.md; commit "record revert as an older km approve did"
+fails_both_gates "sent back, the send-back reverted, then its old approval kept for a new text, it still fails" old/revert.md "km demote old/revert.md"
+signoff_as_told old/revert.md ai:m2
+# sent back and approved, then the merge base's approval put back on a new text: the send-back approved another
+signoff_as_told old/swap.md ai:m2
+printf 'changed in this PR\n' >> "$T/old/swap.md"
+sed -i.bak 's/^approved_by: .*/approved_by: ai:m/; s/^approved_at: .*/approved_at: 2026-01-10/' "$T/old/swap.md" && rm -f "$T/old/swap.md.bak"
+kept_by_old_km old/swap.md; commit "put the old approval back on swap"
+fails_both_gates "approved again, then the merge base's approval put back on a new text, it still fails" old/swap.md "km demote old/swap.md"
+signoff_as_told old/swap.md ai:m2
 doc old/legacy.md accepted internal 'review_by: 2099-01-01\nrelated: [old/served.md]\n'; commit "ripple legacy"
 S; [ "$rc" = 0 ] && ok "a ripple edit to a served doc with no approved_by asks for nothing" || no "legacy ripple (rc=$rc: $out)"
 doc old/legacy.md accepted internal 'review_by: 2099-01-01\nrelated: [old/served.md]\n' "new legacy body"; commit "edit legacy"

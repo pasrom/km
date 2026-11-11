@@ -658,6 +658,22 @@ grep -q "branches: \[main\]" "$T/.github/workflows/main-guard.yml" \
   && [ "$(grep -c '^default_install_hook_types' "$O/.pre-commit-config.yaml")" = 1 ] && [ "$(grep -c '^default_stages' "$O/.pre-commit-config.yaml")" = 1 ] \
   && [ "$(hooks_of "$O/.pre-commit-config.yaml")" = "$TEAMH" ]; } \
   && ok "upgrade adds the guard workflow and both hooks to a team brain, once" || no "upgrade adds the main guard ($(cat "$O/.pre-commit-config.yaml"))"
+# --- staleness: a checkout from before fetch-depth: 0 (km 1.3.0 and earlier) gets it ---
+SW=.github/workflows/staleness.yml; cp "$O/$SW" "$F/stale.want"
+sed '/uses: actions\/checkout@/{n;N;d;}' "$F/stale.want" > "$O/$SW"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$SW" "$F/stale.want" && out_has "gave the checkout step of $SW .fetch-depth: 0."; } \
+  && ok "upgrade gives the staleness checkout fetch-depth: 0 where it lacks it, as the template has it" || no "staleness fetch-depth ($out; $(diff "$F/stale.want" "$O/$SW"))"
+out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$SW" "$F/stale.want" && ! out_has "fetch-depth"; } && ok "a second upgrade leaves it as it is" || no "staleness fetch-depth again ($out)"
+sed 's/fetch-depth: 0 .*/fetch-depth: 1/' "$F/stale.want" > "$O/$SW"; cp "$O/$SW" "$F/stale.own"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$SW" "$F/stale.own" && ! out_has "fetch-depth"; } && ok "a fetch-depth the brain set is left as it is" || no "staleness own fetch-depth ($out)"
+sed 's/fetch-depth: 0 .*/persist-credentials: false/' "$F/stale.want" > "$O/$SW"; cp "$O/$SW" "$F/stale.own"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$SW" "$F/stale.own" && out_has "could not give the checkout step of $SW"; } \
+  && ok "a checkout with a with: of its own and no fetch-depth is left as it is, with a note" || no "staleness own with ($out)"
+# a staleness workflow of the brain's own (no km pin) is left alone: a fetch-depth dropped on purpose stays dropped
+sed -e '/uses: actions\/checkout@/{n;N;d;}' -e 's|uses: pasrom/km@.*|run: pip install km|' "$F/stale.want" > "$O/$SW"; cp "$O/$SW" "$F/stale.own"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$SW" "$F/stale.own" && ! out_has "fetch-depth"; } && ok "a staleness workflow that does not pin km is left as it is" || no "staleness without km pin ($out)"
+cp "$F/stale.want" "$O/$SW"
 # --- approve-fork-ci: approves a fork's waiting ci run when the pull request changes only data ---
 cmp -s "$T/$AF" "$AFT" && ok "init --team writes the approve-fork-ci workflow" || no "init --team approve-fork-ci"
 rm "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
@@ -665,6 +681,9 @@ rm "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
 { echo "# an earlier km version"; cat "$AFT"; } > "$O/$AF"; upgrade_older
 { cmp -s "$O/$AF" "$AFT" && out_has "updated $AF to this km's version"; } \
   && ok "upgrade replaces an approve-fork-ci that is an earlier version km shipped, so security fixes reach it" || no "upgrade replaces an earlier approve-fork-ci ($out)"
+cp "$REPO/tests/fixtures/approve-fork-ci-1.13.0.yml" "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$AF" "$AFT" && out_has "updated $AF to this km's version"; } \
+  && ok "upgrade replaces the approve-fork-ci km 1.12.0 and 1.13.0 shipped" || no "upgrade replaces the 1.13.0 approve-fork-ci ($out)"
 echo "# the brain's own guard" >> "$O/$AF"; cp "$O/$AF" "$F/af.before"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$AF" "$F/af.before" && out_has "left $AF: the brain changed it"; } \
   && ok "upgrade leaves a brain's own approve-fork-ci byte for byte, with a note" || no "upgrade overwrote approve-fork-ci ($out)"
@@ -829,8 +848,10 @@ echo "$*" >> "$AF_DIR/calls"
 case "$*" in
   */compare/*) cat "$AF_DIR/compare.json" ;;
   */git/trees/*) cat "$AF_DIR/tree.json" ;;
-  *pulls\?*) if [ -f "$AF_DIR/pulls.seen" ]; then cat "$AF_DIR/pulls2.json"; else touch "$AF_DIR/pulls.seen"; cat "$AF_DIR/pulls.json"; fi ;;
-  */timeline*) cat "$AF_DIR/timeline.json" ;;
+  *pulls\?*) if [ -f "$AF_DIR/pulls.seen" ]; then touch "$AF_DIR/pulls2.seen"; cat "$AF_DIR/pulls2.json"; else touch "$AF_DIR/pulls.seen"; cat "$AF_DIR/pulls.json"; fi ;;
+  */issues/*/timeline*) n="$*"; n="${n#*/issues/}"; n="${n%%/*}"
+    if [ -f "$AF_DIR/pulls2.seen" ] && [ -f "$AF_DIR/timeline.late.json" ]; then cat "$AF_DIR/timeline.late.json"
+    elif [ -f "$AF_DIR/timeline.$n.json" ]; then cat "$AF_DIR/timeline.$n.json"; else cat "$AF_DIR/timeline.json"; fi ;;
   *actions/runs\?*) cat "$AF_DIR/runs.json" ;;
 esac
 SH
@@ -839,19 +860,23 @@ kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["appr
 # afrun FILES-JSON [CHANGED]: 0 when it approved run 7; 1 when it left it to a person with a notice and
 # exit 0; 2 when it exited 0 with neither; 3 when it failed (a crash would turn every fork pull request
 # red). TREE, PRS, PRS2 (the pull requests from the second lookup on, the one right before approving),
-# TIMELINE, RUN, AF_REF (the fork's branch), AF_DEFAULT and AF_FAIL (a call that fails) override the
-# stand-in; the calls it made are in $AFD/calls
+# TIMELINE (of every pull request), TIMELINE2 (of pull request 2 only), TIMELINE_LATE (of every pull
+# request from the second lookup on), SINCE (the event's time), RUN, AF_REF (the fork's branch),
+# AF_DEFAULT and AF_FAIL (a call that fails) override the stand-in; the calls it made are in $AFD/calls
 AFD="$F/af"; mkdir -p "$AFD"
 RUN_OF(){ printf '{"id":7,"path":".github/workflows/ci.yml","head_repository":{"full_name":"%s"},"head_branch":"%s","created_at":"%s"}' "$@"; }
 PR(){ printf '{"number":%s,"state":"%s","base":{"ref":"%s"}}' "$@"; }
+BASE_AT(){ printf '[{"event":"base_ref_changed","created_at":"%s"}]' "$1"; }   # a timeline with a base change at that time
 afrun(){ local prs tree='{"truncated":false,"tree":[]}' run
   prs="[$(PR 1 open main)]"; run="$(RUN_OF f/r "${AF_REF:-x}" 2026-01-01T00:00:09Z)"
   rm -f "$AFD"/*; printf '{"files":%s}' "$1" > "$AFD/compare.json"
   printf '%s' "${TREE:-$tree}" > "$AFD/tree.json"; printf '%s' "${TIMELINE:-[]}" > "$AFD/timeline.json"
+  [ -z "${TIMELINE2:-}" ] || printf '%s' "$TIMELINE2" > "$AFD/timeline.2.json"
+  [ -z "${TIMELINE_LATE:-}" ] || printf '%s' "$TIMELINE_LATE" > "$AFD/timeline.late.json"
   printf '%s' "${PRS:-$prs}" > "$AFD/pulls.json"; printf '%s' "${PRS2:-${PRS:-$prs}}" > "$AFD/pulls2.json"
   printf '{"workflow_runs":[%s]}' "${RUN:-$run}" > "$AFD/runs.json"
   AF_DIR="$AFD" PATH="$AB:$SB:$PATH" REPO=o/r BASE=b SHA=s HEAD_REPO=f/r HEAD_REF="${AF_REF:-x}" DEFAULT="${AF_DEFAULT:-main}" \
-    SINCE=2026-01-01T00:00:05Z CHANGED="${2:-$(printf '%s' "$1" | jq length)}" bash "$F/af.sh" > "$AFD/out" 2>&1 || return 3
+    SINCE="${SINCE:-2026-01-01T00:00:05Z}" CHANGED="${2:-$(printf '%s' "$1" | jq length)}" bash "$F/af.sh" > "$AFD/out" 2>&1 || return 3
   grep -qx "approve repos/o/r/actions/runs/7/approve" "$AFD/approved" 2>/dev/null && return 0
   grep -q "^::notice::" "$AFD/out" && return 1 || return 2; }
 refuse(){ local name="$1"; shift; afrun "$@"; [ $? = 1 ] || refused="$refused $name"; }
@@ -868,7 +893,13 @@ PRS="[$(PR 1 open main),$(PR 2 closed main)]" approves earlier-closed-pr '[{"fil
 AF_DEFAULT=trunk PRS="[$(PR 1 open trunk)]" approves default-branch-trunk '[{"filename":"d/a.md"}]'
 AF_REF='a/b&c#d' approves branch-to-encode '[{"filename":"d/a.md"}]'
 called "api --paginate repos/o/r/pulls?state=all&per_page=100&head=f%3Aa%2Fb%26c%23d" || missed="$missed branch-encoding"
-[ -z "$missed" ] && ok "approve-fork-ci also approves beside an earlier closed pull request, on a default branch other than main, and for a branch name it must encode" \
+# a base change long before the run (an old retarget of a closed or the open pull request) blocks no later run
+TIMELINE2="$(BASE_AT 2025-12-01T00:00:00Z)" PRS="[$(PR 1 open main),$(PR 2 closed main)]" approves old-base-change '[{"filename":"d/a.md"}]'
+called "api --paginate repos/o/r/issues/2/timeline?per_page=100" || missed="$missed timeline-of-every-pr"
+TIMELINE="$(BASE_AT 2025-12-31T23:55:00Z)" RUN="$(RUN_OF f/r x 2026-01-01T00:00:00Z)" approves run-300s-after-base-change '[{"filename":"d/a.md"}]'
+# GitHub may stamp the run a second before the pull request's update: 30 s before SINCE still counts
+RUN="$(RUN_OF f/r x 2025-12-31T23:59:35Z)" approves run-30s-before-event '[{"filename":"d/a.md"}]'
+[ -z "$missed" ] && ok "approve-fork-ci also approves beside an earlier closed pull request, after a base change long before the run, a run stamped up to 30 s before the event, on a default branch other than main, and for a branch name it must encode" \
   || no "approve-fork-ci did not approve:$missed"
 AF_FAIL=/approve afrun '[{"filename":"d/a.md"}]'; rc=$?
 { [ $rc = 2 ] && grep -q "^::warning::could not approve run 7" "$AFD/out"; } \
@@ -892,9 +923,23 @@ PRS="[$(PR 1 open main)][$(PR 2 closed legacy)]" refuse closed-pr-other-base '[{
 PRS2="[$(PR 1 open main),$(PR 2 open legacy)]" refuse pr-opened-while-waiting '[{"filename":"d/a.md"}]'
 TIMELINE='[{"event":"labeled"}][{"event":"base_ref_changed"}]' refuse base-changed '[{"filename":"d/a.md"}]'
 TIMELINE='[{"event":"automatic_base_change_succeeded"}]' refuse base-changed-by-github '[{"filename":"d/a.md"}]'
+# the branch forced back to this commit: a closed pull request, retargeted to main after its run for
+# another base was made, ended on another commit; the run predates the base change
+TIMELINE2="$(BASE_AT 2026-01-01T00:00:08Z)" PRS="[$(PR 1 open main),$(PR 2 closed main)]" refuse closed-pr-base-changed-after-the-run '[{"filename":"d/a.md"}]'
+TIMELINE="$(BASE_AT 2025-12-31T23:55:01Z)" RUN="$(RUN_OF f/r x 2026-01-01T00:00:00Z)" refuse run-299s-after-base-change '[{"filename":"d/a.md"}]'
+# a run inside the 30 s before the event, but before a base change in that window
+TIMELINE="$(BASE_AT 2025-12-31T23:59:50Z)" RUN="$(RUN_OF f/r x 2025-12-31T23:59:40Z)" refuse in-window-before-base-change '[{"filename":"d/a.md"}]'
+TIMELINE_LATE="$(BASE_AT 2026-01-01T00:00:08Z)" refuse base-changed-while-waiting '[{"filename":"d/a.md"}]'
+TIMELINE='[{"event":"base_ref_changed","created_at":"soon"}]' refuse base-change-time-unreadable '[{"filename":"d/a.md"}]'
+{ grep -q "dated in the future or cannot be read" "$AFD/out" && ! grep -q "actions/runs?" "$AFD/calls"; } || refused="$refused unreadable-base-change-polls"
+# a retarget a moment ago is no future date, but no run made since can count before the wait ends
+TIMELINE="$(BASE_AT "$(jq -rn 'now - 10 | todate')")" refuse fresh-retarget '[{"filename":"d/a.md"}]'
+{ grep -q "retargeted less than 5 minutes ago" "$AFD/out" && ! grep -q "actions/runs?" "$AFD/calls"; } || refused="$refused fresh-retarget"
 RUN="$(RUN_OF f/r y 2026-01-01T00:00:09Z)" refuse other-branch '[{"filename":"d/a.md"}]'
 RUN="$(RUN_OF g/r x 2026-01-01T00:00:09Z)" refuse other-fork '[{"filename":"d/a.md"}]'
-RUN="$(RUN_OF f/r x 2026-01-01T00:00:01Z)" refuse run-before-event '[{"filename":"d/a.md"}]'
+RUN="$(RUN_OF f/r x 2025-12-31T23:59:34Z)" refuse run-before-event '[{"filename":"d/a.md"}]'
+RUN="$(RUN_OF f/r x not-a-time)" refuse run-time-unreadable '[{"filename":"d/a.md"}]'
+SINCE=garbage refuse event-time-unreadable '[{"filename":"d/a.md"}]'
 [ -z "$refused" ] && ok "approve-fork-ci leaves code, .github, top-level config, renames, links, a bad count, failed reads, other pull requests, a changed base, other forks and branches, and an older run to a person, with a notice" \
   || no "approve-fork-ci approved or crashed on:$refused"
 else no "the approve-fork-ci tests need jq"; fi
