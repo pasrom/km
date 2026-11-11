@@ -45,7 +45,7 @@ Read every file a row names with the Read tool, in full, before the flow starts 
 | `sync` | this file: "Keeping the copy current", then `${CLAUDE_SKILL_DIR}/reference/setup.md` |
 | `lint`, `validate`, the gate, `promote`, index completeness | `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
 | `review <doc>...`, `approve <doc>...` | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` (`pin:` findings) |
-| `pr`, review a brain PR | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` (without gh also `${CLAUDE_SKILL_DIR}/reference/github-reads.md`) |
+| `pr`, review a brain PR, work its review comments | `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` (without gh also `${CLAUDE_SKILL_DIR}/reference/github-reads.md`) |
 | `queue`, `queue @<name>`, `queue @all`, "was wartet auf Freigabe" | `${CLAUDE_SKILL_DIR}/reference/queue.md` first, then `${CLAUDE_SKILL_DIR}/reference/github-reads.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md` |
 | `brain add <url>`, `brain list`, `brain remove`, `brain reset`, a pin-bump PR | `${CLAUDE_SKILL_DIR}/reference/brains.md` |
 | `brain fix @<name> ...`, "fix this in @<name>", `contribute @<name> ...`, `contribute --finish <PR>` | `${CLAUDE_SKILL_DIR}/reference/brains.md`, `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`, `${CLAUDE_SKILL_DIR}/reference/validate-and-gate.md` |
@@ -106,7 +106,7 @@ Do not offer for simple lookups or single-source answers. Never offer it on cont
 
 All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. Always confirm before writing. Commit with `docs(<scope>): <description>`.
 
-- **Status:** New documents always start as `status: draft`. Never set `status: accepted` without the user's explicit OK. Sign a doc off with `km approve <doc> --by <initials>` (see "Approval" in `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`), not by editing `status` by hand.
+- **Status:** New documents always start as `status: draft`. Sign a doc off, on the user's explicit OK, with `km approve <doc> --by <initials>` (see "Approval" in `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`), not by editing `status` by hand.
 - **Save:** Auto-detect type (note/concept/decision/transcript). Unclear folder → `inbox/`
 - **Decision:** Extract title, context, alternatives, consequences. Use `type: decision`
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript

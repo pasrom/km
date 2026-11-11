@@ -25,5 +25,6 @@ For GitHub reads without gh; a local clone or mounted brain is still read locall
 - Titles of a folder: its `_index.md`; directory listings are not recursive.
 - One doc: `get_file_contents` returns the content twice; fetch it only where a `text_matches` snippet is not enough.
 - Open PRs: `list_pull_requests` (owner and repo, state open) or `search_pull_requests` with `repo:<repo> is:open`, every page; skip those named in `contribution:` as in step 1. PR search matches titles, bodies and comments, not the changed files: where files went unread, say so under gaps. For the PRs that match, `pull_request_read` with `get` and `get_reviews`, then their files; with no match, the files of every PR, as the gh flow does. Files: `get_files` at `perPage` 1 to 3 (large doc PRs overflow), paging on, and search their patches, or `get_file_contents` with ref `refs/pull/<N>/head`; past a reasonable budget, name the unsearched PRs under gaps.
+- Review threads of a PR: `pull_request_read` with `get_review_comments`, where the server offers it and returns each thread's resolved state; else name the threads under gaps.
 - Check each PR's base branch: a stacked PR's content is not on the default branch even after its own merge.
 - Recent changes: `list_commits` with `since`; it filters by committer date, so rebased commits show as new.
