@@ -934,8 +934,8 @@ cp "$D/d/legacy.md" "$F/legacy.before"; out="$(km upgrade --root "$D" --pin v1.9
   && ok "a second upgrade keeps the recorded digest (never takes a changed text as approved)" || no "second upgrade ($out)"
 acc_doc "$D/d/byhand.md" byhand accepted 'approved_by: DD\napproved_at: 2026-01-15\n'; git -C "$D" add -A && git -C "$D" "${G[@]}" commit -qam byhand
 out="$(km upgrade --root "$D" --pin v1.99.0 --force 2>&1)"
-{ ! grep -q approved_digest "$D/d/byhand.md" && ! out_has "approved_digest"; } \
-  && ok "an upgrade on a brain already past the digest release records none (records once, on the crossing)" || no "upgrade after the crossing ($out)"
+{ ! grep -q approved_digest "$D/d/byhand.md" && ! out_has "approved_digest" && out_has "have approved_by but no digest" && out_has "d/byhand.md"; } \
+  && ok "an upgrade on a brain already past the digest release records none (records once, on the crossing), and lists the docs" || no "upgrade after the crossing ($out)"
 
 # a schema km cannot read stops the upgrade before it moves the pins, so a run after the fix still records the digests
 D2="$F/digest2"; km init "$D2" --team --name D --desc d --initials DD --folder d=D --pin v0.9.0 >/dev/null
@@ -947,6 +947,31 @@ out="$(km upgrade --root "$D2" --pin v1.99.0 2>&1)"; rc=$?
 cp "$F/sl2.ok" "$D2/schema.local.yaml"; out="$(km upgrade --root "$D2" --pin v1.99.0 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && grep -q '^approved_digest:' "$D2/d/legacy.md" && grep -rq "v1.99.0" "$D2/.github/workflows"; } \
   && ok "the upgrade run after the schema is fixed records the digests and moves the pins" || no "upgrade after the schema fix ($rc: $out)"
+
+# pins moved past the digest release (Dependabot, pre-commit autoupdate) before km upgrade ran: no crossing, so no
+# digest, not even for an approval committed under the old pins (a branch can write such a commit and pin comment
+# around a typed approval); the upgrade lists those docs with what each needs once a pull request changes it
+D3="$F/digest3"; km init "$D3" --team --name D --desc d --initials DD --folder d=D --pin v0.9.0 >/dev/null
+S11="$(git -C "$F/remote" rev-parse v1.11.0)"
+acc_doc "$D3/d/legacy.md" legacy accepted 'approved_by: DD\napproved_at: 2026-01-15\n'
+acc_doc "$D3/d/open.md" open review
+acc_doc "$D3/d/body.md" body accepted 'approved_by: DD\napproved_at: 2026-01-15\n'; printf 'approved_digest: in the body\n' >> "$D3/d/body.md"
+git -C "$D3" init -q && git -C "$D3" add -A && git -C "$D3" "${G[@]}" commit -qm "approved under km 0.9.0"
+repin "$V09_SHA" v0.9.0 "$S11" v1.11.0 "$D3"/.github/workflows/*.yml "$D3/.pre-commit-config.yaml"
+git -C "$D3" "${G[@]}" commit -qam "bump km to 1.11.0"
+out="$(km upgrade --root "$D3" --pin v1.99.0 2>&1)"
+{ ! grep -rq '^approved_digest: "' "$D3/d" && out_has "2 accepted doc(s) have approved_by but no digest" && out_has "records none: d/body.md, d/legacy.md\." \
+  && out_has "km demote <doc>" && ! out_has "d/open.md"; } \
+  && ok "upgrade after the pins moved past the digest release records no digest and lists each accepted doc without one" || no "upgrade after the pins moved ($out)"
+git -C "$D3" checkout -q -- . && git -C "$D3" clean -qfd
+sed -i.bak 's/^\( *\)run: km validate .*/\1run: km validate \&\& true/' "$D3/.github/workflows/ci.yml" && rm -f "$D3/.github/workflows/ci.yml.bak"
+git -C "$D3" "${G[@]}" commit -qam "a ci step km cannot turn the sign-off check on in"
+out="$(km upgrade --root "$D3" --pin v1.99.0 2>&1)"
+{ out_has "could not turn on the sign-off check" && ! out_has "no digest"; } \
+  && ok "where the sign-off check could not be turned on, no list says it will catch those docs" || no "upgrade without the sign-off check ($out)"
+git -C "$D3" checkout -q -- . && git -C "$D3" rm -q .github/workflows/ci.yml && git -C "$D3" "${G[@]}" commit -qm "no ci"
+out="$(km upgrade --root "$D3" --pin v1.99.0 2>&1)"
+! out_has "no digest" && ok "nor in a brain without km's ci" || no "upgrade without a ci ($out)"
 
 # --- upgrade past 1.11.0 regenerates the '## Documents' lists, which km 1.11.0 wrote with titles as YAML reads them ---
 X="$F/xidx"; km init "$X" --team --name X --desc x --initials XX --folder d=D --pin v1.11.0 >/dev/null
