@@ -599,7 +599,7 @@ def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str]
             return f"is {st} without approved_digest, so no approval is bound to this text: {fix}"
         if (old is not None and old.get("status") == st and "approved_digest" not in old
                 and all(old.get(k) == fm.get(k) for k in ("approved_by", "approved_at"))):
-            # km approve keeps the approval of a doc with no digest and records the text it finds
+            # km approve 1.12.0 and earlier kept the approval of a doc with no digest and recorded the text it found
             return (f"changed since approved_by {fm.get('approved_by')} signed it off on {fm.get('approved_at')}, "
                     f"before km recorded digests, and that approval was kept for the new text: {fix}")
         # the content the approval saw; with the gate on approval-stale reports it

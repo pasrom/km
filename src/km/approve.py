@@ -3,8 +3,12 @@ the digest of the content approved (see km.common.DIGEST_FIELDS).
 
 Who may sign off is the doc's `approval` level (see km.common.approval_problem); a doc in
 `status: review` can be approved, and an accepted one approved again, after a change to its content
-(which `km validate` reports as a stale approval). Each doc is edited in place (those lines, no YAML
-round-trip, like `km demote`) and then gated by `km validate`; a doc that fails is restored unchanged.
+(which `km validate` reports as a stale approval) or where it has no `approved_digest`. The approval
+written is always that of `--by`: an `approved_by` already in the doc without a digest is replaced,
+never kept, since nothing shows who typed it or which text it saw (km 1.12.0 and earlier kept it;
+`km upgrade` alone records a digest for an approval from before km recorded them). Each doc is
+edited in place (those lines, no YAML round-trip, like `km demote`) and then gated by `km validate`;
+a doc that fails is restored unchanged.
 
 A doc whose `review_by` has already passed is refused unless `--review-by` sets a new date (a type without
 expiry ignores its `review_by` and refuses `--review-by`), or
@@ -30,13 +34,8 @@ def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.dat
     def change(fm: dict, raw: str, body: str):
         if fm.get("status") not in ("review", SERVED_STATUS):
             return f"only a review or {SERVED_STATUS} doc can be approved (status: {fm.get('status')!r})"
-        if fm.get("status") == SERVED_STATUS:
-            if "approved_digest" not in fm:   # signed off before km recorded the content: keep that sign-off
-                return set_digest(raw, fm, body), (
-                    f"recorded the content approved_by {fm.get('approved_by')} signed off on {fm.get('approved_at')}, "
-                    f"kept as the approval; if it changed since, `km demote` it and approve it after review")
-            if str(fm["approved_digest"]) == approved_digest(fm, body):
-                return "already approved for this content; approve it again after a change to its content"
+        if fm.get("status") == SERVED_STATUS and str(fm.get("approved_digest")) == approved_digest(fm, body):
+            return "already approved for this content; approve it again after a change to its content"
         if why := approval_problem(fm, by):
             return why
         new_by, note, doctype = review_by, "", fm.get("type")
@@ -58,7 +57,9 @@ def approve(docs: list[str], by: str, at: datetime.date, review_by: datetime.dat
             lines.append(("review_by", new_by.isoformat()))
         for key, value in lines:
             raw = set_fm_line(raw, key, value)
-        if fm.get("status") == SERVED_STATUS and fm.get("reviewed_by"):
+        if fm.get("status") == SERVED_STATUS and fm.get("approved_by") and "approved_digest" not in fm:
+            note += f"; it replaces approved_by {fm['approved_by']}, which recorded no approved_digest"
+        if fm.get("status") == SERVED_STATUS and "approved_digest" in fm and fm.get("reviewed_by"):   # a stale one
             note += "; its reviewed_by entries are from before the change, drop those that did not see this text"
         return set_digest(raw, fm, body), f"accepted, approved_by {by} on {at.isoformat()}" + note
     return edit_docs(docs, change, "approve")

@@ -640,13 +640,19 @@ out="$(km cite add --root "$T" "$T/ap/s1.md" "$U" --file "$T/s1.pdf" --title "Th
   && ok "approval: frontmatter bookkeeping (cites, km cite add, review_by, tags, timestamp, reviewed_by) keeps it" || no "approval: bookkeeping edits ($out; $(cat "$T/ap/s1.md"))"
 printf '\n\n' >> "$T/ap/s1.md"
 V "$T/ap/s1.md" && ok "approval: trailing blank lines are not a content change" || no "approval: trailing blank lines"
-doc "$T/ap/s2.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\n'
+doc "$T/ap/s2.md" accepted 'approved_by: RPA\napproved_at: 2026-09-30\nreviewed_by: ["model-x 2026-09-29"]\n'
 sed -i.bak 's/^body$/changed body/' "$T/ap/s2.md" && rm -f "$T/ap/s2.md.bak"
 V "$T/ap/s2.md" && ok "approval: a doc approved before the digest existed is not checked" || no "approval: legacy doc without a digest"
-out="$(km approve --root "$T" "$T/ap/s2.md" --by ai:model-x 2>&1)"
-{ grep -q '^approved_by: RPA$' "$T/ap/s2.md" && grep -q '^approved_at: 2026-09-30$' "$T/ap/s2.md" && grep -q '^approved_digest:' "$T/ap/s2.md" \
-  && out_has "kept as the approval" && V "$T/ap/s2.md"; } \
-  && ok "approve: on a doc approved before the digest it records the content and keeps the approver" || no "approve legacy ($out; $(cat "$T/ap/s2.md"))"
+# its approved_by may be typed by hand: km approve never keeps it, it signs off as --by, with the usual checks
+cp "$T/ap/s2.md" "$T/s2.before"; out="$(km approve --root "$T" "$T/ap/s2.md" --by ai:model-x 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "REFUSED ap/s2.md: an AI approver needs 'approval: ai'" && cmp -s "$T/ap/s2.md" "$T/s2.before"; } \
+  && ok "approve: on a doc with approved_by but no digest, --by is checked, not ignored (an AI approver refused at level human)" || no "approve legacy, AI approver ($rc: $out; $(cat "$T/ap/s2.md"))"
+out="$(km approve --root "$T" "$T/ap/s2.md" --by XY --at 2026-10-01 2>&1)"
+{ grep -q '^approved_by: "XY"$' "$T/ap/s2.md" && grep -q '^approved_at: 2026-10-01$' "$T/ap/s2.md" && grep -q '^approved_digest:' "$T/ap/s2.md" \
+  && out_has "replaces approved_by RPA, which recorded no approved_digest" && ! out_has "upgrade" \
+  && ! out_has "reviewed_by entries are from before the change" && V "$T/ap/s2.md"; } \
+  && ok "approve: on a doc with approved_by but no digest it records the approval of --by, not the approver it finds" || no "approve legacy ($out; $(cat "$T/ap/s2.md"))"
+rm -f "$T/s2.before"
 doc "$T/ap/s6.md" review 'valid_for: {2026: fw, hw: C1, 2026-01-01: x}\n'
 out="$(km approve --root "$T" "$T/ap/s6.md" --by RPA 2>&1)"
 { grep -q '^approved_digest:' "$T/ap/s6.md" && ! out_has Traceback && V "$T/ap/s6.md"; } \

@@ -49,6 +49,14 @@ signoff_as_told new/ai.md ai:m2
 S; { [ "$rc" = 0 ] && grep -q '^approved_by: "ai:m2"' "$T/new/ai.md" && grep -q '^approved_digest:' "$T/new/ai.md"; } \
   && ok "signed off with km demote and km approve, it passes, approved by who km approve names" || no "ai level accepted (rc=$rc: $out)"
 
+# an approval typed into a new doc is never adopted: km approve signs off as --by, at the doc's level
+doc new/typed.md accepted customer 'review_by: 2099-01-01\napproved_by: XY\napproved_at: 2026-01-16\n'; commit "approval typed by hand"
+o="$(km approve --root "$T" "$T/new/typed.md" --by ai:m 2>&1)"; commit "km approve typed" >/dev/null
+S; { [ "$rc" = 1 ] && has_signoff new/typed.md && grep -q "needs a human approver" <<< "$o" && ! grep -q '^approved_digest:' "$T/new/typed.md"; } \
+  && ok "km approve does not bind a typed approver to the text: an AI --by on a customer doc is refused and the doc still fails" || no "typed approval adopted (rc=$rc: $o; $out)"
+km approve --root "$T" "$T/new/typed.md" --by ZZ >/dev/null 2>&1; commit "approve typed"
+S; { [ "$rc" = 0 ] && grep -q '^approved_by: "ZZ"' "$T/new/typed.md"; } && ok "approved with --by, it passes under that approver" || no "typed doc approved (rc=$rc: $out)"
+git -C "$T" rm -q new/typed.md; commit "drop typed"
 doc new/hand.md accepted customer 'review_by: 2099-01-01\n'; commit "accepted by hand"
 S; { [ "$rc" = 1 ] && has_signoff new/hand.md && has_signoff "km demote new/hand.md"; } && ok "an accepted doc nobody signed off fails, told to send it back to review" || no "hand-set accepted (rc=$rc: $out)"
 git -C "$T" rm -q new/hand.md; commit "drop hand"
@@ -59,11 +67,13 @@ fails_both_gates "its content changed and re-approved by hand, with no approved_
   old/served.md "km approve old/served.md --by"
 signoff_as_told old/served.md ai:m
 S; [ "$rc" = 0 ] && ok "signed off again with km approve, it passes" || no "served re-approved (rc=$rc: $out)"
-# km approve on a doc with no digest records the text as it finds it and keeps its approver: after a change
-# in this PR that approver never saw the new text
+# km approve 1.12.0 and earlier, on a doc with no digest, recorded the text as it found it and kept its
+# approver: after a change in this PR that approver never saw the new text
 printf 'changed in this PR\n' >> "$T/old/kept.md"; commit "edit kept"
-km approve --root "$T" "$T/old/kept.md" --by ai:m2 >/dev/null 2>&1; commit "record kept"
-fails_both_gates "changed, then its old approval recorded by km approve, it still fails" old/kept.md "km demote old/kept.md"
+KM_ROOT="$T" kmpy -c 'import sys, km.common as c, km.edit as e
+d = e.load_doc(sys.argv[1], c.ROOT / sys.argv[1]); open(d.path, "w", encoding="utf-8", newline="\n").write(c.set_digest(d.raw, d.fm, d.body) + d.body)' old/kept.md
+commit "record kept as an older km approve did"
+fails_both_gates "changed, then its old approval kept with the digest of the new text, it still fails" old/kept.md "km demote old/kept.md"
 signoff_as_told old/kept.md ai:m2
 S; [ "$rc" = 0 ] && ok "approved again after km demote, it passes" || no "kept re-approved (rc=$rc: $out)"
 doc old/legacy.md accepted internal 'review_by: 2099-01-01\nrelated: [old/served.md]\n'; commit "ripple legacy"
@@ -100,8 +110,9 @@ git -C "$T" mv old/signed.md moved/signed.md; commit "move signed"
 S; [ "$rc" = 0 ] && ok "a served doc with no approved_digest moved as it is asks for nothing" || no "moved legacy doc (rc=$rc: $out)"
 sed -i.bak 's/^tags: \[t\]/tags: [t, u]/' "$T/moved/signed.md" && rm -f "$T/moved/signed.md.bak"; commit "ripple signed"
 S; [ "$rc" = 0 ] && ok "nor a ripple edit to it" || no "legacy doc ripple (rc=$rc: $out)"
-km approve --root "$T" "$T/moved/signed.md" --by ai:m >/dev/null 2>&1; commit "record its digest"
-S; { [ "$rc" = 0 ] && grep -q '^approved_digest:' "$T/moved/signed.md"; } && ok "nor km recording its digest" || no "legacy doc digest recorded (rc=$rc: $out)"
+km approve --root "$T" "$T/moved/signed.md" --by ai:m2 >/dev/null 2>&1; commit "approve it with a digest"
+S; { [ "$rc" = 0 ] && grep -q '^approved_digest:' "$T/moved/signed.md" && grep -q '^approved_by: "ai:m2"' "$T/moved/signed.md"; } \
+  && ok "nor km approve on it, which records the approval of --by and a digest" || no "legacy doc approved (rc=$rc: $out)"
 
 doc new/human.md review customer; commit "human review doc"
 S; { [ "$rc" = 1 ] && has_signoff new/human.md; } && ok "a doc a person signs off fails in review without a recorded review" || no "human level, no reviewed_by (rc=$rc: $out)"
