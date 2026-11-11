@@ -93,7 +93,7 @@ SHIPPED = {
     "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
     "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd"},
-    "team/review-request-guide.yml": {"e2a600682b732ddc"},
+    "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7"},
 }
 # ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
 # a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
