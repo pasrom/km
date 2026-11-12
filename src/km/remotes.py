@@ -79,16 +79,24 @@ def first_line(err: str) -> str:
     return printable(next((ln.strip() for ln in err.splitlines() if ln.strip()), "no message"))
 
 
+def gh_run(*args: str, timeout: float | None = None) -> subprocess.CompletedProcess[bytes] | None:
+    """The GitHub CLI without prompts, with a time limit, its output as bytes; None when it did not
+    answer or is not installed. The default timeout is TIMEOUT as it is at the call (a test lowers it)."""
+    env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, stdin=subprocess.DEVNULL, env=env,
+                              timeout=TIMEOUT if timeout is None else timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
 def gh(*args: str) -> tuple[int, str]:
     """The GitHub CLI without prompts, with a time limit. (code, stdout); -1 when it did not answer
     or is not installed."""
-    env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
-    try:
-        res = subprocess.run(["gh", *args], capture_output=True, stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
-                             env=env, timeout=TIMEOUT)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    res = gh_run(*args)
+    if res is None:
         return -1, ""
-    return res.returncode, res.stdout.strip()
+    return res.returncode, res.stdout.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").strip()   # as text mode reads it
 
 
 def github_repo(url: str) -> tuple[str, str] | None:

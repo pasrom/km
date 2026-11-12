@@ -394,7 +394,7 @@ for a in "" --apply; do
   rm -f "$F/runner-args"; KM_PINNED_RUNNER="$F/fake-uvx" km demote --root "$O" $a >/dev/null 2>&1
   grep -qx -- ".* km demote${a:+ $a}" "$F/runner-args" 2>/dev/null && ok "km demote $a without docs still runs the pinned km" || no "km demote $a forwarded ($(cat "$F/runner-args" 2>/dev/null))"
 done
-for c in init upgrade doctor list sync; do   # NO_PIN_CHECK in cli.py: they run the km that was started
+for c in init upgrade doctor list sync ready; do   # NO_PIN_CHECK in cli.py: they run the km that was started
   rm -f "$F/runner-args"; out="$(KM_PINNED_RUNNER="$F/fake-uvx" km "$c" --root "$O" --help 2>&1)"; rc=$?
   { [ "$rc" = 0 ] && [ ! -e "$F/runner-args" ] && ! echo "$out" | grep -q "running that one"; } \
     && ok "km $c runs this km, not the older one the brain pins" \

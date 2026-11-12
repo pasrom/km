@@ -94,8 +94,34 @@ def merged_schema(local) -> dict:
     return _merge(BASE, local if isinstance(local, dict) else None)
 
 
+def was_doc(rel: str, schema: dict) -> bool:
+    """Whether `rel` is a doc `km validate` checks under the merged `schema` (another commit's): not under
+    its skip_prefixes, not exempt, reserved or an _index.md (validate.is_doc, there by HEAD's)."""
+    def names(key):                                 # as set() reads it at HEAD (common.EXEMPT)
+        v = schema.get(key)
+        return set(v) if isinstance(v, list | dict) else {v} if isinstance(v, str) else set()
+    skip = tuple(x for x in (schema.get("skip_prefixes") or []) if isinstance(x, str))
+    name = rel.rsplit("/", 1)[-1]
+    return (not rel.startswith(skip) and name != "_index.md"
+            and name not in names("exempt_files") | names("reserved_no_frontmatter"))
+
+
+def field_aliases(schema: dict) -> dict:
+    """The field aliases a merged schema declares: {field: alias}."""
+    fields = schema.get("fields")
+    return {k: v.get("alias") for k, v in (fields if isinstance(fields, dict) else {}).items()
+            if isinstance(v, dict) and v.get("alias")}
+
+
 BASE = _load(BASE_SCHEMA) or {}   # km's own schema, before the overlay
 SCHEMA = _specs(merged_schema(_load(OVERLAY)))
+
+
+def with_aliases(fm: dict, schema: dict | None = None) -> dict:
+    """A copy of the frontmatter with the field aliases the schema (default: this brain's) declares
+    applied (e.g. date -> timestamp)."""
+    return {**fm, **{f: fm[a] for f, a in field_aliases(SCHEMA if schema is None else schema).items()
+                     if f not in fm and a in fm}}
 
 
 def _setting(key: str, usable):
