@@ -39,7 +39,7 @@ jobs:
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
       # Last, so no other suite sees it: uv for the launcher's cases in sync_smoke (skills/km/bin/km runs
       # km through uv where it is installed); no cache shared across workflow runs
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.13.5'
           enable-cache: false
@@ -120,7 +120,7 @@ jobs:
           PYTHON: python
         run: bash tests/gate_smoke.sh
       # then the same uv as in smoke, for sync_smoke's launcher cases
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.13.5'
           enable-cache: false
