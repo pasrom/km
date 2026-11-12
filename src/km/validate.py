@@ -73,7 +73,7 @@ from km.common import APPROVAL_DEFAULT, APPROVAL_LEVELS, EXEMPT, approval_defaul
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
-from km.common import BASE, OVERLAY_NAMES, PROBLEMS, merged_schema, off_roster, owners_of, owners_problem, review_by_days, review_by_default_problem, review_due
+from km.common import BASE, OVERLAY_NAMES, PROBLEMS, field_aliases, merged_schema, was_doc, with_aliases, off_roster, owners_of, owners_problem, review_by_days, review_by_default_problem, review_due
 from km.common import RESERVED as RESERVED_NF
 from km.common import INDEX_SKIP as INDEX_SKIP_PREFIXES   # folders left out of the index lint but still valid link targets
 from km.common import SKIP as SKIP_PREFIXES
@@ -640,30 +640,6 @@ def schema_at(rev: str) -> dict:
     return merged_schema(None)
 
 
-def was_doc(rel: str, schema: dict) -> bool:
-    """Whether `rel` is a doc `km validate` checks under the merged `schema` (another commit's): not under
-    its skip_prefixes, not exempt, reserved or an _index.md (is_validatable and the reserved check, by HEAD's)."""
-    def names(key):                                 # as set() reads it at HEAD (common.EXEMPT)
-        v = schema.get(key)
-        return set(v) if isinstance(v, list | dict) else {v} if isinstance(v, str) else set()
-    skip = tuple(x for x in (schema.get("skip_prefixes") or []) if isinstance(x, str))
-    name = rel.rsplit("/", 1)[-1]
-    return (not rel.startswith(skip) and name != "_index.md"
-            and name not in names("exempt_files") | names("reserved_no_frontmatter"))
-
-
-def _aliases(schema: dict) -> dict:
-    """The field aliases a merged schema declares: {field: alias}."""
-    fields = schema.get("fields")
-    return {k: v.get("alias") for k, v in (fields if isinstance(fields, dict) else {}).items()
-            if isinstance(v, dict) and v.get("alias")}
-
-
-def with_aliases(fm: dict) -> dict:
-    """A copy of the frontmatter with the field aliases the schema declares applied (e.g. date -> timestamp)."""
-    return {**fm, **{f: fm[a] for f, a in _aliases(SCHEMA).items() if f not in fm and a in fm}}
-
-
 def settings_weakened(then: dict) -> list[str]:
     """The settings the merged schema `then` (the merge base's) holds otherwise than HEAD's in a way that can
     let a doc pass with less: gate.served_status
@@ -831,7 +807,7 @@ def main() -> int:
                 "was checked at the merge base, and this pull request's skip_prefixes, exempt_files or "
                 "reserved_no_frontmatter leave it out: change those in a pull request of their own, which changes "
                 "no doc it leaves out and no approval_default")))
-    if mb and _aliases(schema_then) != _aliases(SCHEMA):   # levels are read through them: no doc can be compared
+    if mb and field_aliases(schema_then) != field_aliases(SCHEMA):   # levels are read through them: no doc can be compared
         errors.append(("signoff", OVERLAY.name, (
             "a field alias changed in this pull request; an alias can stand in for audience, approval or type, so "
             "no doc's approval level can be compared with the merge base: a person reviews the change and a "

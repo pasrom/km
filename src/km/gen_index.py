@@ -37,12 +37,22 @@ def _entry(path: str, link: str, fallback: str) -> str:
     return f"- [{title}]({link})" + (f": {desc}" if desc else "")
 
 
+def kept_parts(idx_text: str) -> tuple[str, str] | None:
+    """What render keeps of an index: the text up to and with the '## Documents' heading, and from the
+    next H2 on ('' when none); None without the heading."""
+    mo = _MARK.search(idx_text)
+    if not mo:
+        return None
+    nxt = _NEXT_H2.search(idx_text, mo.end())
+    return idx_text[:mo.end()], idx_text[nxt.start():] if nxt else ""
+
+
 def render(idx_text: str, docs: list[str], subs: list[str]) -> str | None:
     """Rewrite ONLY the '## Documents' section (matched as a whole-line H2), preserving the intro
     above it and any sections below it. `subs` are the _index.md files of direct subfolders,
     listed first. Returns None when there is no such heading, so a hand-curated index is left alone."""
-    mo = _MARK.search(idx_text)
-    if not mo:
+    parts = kept_parts(idx_text)
+    if parts is None:
         return None
     lines = []
     for s in sorted(subs):
@@ -51,10 +61,8 @@ def render(idx_text: str, docs: list[str], subs: list[str]) -> str | None:
     for d in sorted(docs):
         lines.append(_entry(d, d.rsplit("/", 1)[-1], Path(d).stem.replace("-", " ").title()))
     block = "\n".join(lines) if lines else "_None yet._"
-    head = idx_text[:mo.end()]
-    nxt = _NEXT_H2.search(idx_text, mo.end())
-    tail = ("\n" + idx_text[nxt.start():]) if nxt else ""
-    return head + "\n\n" + block + "\n" + tail
+    head, tail = parts
+    return head + "\n\n" + block + "\n" + ("\n" + tail if tail else "")
 
 
 def regenerate(check: bool = False) -> tuple[list[str], list[str]]:

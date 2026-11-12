@@ -9,8 +9,8 @@ local results match CI; `KM_LOCAL=1` keeps this km. When that is not possible (n
 movable tag instead of a commit, workflows that disagree) it runs this km and says so. A command,
 option or positional argument the pinned km lacks (SINCE, OPTION_SINCE, ARGS_SINCE) stops with a
 call to `km upgrade` instead. A hook pinned apart from CI gets a note. `init`, `upgrade`, `doctor`,
-`list` and `sync` (NO_PIN_CHECK) always run this km: they write the pins, check the km that runs,
-only read, or act on the clone.
+`list`, `sync` and `ready` (NO_PIN_CHECK) always run this km: they write the pins, check the km that
+runs, only read, or act on the clone.
 """
 from __future__ import annotations
 
@@ -42,9 +42,10 @@ COMMANDS = {
     "doctor": ("km.doctor", "check this computer is set up for the brain: git, access, plugins, km version"),
     "list": ("km.list_docs", "list docs from their frontmatter: by folder, status, approval, review date (--json)"),
     "sync": ("km.sync", "bring this copy, a fork and the mounted brains up to the upstream brain (fast-forward only)"),
+    "ready": ("km.ready", "`ready REPO N`: whether a pull request's km:ready label counts (the review queue)"),
 }
 # they write the pins, check the km that is running, only read, or act on the clone, not the content
-NO_PIN_CHECK = {"init", "upgrade", "doctor", "list", "sync"}
+NO_PIN_CHECK = {"init", "upgrade", "doctor", "list", "sync", "ready"}
 SINCE = {"repin": "v1.4.0", "cite": "v1.8.0", "cites": "v1.8.0"}   # commands an older pinned km does not have
 OPTION_SINCE = {("repin", "--cites"): "v1.8.0", ("validate", "--signoff-since"): "v1.12.0"}   # options it does not have
 ARGS_SINCE = {"demote": "v1.11.0"}                                  # positional args it ignores (no option there takes a value)
