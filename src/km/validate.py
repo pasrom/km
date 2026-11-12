@@ -18,6 +18,12 @@ doc a person must sign off may stay in review once an AI pre-review is recorded 
 anything else is a `signoff` error. A doc whose status and approved content (the digest fields and
 body) match the merge base is skipped, so a ripple edit to `related:` or `tags:` never asks for a new
 sign-off, and a doc approved before km recorded a digest passes until a PR changes its content.
+A doc whose approval level (km.common.approval_level) the branch lowers from human to ai, by its own
+fields or by a change of approval_default (then every doc it lowers, changed or not), needs a person's
+sign-off in the branch (lowered_problem); raising the level asks for nothing. A doc the branch changes
+that the merge base checked and HEAD's skip_prefixes, exempt_files or reserved_no_frontmatter leave out
+fails (hidden_docs), and so does a change that lets a doc pass with less (settings_weakened) in a
+branch that also changes docs or turns approval_default to ai.
 
 A tracked doc whose path has a part a clone on Windows cannot check out (km.common.unportable) is
 `portable-name`: a WARNING.
@@ -53,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import functools
 import re
 import sys
 import unicodedata
@@ -62,11 +69,11 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part
+from km.common import APPROVAL_DEFAULT, APPROVAL_LEVELS, EXEMPT, approval_default_of, approval_level, body_of, is_ai_approver, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
-from km.common import BASE, PROBLEMS, off_roster, owners_of, owners_problem, review_by_days, review_by_default_problem, review_due
+from km.common import BASE, OVERLAY_NAMES, PROBLEMS, merged_schema, off_roster, owners_of, owners_problem, review_by_days, review_by_default_problem, review_due
 from km.common import RESERVED as RESERVED_NF
 from km.common import INDEX_SKIP as INDEX_SKIP_PREFIXES   # folders left out of the index lint but still valid link targets
 from km.common import SKIP as SKIP_PREFIXES
@@ -233,6 +240,11 @@ def is_validatable(p: str) -> bool:
         return False
     name = p.rsplit("/", 1)[-1]
     return name != "_index.md" and name not in EXEMPT
+
+
+def is_doc(p: str) -> bool:
+    """A doc with frontmatter: validatable and not a reserved file (index.md, log.md)."""
+    return is_validatable(p) and p.rsplit("/", 1)[-1] not in RESERVED_NF
 
 
 def targets(given: list[str]) -> list[str]:
@@ -526,8 +538,7 @@ def check_index_tree() -> None:
     for folder, members in sorted(by_folder.items()):
         base = "" if folder == "." else folder
         idx = "_index.md" if folder == "." else f"{folder}/_index.md"
-        docs = [m for m in members if is_validatable(m) and m.rsplit("/", 1)[-1] not in RESERVED_NF
-                or m.endswith("/_index.md") and m != idx]
+        docs = [m for m in members if is_doc(m) or m.endswith("/_index.md") and m != idx]
         if idx not in walk:
             if docs:
                 warnings.append(("index-missing", f"{folder}/", f"folder has {len(docs)} doc(s) or subfolder index(es) but no _index.md"))
@@ -614,6 +625,127 @@ def sent_back(mb: str, rel: str, now: dict) -> bool:
     return False
 
 
+def schema_at(rev: str) -> dict:
+    """The merged schema as committed in `rev`, from the overlay km reads there (schema.local.yaml, else a
+    legacy schema.yaml): km's base alone where there is none, HEAD's where it does not parse (that commit
+    failed `km validate`; comparing with it would flag every setting)."""
+    for name in OVERLAY_NAMES:
+        shown = git("show", f"{rev}:./{name}", cwd=ROOT)
+        if not shown.returncode:
+            try:
+                local = yaml.safe_load(shown.stdout)
+            except yaml.YAMLError:
+                return SCHEMA
+            return merged_schema(local) if isinstance(local, dict) or local is None else SCHEMA
+    return merged_schema(None)
+
+
+def was_doc(rel: str, schema: dict) -> bool:
+    """Whether `rel` is a doc `km validate` checks under the merged `schema` (another commit's): not under
+    its skip_prefixes, not exempt, reserved or an _index.md (is_validatable and the reserved check, by HEAD's)."""
+    def names(key):                                 # as set() reads it at HEAD (common.EXEMPT)
+        v = schema.get(key)
+        return set(v) if isinstance(v, list | dict) else {v} if isinstance(v, str) else set()
+    skip = tuple(x for x in (schema.get("skip_prefixes") or []) if isinstance(x, str))
+    name = rel.rsplit("/", 1)[-1]
+    return (not rel.startswith(skip) and name != "_index.md"
+            and name not in names("exempt_files") | names("reserved_no_frontmatter"))
+
+
+def _aliases(schema: dict) -> dict:
+    """The field aliases a merged schema declares: {field: alias}."""
+    fields = schema.get("fields")
+    return {k: v.get("alias") for k, v in (fields if isinstance(fields, dict) else {}).items()
+            if isinstance(v, dict) and v.get("alias")}
+
+
+def with_aliases(fm: dict) -> dict:
+    """A copy of the frontmatter with the field aliases the schema declares applied (e.g. date -> timestamp)."""
+    return {**fm, **{f: fm[a] for f, a in _aliases(SCHEMA).items() if f not in fm and a in fm}}
+
+
+def settings_weakened(then: dict) -> list[str]:
+    """The settings the merged schema `then` (the merge base's) holds otherwise than HEAD's in a way that can
+    let a doc pass with less: gate.served_status
+    (what counts as signed off), a `*_requires` or `*_forbids` rule dropped or one that lost a field. Adding
+    a rule or a field asks for more, and a `*_recommends` rule only warns. Not gate.enabled: on, approval-stale fails what signoff_problem leaves to
+    it; not owners: the roster checks a doc's owner. skip_prefixes, exempt_files and reserved_no_frontmatter
+    count per doc (hidden_docs); a field alias fails on its own (main)."""
+    def table(schema):                              # the binding rules, each as its set of fields
+        rules = schema.get("status_rules")
+        return {k: set(map(str, v)) if isinstance(v, list) else set()
+                for k, v in (rules if isinstance(rules, dict) else {}).items() if k.endswith(("_requires", "_forbids"))}
+    gate = then.get("gate") if isinstance(then.get("gate"), dict) else {}
+    old, new = table(then), table(SCHEMA)
+    out = []
+    if gate.get("served_status", "accepted") != SERVED_STATUS:
+        out.append("gate.served_status")
+    if any(not v <= new.get(k, set()) for k, v in old.items()):
+        out.append("status_rules (a rule dropped or a field removed from one)")
+    return out
+
+
+def lowered_by_default(rel: str) -> bool:
+    """Whether turning approval_default from human to ai lowers the doc `rel` as it is on disk."""
+    try:
+        fm = frontmatter((ROOT / rel).read_text(encoding="utf-8-sig", errors="replace"))
+    except OSError:
+        return False
+    return isinstance(fm, dict) and "__error__" not in fm and approval_level(with_aliases(fm), "human") == "human" \
+        and approval_level(with_aliases(fm), "ai") == "ai"
+
+
+def hidden_docs(paths, then: dict) -> list[str]:
+    """The paths the merged schema `then` (the merge base's) checks as docs and HEAD's skip_prefixes,
+    exempt_files or reserved_no_frontmatter leave out."""
+    return [p for p in paths if was_doc(p, then) and not is_doc(p)]
+
+
+def lowered_problem(rel: str, fm: dict, body: str, old: dict | None, mb: str, default_then: str,
+                    new: bool = False) -> str | None:
+    """Why the doc `rel`, whose approval level the branch lowered from human to ai (`old`: its frontmatter
+    at the merge base `mb`, where the brain's default was `default_then`), may not be merged yet, or None.
+    The level drops when `approval: human` goes, `audience` becomes internal, `type` leaves verbatim-block
+    or approval_default turns ai, and `approval` is no digest field: the person's approval the doc keeps
+    would let an AI sign off its next change. A retired doc takes no sign-off, so its level must stay.
+    Any other doc a person signs off in this branch: served, with a person's approved_by bound to this
+    text, for a text the merge base's approval did not bind (a digest other than the merge base's), or
+    again after `km demote` (sent_back). An approver or date edited by hand under the old digest is no
+    sign-off, and an approval from before km recorded digests counts only after `km demote`. A `new` doc
+    served at level ai with a person's approval must have got it in the branch too (sent_back), else it
+    may be a copy of another doc's. Levels see the field aliases applied. Raising the level asks for nothing."""
+    now_ai = approval_level(with_aliases(fm)) == "ai"
+    if new and now_ai and fm.get("status") == SERVED_STATUS \
+            and fm.get("approved_by") and not is_ai_approver(fm["approved_by"]) and not sent_back(mb, rel, fm):
+        return (f"is new and {SERVED_STATUS} at level ai with a person's approval no commit of this pull request "
+                f"gave it (copied with the doc?): commit it in review, then `km approve {rel} --by <initials>` "
+                f"in a commit of its own")
+    if not now_ai or not isinstance(old, dict) or approval_level(with_aliases(old), default_then) != "human":
+        return None
+    lowered = "the approval level was lowered from human to ai in this pull request"
+    if fm.get("status") in RETIRED_STATUS:          # else a PR that brings it back starts at level ai
+        return f"{lowered}, and a retired doc takes no sign-off: keep it at human with `approval: human`"
+    if (fm.get("status") == SERVED_STATUS and fm.get("approved_by") and not is_ai_approver(fm["approved_by"])
+            and str(fm.get("approved_digest")) == approved_digest(fm, body)
+            and (old.get("status") != SERVED_STATUS
+                 or ("approved_digest" in old and str(old["approved_digest"]) != str(fm["approved_digest"]))
+                 or ((old is not fm or rel in status_touched(mb)) and sent_back(mb, rel, fm)))):
+        return None
+    how = {SERVED_STATUS: f"`km demote {rel}` in a commit of its own, then `km approve {rel} --by <initials>`",
+           "review": f"`km approve {rel} --by <initials>`"}.get(
+        fm.get("status"), f"set `status: review`, then `km approve {rel} --by <initials>`")
+    return (f"{lowered}; a person must sign it off: {how}; "
+            f"or keep it at human with `approval: human`")
+
+
+@functools.cache
+def status_touched(mb: str) -> frozenset[str]:
+    """The paths whose status line a commit since the merge base `mb` changes, in one git log: an unchanged
+    doc (on an approval_default change) needs sent_back only when it is among them (a same-day re-approval)."""
+    log = git("log", "-z", "--no-merges", "--relative", "-G^status:", "--format=", "--name-only", f"{mb}..HEAD", cwd=ROOT)
+    return frozenset(p.strip("\n") for p in log.stdout.split("\0") if p.strip("\n")) if not log.returncode else frozenset()
+
+
 def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str] | None, mb: str) -> str | None:
     """Why the changed doc `rel` may not be merged yet (`then`: its frontmatter and body at the merge base
     `mb`), or None."""
@@ -677,12 +809,38 @@ def main() -> int:
     if changed is None:
         print(f"km validate: no merge base with {args.signoff_since} (fetch it, or check out the full history)", file=sys.stderr)
         return 2
+    schema_then, default_then, default_dropped, docs_changed = {}, None, False, False
+    if mb:
+        schema_then = schema_at(mb)
+        default_then = approval_default_of(schema_then)
+        default_dropped = default_then == "human" and APPROVAL_DEFAULT == "ai"   # every doc it lowers, changed or not
+        # a doc then or now: a README, an index or a file under skip_prefixes is none
+        docs_changed = any(is_doc(r) or (o and was_doc(o, schema_then)) for r, o in changed.items())
     fresh_run()
     errors.clear()
     warnings.clear()
     _meta_cache.clear()
     warnings.extend(("gate-config", "schema.local.yaml", _n) for _n in _gate_notices)
     warnings.extend(("km", _f, _n) for _f, _n in _repo_notices)
+    if mb:   # a doc the branch changes (all docs, when it turns approval_default to ai) HEAD's settings hide
+        _paths = [r for r, o in changed.items() if o]
+        if default_dropped:                          # and every doc the flip lowers
+            _paths += [p for p in tracked_md() if p not in changed and lowered_by_default(p)]
+        for _h in hidden_docs(_paths, schema_then):
+            errors.append(("signoff", _h, (
+                "was checked at the merge base, and this pull request's skip_prefixes, exempt_files or "
+                "reserved_no_frontmatter leave it out: change those in a pull request of their own, which changes "
+                "no doc it leaves out and no approval_default")))
+    if mb and _aliases(schema_then) != _aliases(SCHEMA):   # levels are read through them: no doc can be compared
+        errors.append(("signoff", OVERLAY.name, (
+            "a field alias changed in this pull request; an alias can stand in for audience, approval or type, so "
+            "no doc's approval level can be compared with the merge base: a person reviews the change and a "
+            "maintainer merges it past this check, in a pull request of its own")))
+    if (docs_changed or default_dropped) and (_moved := settings_weakened(schema_then)):   # read at HEAD below
+        errors.append(("signoff", OVERLAY.name, (
+            f"{', '.join(_moved)} changed in this pull request, which decide what counts as signed off, and it also "
+            f"{'changes docs' if docs_changed else 'turns approval_default to ai'}: change them in a pull request "
+            f"of their own, with no doc and no approval_default change, which a person reviews and a maintainer merges")))
     # --- text pre-pass over ANY tracked doc (frontmatter or not): secrets, and the path-keyed leak
     # scans (terms under term_scan_prefixes, project codes outside their own folder) ---
     if GATE_ON:
@@ -710,6 +868,19 @@ def main() -> int:
             warnings.append(("portable-name", _pf, f"{_bad[0]!r} {_bad[1]}, so a clone on Windows cannot check it out: rename it"))
 
     _target_list = targets(given)
+    if not given:   # a changed doc HEAD's settings or a move leave unchecked, which the merge base checked
+        _checked = set(_target_list)
+        for _r, _o in changed.items():
+            if _r not in _checked and _o and _o != _r and was_doc(_o, schema_then) and (ROOT / _r).is_file():
+                _text = (ROOT / _r).read_text(encoding="utf-8-sig", errors="replace")
+                _fm, _then = frontmatter(_text), doc_at(mb, _o)
+                if isinstance(_fm, dict) and "__error__" not in _fm and (
+                        _why := lowered_problem(_r, _fm, body_of(_text), _then and _then[0], mb, default_then)):
+                    errors.append(("signoff", _r, _why if _fm.get("status") in RETIRED_STATUS else (
+                        # km demote and km approve refuse a path km does not check
+                        f"the approval level was lowered from human to ai in this pull request, and it moved here "
+                        f"from {_o}, where km does not check it: move it back and have a person sign it off there, "
+                        f"or keep it at human with `approval: human`")))
     for rel in _target_list:
         name = rel.rsplit("/", 1)[-1]
         text = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
@@ -735,13 +906,14 @@ def main() -> int:
                                                   f"so nobody takes them for one key"))
         # the digest as km approve computes it: before the aliases below change the frontmatter
         digest = approved_digest(fm, body) if "approved_digest" in fm and fm.get("status") == SERVED_STATUS else None
-        if rel in changed and (_why := signoff_problem(rel, fm, body, changed[rel] and doc_at(mb, changed[rel]), mb)):
+        if rel in changed:
+            _then = changed[rel] and doc_at(mb, changed[rel])
+            if _why := (lowered_problem(rel, fm, body, _then and _then[0], mb, default_then, new=changed[rel] is None)
+                        or signoff_problem(rel, fm, body, _then, mb)):
+                errors.append(("signoff", rel, _why))
+        elif default_dropped and (_why := lowered_problem(rel, fm, body, fm, mb, default_then)):   # as at the merge base
             errors.append(("signoff", rel, _why))
-        # apply field aliases declared in the schema (e.g. date -> timestamp)
-        for _field, _spec in FIELDS.items():
-            _alias = _spec.get("alias")
-            if _alias and _field not in fm and _alias in fm:
-                fm[_field] = fm[_alias]
+        fm = with_aliases(fm)
 
         for field, spec in FIELDS.items():
             if spec.get("required") and field not in fm:
