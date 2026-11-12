@@ -181,4 +181,169 @@ step="$(kmpy -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print(
 args(){ BASE="$1" bash -c "set -- ${step#km validate }; echo \"\$*\""; }
 { [ "$(args main)" = "--signoff-since origin/main" ] && [ -z "$(args '')" ]; } && ok "ci.yml adds --signoff-since on a pull request only" || no "ci.yml step ($step)"
 
+# Lowering the approval level from human to ai needs a person's sign-off in the branch (validate.lowered_problem).
+# Each case in a repo of its own: lv_repo DEFAULT, a base doc a person signed off, then the branch.
+OLD_T="$T"; trap 'rm -rf "$OLD_T" "$T"' EXIT
+lv_default(){ printf 'meta: {profile: signoff}\napproval_default: %s\n' "$1" > "$T/schema.local.yaml"; }
+lv_repo(){ rm -rf "$T"; T="$(mktemp -d)"; git init -q -b main "$T"; lv_default "$1"; }
+lv_ed(){ sed -i.bak "$2" "$T/$1" && rm -f "$T/$1.bak"; }   # lv_ed FILE SED-EXPR: edit a file of the test repo in place
+# lv_doc PATH FRONTMATTER: a doc with these fields (type, status, audience, approval ...) besides the fixed ones
+lv_doc(){ mkdir -p "$(dirname "$T/$1")"; printf -- '---\n%btitle: t\ntimestamp: 2026-01-15\nauthor: TT\nowner: TT\ntags: [t]\n---\nbody\n' "$2" > "$T/$1"; }
+# lv_base FRONTMATTER: d.md with it, in review, signed off by a person on main; the branch topic checked out
+lv_base(){ lv_doc d.md "status: review\n$1"; km approve --root "$T" "$T/d.md" --by AB >/dev/null 2>&1 || no "base approve ($1)"
+  commit base; grep -q '^approved_by: "AB"' "$T/d.md" || no "base not signed off ($1)"; git -C "$T" switch -q -c topic; }
+lowered(){ has_signoff "the approval level was lowered from human to ai in this pull request"; }
+# lv_case LABEL DEFAULT BASE-FRONTMATTER SED-EDIT: the edit lowers the level; it fails on both gates, an AI
+# sign-off does not mend it, a person's does
+lv_case(){ lv_repo "$2"; lv_base "$3"; lv_ed d.md "$4"; commit "lower"
+  fails_both_gates "$1: fails without a person's sign-off" d.md "the approval level was lowered from human to ai in this pull request; a person must sign it off" "km demote d.md" "km approve d.md --by <initials>"
+  signoff_as_told d.md ai:m; S; { [ "$rc" = 1 ] && lowered; } && ok "$1: an AI sign-off does not pass" || no "$1: AI sign-off (rc=$rc: $out)"
+  signoff_as_told d.md AB; S; [ "$rc" = 0 ] && ok "$1: a person's sign-off in the branch passes" || no "$1: person's sign-off (rc=$rc: $out)"; }
+lv_case "approval: human removed" ai 'type: note\naudience: internal\napproval: human\n' '/^approval: human/d'
+lv_case "approval: human set to ai" ai 'type: note\naudience: internal\napproval: human\n' 's/^approval: human/approval: ai/'
+lv_case "audience customer to internal" ai 'type: note\naudience: customer\n' 's/^audience: customer/audience: internal/'
+lv_case "audience missing, set to internal" ai 'type: note\n' 's/^type: note/type: note\naudience: internal/'
+lv_case "type verbatim-block to note" ai 'type: verbatim-block\nlanguage: en\naudience: internal\n' 's/^type: verbatim-block/type: note/'
+
+# the person's approval kept from the merge base is not a sign-off in the branch, nor one typed by hand without a digest
+lv_repo ai; lv_base 'type: note\naudience: internal\napproval: human\n'
+lv_ed d.md '/^approval: human/d; s/^approved_by: .*/approved_by: "XY"/; /^approved_digest:/d'; commit "lower, approver typed"
+S; { [ "$rc" = 1 ] && lowered; } && ok "a typed approver without a digest is no sign-off of a lowered doc" || no "typed approver (rc=$rc: $out)"
+for e in 's/^approved_by: .*/approved_by: "XY"/' 's/^approved_at: .*/approved_at: 2026-02-01/'; do
+  git -C "$T" checkout -q main -- d.md; lv_ed d.md "/^approval: human/d; $e"; commit "lower, approval edited ($e)"
+  S; { [ "$rc" = 1 ] && lowered; } && ok "an approval edited by hand under the old digest is no sign-off ($e)" || no "edited approval $e (rc=$rc: $out)"
+done
+
+# a person's approval from before km recorded digests, a digest recorded for it in the PR, is no sign-off either
+lv_repo ai; lv_doc d.md 'type: note\nstatus: accepted\naudience: internal\napproval: human\nreview_by: 2099-01-01\napproved_by: "AB"\napproved_at: 2026-01-10\n'
+commit base; git -C "$T" switch -q -c topic; lv_ed d.md '/^approval: human/d'; kept_by_old_km d.md; commit "lower, digest recorded"
+S; { [ "$rc" = 1 ] && lowered; } && ok "an approval without a digest at the merge base, given one in the PR, is no sign-off" || no "legacy approval (rc=$rc: $out)"
+signoff_as_told d.md AB; S; [ "$rc" = 0 ] && ok "after km demote and a person's km approve, it passes" || no "legacy approval signed off (rc=$rc: $out)"
+
+# a draft whose level the branch lowers is told to go to review first
+lv_repo ai; lv_doc d.md 'type: note\nstatus: draft\naudience: internal\napproval: human\n'; commit base; git -C "$T" switch -q -c topic
+lv_ed d.md '/^approval: human/d'; commit "lower"
+S; { [ "$rc" = 1 ] && lowered && has_signoff 'set `status: review`, then `km approve d.md --by <initials>`'; } \
+  && ok "a draft lowered fails, told to go to review and have a person approve it" || no "draft lowered (rc=$rc: $out)"
+
+# a retired doc takes no sign-off: lowering its level, as it is retired or later, fails (else a PR that brings
+# it back would start at level ai), and keeping `approval: human` passes
+lv_repo ai; lv_base 'type: note\naudience: internal\napproval: human\n'
+lv_ed d.md 's/^status: accepted/status: obsolete/; /^approval: human/d'; commit "retire and lower"
+S; { [ "$rc" = 1 ] && lowered && has_signoff 'a retired doc takes no sign-off'; } && ok "retiring a doc and lowering its level fails" || no "retire and lower (rc=$rc: $out)"
+lv_ed d.md 's/^type: note/type: note\napproval: human/'; commit "keep human"
+S; [ "$rc" = 0 ] && ok "retired with approval: human kept, it passes" || no "retired, level kept (rc=$rc: $out)"
+git -C "$T" switch -q main; git -C "$T" merge -q --ff-only topic; git -C "$T" switch -q -c topic2
+lv_ed d.md '/^approval: human/d'; commit "lower the retired doc"
+S; { [ "$rc" = 1 ] && lowered; } && ok "lowering the level of a doc already retired fails" || no "retired doc lowered (rc=$rc: $out)"
+
+# a doc in review whose level the branch lowers: a person's km approve, no demote
+lv_repo ai; lv_doc d.md 'type: note\nstatus: review\naudience: internal\napproval: human\nreviewed_by: ["ai:m 2026-01-16"]\n'; commit base; git -C "$T" switch -q -c topic
+lv_ed d.md '/^approval: human/d'; commit "lower"
+S; { [ "$rc" = 1 ] && lowered && has_signoff '`km approve d.md --by <initials>`' && ! has_signoff "km demote"; } \
+  && ok "a review doc lowered fails, told to have a person run km approve" || no "review doc lowered (rc=$rc: $out)"
+km approve --root "$T" "$T/d.md" --by AB >/dev/null 2>&1; commit approve
+S; [ "$rc" = 0 ] && ok "approved by a person, it passes" || no "review doc approved by a person (rc=$rc: $out)"
+
+# approval_default human to ai in the same PR lowers every internal doc without its own approval,
+# changed by the branch or not; a customer doc and one with approval: human stay human
+lv_repo human; lv_base 'type: note\naudience: internal\n'
+lv_doc c.md 'type: note\nstatus: accepted\naudience: customer\n'; lv_doc h.md 'type: note\nstatus: draft\naudience: internal\napproval: human\n'
+git -C "$T" switch -q main; commit "more docs"; git -C "$T" switch -q topic; git -C "$T" rebase -q main
+lv_default ai; commit "default ai"
+S; { [ "$rc" = 1 ] && lowered && has_signoff d.md && ! has_signoff c.md && ! has_signoff h.md; } \
+  && ok "approval_default human to ai fails on an unchanged doc it lowers, and only there" || no "default lowered (rc=$rc: $out)"
+signoff_as_told d.md AB
+S; [ "$rc" = 0 ] && ok "signed off by a person in the branch, it passes" || no "default lowered, signed off (rc=$rc: $out)"
+
+# the settings that decide which docs are checked and what counts as signed off are read at HEAD: a PR that
+# changes one may change no doc (else it could skip a doc it lowers, or call it signed off)
+lv_repo ai; lv_doc sub/d.md 'type: note\nstatus: review\naudience: internal\napproval: human\nreviewed_by: ["ai:m 2026-01-16"]\n'; commit base
+git -C "$T" switch -q -c topic; printf 'gate: {served_status: published}\n' >> "$T/schema.local.yaml"; commit "served_status"
+S; [ "$rc" = 0 ] && ok "a PR that changes gate.served_status and no doc passes the sign-off check" || no "served_status alone (rc=$rc: $out)"
+printf '# readme\n' > "$T/README.md"; commit "readme"
+S; [ "$rc" = 0 ] && ok "nor does an exempt file changed with it (README.md) count as a doc" || no "served_status + README (rc=$rc: $out)"
+lv_ed sub/d.md 's/^body$/new body/'; commit "and a doc"
+S; { [ "$rc" = 1 ] && has_signoff "gate.served_status changed in this pull request" && has_signoff "also changes docs: change them in a pull request of their own"; } \
+  && ok "one that also changes a doc fails, told to change it on its own" || no "served_status with a doc (rc=$rc: $out)"
+# the roster, and a list setting reordered or with a duplicate, change nothing the sign-off check reads
+git -C "$T" reset -q --hard main; printf 'owners: [TT, ZZ]\nskip_prefixes: [brains/, x/, brains/]\n' >> "$T/schema.local.yaml"; commit "owners, base skip repeated"
+git -C "$T" switch -q main; git -C "$T" merge -q --ff-only topic; git -C "$T" switch -q -c topic3
+lv_default ai; printf 'owners: [ZZ, TT, AB]\nskip_prefixes: [x/]\n' >> "$T/schema.local.yaml"; lv_ed sub/d.md 's/^body$/new body/'; commit "roster grows, skip trimmed"
+S; ! has_signoff "changed in this pull request" && ok "a grown roster and a trimmed, reordered skip_prefixes with a doc changed are no settings change" || no "roster/reorder (rc=$rc: $out)"
+
+# skip_prefixes, exempt_files, reserved_no_frontmatter count per doc: one the branch changes and they now leave out fails
+for k in "skip_prefixes: [sub/]" "exempt_files: [d.md]" "reserved_no_frontmatter: [d.md]"; do
+  git -C "$T" reset -q --hard main; lv_default ai; echo "$k" >> "$T/schema.local.yaml"; lv_ed sub/d.md '/^approval: human/d'; commit "$k, lowered"
+  S; { [ "$rc" = 1 ] && has_signoff "sub/d.md - was checked at the merge base, and this pull request's skip_prefixes" && ! has_signoff "move it back"; } \
+    && ok "$k hiding a doc the branch changes fails" || no "$k (rc=$rc: $out)"
+done
+# a mount: skip_prefixes gains a new folder, with docs that describe it and an edited README, passes; so do
+# a changed doc under a skip prefix the merge base already had and a status rule added
+git -C "$T" reset -q --hard main; printf '# readme\n' > "$T/README.md"; mkdir -p "$T/brains/p"; printf 'x\n' > "$T/brains/p/a.md"; commit "readme, peer"
+git -C "$T" switch -q main; git -C "$T" merge -q --ff-only topic3; git -C "$T" switch -q -c topic4
+lv_default ai; printf 'skip_prefixes: [peer2/]\nstatus_rules: {review_recommends: [owner]}\n' >> "$T/schema.local.yaml"
+lv_doc notes/peer2.md 'type: note\nstatus: review\naudience: internal\napproval: human\nreviewed_by: ["ai:m 2026-01-16"]\n'
+printf '# readme, the peer\n' > "$T/README.md"; printf 'y\n' > "$T/brains/p/a.md"; lv_ed sub/d.md 's/^body$/body, the peer/'; commit "mount peer2, docs"
+S; [ "$rc" = 0 ] && ok "a mount PR (skip_prefixes and a status rule added, docs, README and a skipped file changed) passes" || no "mount PR (rc=$rc: $out)"
+# a recommends rule turned into a requires rule is stricter: it passes
+lv_repo ai; printf 'status_rules: {review_recommends: [owner]}\n' >> "$T/schema.local.yaml"; lv_doc d.md 'type: note\nstatus: review\naudience: customer\nreviewed_by: ["ai:m 2026-01-16"]\n'; commit base
+git -C "$T" switch -q -c topic; lv_default ai; printf 'status_rules: {review_requires: [owner]}\n' >> "$T/schema.local.yaml"; lv_ed d.md 's/^body$/new body/'; commit "recommend to require"
+S; [ "$rc" = 0 ] && ok "a recommends rule made a requires rule, with a doc changed, passes" || no "recommends to requires (rc=$rc: $out)"
+# a status rule that loses a requirement, with a doc changed, fails
+lv_repo ai; printf 'status_rules: {review_requires: [owner, tags]}\n' >> "$T/schema.local.yaml"; lv_doc d.md 'type: note\nstatus: review\naudience: customer\nreviewed_by: ["ai:m 2026-01-16"]\n'; commit base
+git -C "$T" switch -q -c topic; lv_default ai; printf 'status_rules: {review_requires: [owner]}\n' >> "$T/schema.local.yaml"; lv_ed d.md 's/^body$/new body/'; commit "requirement dropped"
+S; { [ "$rc" = 1 ] && has_signoff "status_rules (a rule dropped or a field removed from one) changed"; } && ok "a status rule losing a requirement, with a doc changed, fails" || no "requires shrunk (rc=$rc: $out)"
+
+# the merge base's overlay is a legacy schema.yaml: its approval_default counts (read as human, a ripple edit
+# would look like a lowering)
+lv_repo ai; mv "$T/schema.local.yaml" "$T/schema.yaml"; lv_base 'type: note\naudience: internal\n'
+lv_ed d.md 's/^tags: \[t\]/tags: [t, u]/'; commit "ripple"
+S; [ "$rc" = 0 ] && ok "approval_default: ai in a legacy schema.yaml at the merge base counts" || no "legacy overlay (rc=$rc: $out)"
+# a merge-base overlay that does not parse is read as HEAD's (a known limit): the PR that repairs it is not flooded
+lv_repo ai; lv_doc e.md 'type: note\nstatus: review\naudience: internal\nreviewed_by: ["ai:m 2026-01-16"]\n'; lv_base 'type: note\naudience: internal\napproval: human\n'
+git -C "$T" switch -q main; printf 'meta: [\n' > "$T/schema.local.yaml"; git -C "$T" add -A; git -C "$T" "${G[@]}" commit -q --no-verify -m broken
+git -C "$T" switch -q topic; git -C "$T" rebase -q main 2>/dev/null; lv_default ai; printf 'exempt_files: [x.md]\n' >> "$T/schema.local.yaml"; lv_ed d.md 's/^body$/new body/'; commit "repair the overlay"
+S; { ! lowered && ! has_signoff "changed in this pull request"; } && ok "a broken merge-base overlay is read as HEAD's, so the repair is not flagged" || no "broken overlay (rc=$rc: $out)"
+
+# approval_default flipped together with a setting that skips the docs it lowers: no doc changed, still fails
+lv_repo human; lv_doc c.md 'type: note\nstatus: review\naudience: customer\nreviewed_by: ["ai:m 2026-01-16"]\n'; lv_base 'type: note\naudience: internal\n'
+lv_default ai; echo "exempt_files: [d.md, c.md]" >> "$T/schema.local.yaml"; commit "default ai, d.md and c.md exempt"
+S; { [ "$rc" = 1 ] && has_signoff "d.md - was checked at the merge base" && ! has_signoff "c.md -"; } \
+  && ok "approval_default to ai with a doc made exempt fails, though no doc changed" || no "default + exempt (rc=$rc: $out)"
+
+# a doc moved under skip_prefixes as its level drops is still checked, by the merge base's settings
+lv_repo ai; printf 'skip_prefixes: [arch/]\n' >> "$T/schema.local.yaml"; lv_base 'type: note\naudience: internal\napproval: human\n'
+mkdir -p "$T/arch"; git -C "$T" mv d.md arch/d.md; lv_ed arch/d.md '/^approval: human/d'; commit "move under skip, lower"
+S; { [ "$rc" = 1 ] && lowered && has_signoff arch/d.md && has_signoff "move it back"; } && ok "a doc moved under skip_prefixes and lowered fails" || no "moved under skip (rc=$rc: $out)"
+
+# an alias the schema declares for audience counts for the level
+lv_repo ai; printf 'fields: {audience: {alias: aud}}\n' >> "$T/schema.local.yaml"; lv_base 'type: note\naud: customer\n'
+lv_ed d.md 's/^aud: customer/aud: internal/'; commit "lower by the alias"
+S; { [ "$rc" = 1 ] && lowered; } && ok "lowering through a field alias fails" || no "alias lowered (rc=$rc: $out)"
+git -C "$T" reset -q --hard main; printf 'fields: {audience: {alias: aud2}}\n' >> "$T/schema.local.yaml"; lv_ed d.md 's/^body$/new body/'; commit "alias changed, and a doc"
+S; { [ "$rc" = 1 ] && has_signoff "a field alias changed in this pull request"; } && ok "a changed field alias with a doc changed fails" || no "alias changed (rc=$rc: $out)"
+# an alias change alone, no doc touched, that lowers docs (customer docs carry `aud: internal`) fails too
+lv_repo ai; lv_doc c.md 'type: note\nstatus: review\naudience: customer\nreviewed_by: ["ai:m 2026-01-16"]\n'; lv_base 'type: note\naud: internal\n'
+printf 'fields: {audience: {alias: aud}}\n' >> "$T/schema.local.yaml"; commit "alias only"
+S; { [ "$rc" = 1 ] && has_signoff "a field alias changed in this pull request"; } && ok "a field alias added alone, no doc changed, fails" || no "alias only (rc=$rc: $out)"
+
+# a new doc served at level ai with a person's approval it did not get in the branch (a copy) fails
+lv_repo ai; lv_base 'type: note\naudience: internal\napproval: human\n'
+sed '/^approval: human/d' "$T/d.md" > "$T/e.md"; commit "copy at level ai"
+S; { [ "$rc" = 1 ] && has_signoff "e.md - is new and accepted at level ai with a person's approval no commit"; } \
+  && ok "a new doc copied with a person's approval fails" || no "copied approval (rc=$rc: $out)"
+signoff_as_told e.md AB; S; [ "$rc" = 0 ] && ok "approved in the branch by a person, it passes" || no "new doc approved (rc=$rc: $out)"
+
+# raising the level, and a level that does not change, ask for nothing
+lv_repo ai; lv_doc d.md 'type: note\nstatus: review\naudience: internal\napproval: ai\n'
+km approve --root "$T" "$T/d.md" --by AB >/dev/null 2>&1; lv_doc e.md 'type: note\nstatus: review\naudience: internal\napproval: ai\n'
+lv_doc f.md 'type: note\nstatus: review\naudience: internal\napproval: human\nreviewed_by: ["ai:m 2026-01-16"]\n'; commit base; git -C "$T" switch -q -c topic
+lv_ed d.md 's/^approval: ai/approval: human/'; commit "raise"
+S; [ "$rc" = 0 ] && ok "raising the level of a signed-off doc passes" || no "raised (rc=$rc: $out)"
+lv_ed e.md '/^approval: ai/d'; lv_ed f.md '/^audience: internal/d'; commit "level kept"
+S; [ "$rc" = 0 ] && ok "approval: ai dropped at level ai, and audience dropped at level human, ask for nothing" || no "level kept (rc=$rc: $out)"
+lv_default human; git -C "$T" checkout -q main -- e.md f.md; commit "default human"
+S; [ "$rc" = 0 ] && ok "approval_default ai to human raises the level and passes" || no "default raised (rc=$rc: $out)"
+
 summary signoff_smoke

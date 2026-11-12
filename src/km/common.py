@@ -68,8 +68,8 @@ def _merge(base: dict, local: dict | None) -> dict:
 
 # The brain's overlay. A brain from before the overlay existed has only a legacy schema.yaml (km's
 # schema plus its own additions); it overlays the base the same way until `km upgrade` renames it.
-OVERLAY = ROOT / ("schema.local.yaml" if (ROOT / "schema.local.yaml").is_file() or not (ROOT / "schema.yaml").is_file()
-                  else "schema.yaml")
+OVERLAY_NAMES = ("schema.local.yaml", "schema.yaml")   # the first that exists; none: the first
+OVERLAY = ROOT / next((n for n in OVERLAY_NAMES if (ROOT / n).is_file()), OVERLAY_NAMES[0])
 def _specs(schema: dict) -> dict:
     """The merged schema with every field and type spec a mapping without empty keys: a field or type
     the overlay declares with no spec (`ticket:`) has an empty one, and a key left empty inside a spec
@@ -89,8 +89,13 @@ def _specs(schema: dict) -> dict:
     return schema
 
 
+def merged_schema(local) -> dict:
+    """km's base schema with an overlay as YAML read it (also another commit's); not a mapping: none."""
+    return _merge(BASE, local if isinstance(local, dict) else None)
+
+
 BASE = _load(BASE_SCHEMA) or {}   # km's own schema, before the overlay
-SCHEMA = _specs(_merge(BASE, _load(OVERLAY)))
+SCHEMA = _specs(merged_schema(_load(OVERLAY)))
 
 
 def _setting(key: str, usable):
@@ -138,7 +143,15 @@ CUSTOMER_AUDIENCE = _gate.get("customer_audience", "customer")
 APPROVAL_FIELDS = ("approved_by", "approved_at", "approved_digest")
 APPROVAL_LEVELS = ("ai", "human")
 INTERNAL_AUDIENCE = "internal"
-APPROVAL_DEFAULT = "ai" if SCHEMA.get("approval_default") == "ai" else "human"   # a bad value is reported by `km validate`
+
+
+def approval_default_of(schema: dict) -> str:
+    """The approval_default of a merged schema: ai or human; a bad value counts as human (`km validate`
+    reports it)."""
+    return "ai" if schema.get("approval_default") == "ai" else "human"
+
+
+APPROVAL_DEFAULT = approval_default_of(SCHEMA)
 
 if PROBLEMS and not paths.defer_schema_problems:
     sys.exit(PROBLEMS[0])
@@ -217,18 +230,18 @@ def is_ai_approver(who) -> bool:
     return bool(ws) and all(w.startswith("ai:") for w in ws)
 
 
-def _ai_parts(fm: dict) -> tuple[bool, bool, bool]:
+def _ai_parts(fm: dict, default: str | None = None) -> tuple[bool, bool, bool]:
     """(may: internal by default and not a verbatim-block, level ai: its own `approval` or the brain's
     default, explicit: `audience: internal` written out). An AI may sign off only when all three hold."""
     return (fm.get("audience", INTERNAL_AUDIENCE) == INTERNAL_AUDIENCE and fm.get("type") != "verbatim-block",
-            (fm.get("approval") or APPROVAL_DEFAULT) == "ai", fm.get("audience") == INTERNAL_AUDIENCE)
+            (fm.get("approval") or default or APPROVAL_DEFAULT) == "ai", fm.get("audience") == INTERNAL_AUDIENCE)
 
 
-def approval_level(fm: dict) -> str:
+def approval_level(fm: dict, default: str | None = None) -> str:
     """Who may sign the doc off: "ai" only for a doc marked `audience: internal` that is not a
-    verbatim-block and is at level ai (its own `approval`, else the brain's default); else "human".
-    The rule approval_problem enforces on an AI approver."""
-    return "ai" if all(_ai_parts(fm)) else "human"
+    verbatim-block and is at level ai (its own `approval`, else the brain's default, or `default`
+    for another commit's); else "human". The rule approval_problem enforces on an AI approver."""
+    return "ai" if all(_ai_parts(fm, default)) else "human"
 
 
 def as_date(v) -> datetime.date | None:
@@ -264,7 +277,9 @@ def approval_problem(fm: dict, approver=None) -> str | None:
 # checks (sources, translates and cites, which `km repin` sends back to review when their content
 # moves; related, supersedes, superseded_by, contribution), classification (tags, project) and any
 # field a brain adds in schema.local.yaml. A doc approved before km recorded the digest has none and
-# is not checked; `km upgrade` records one for its current content.
+# is not checked; `km upgrade` records one for its current content. `approval` stays out on purpose:
+# adding it would change every recorded digest. Lowering the level is caught instead by `km validate
+# --signoff-since` (validate.lowered_problem), which wants a person's sign-off in that pull request.
 DIGEST_FIELDS = ("type", "title", "description", "resource", "audience", "claim_category", "valid_for",
                  "evidence", "participants", "language", "license")
 
