@@ -1,4 +1,4 @@
 """km: knowledge management for markdown knowledge bases."""
 
-__version__ = "1.13.1"
+__version__ = "1.14.0"
 KM_REF = f"v{__version__}"            # this km's release tag; brains pin the commit it points at
