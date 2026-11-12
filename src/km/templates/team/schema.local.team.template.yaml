@@ -34,6 +34,10 @@ gate:
 status_rules:
   accepted_requires: [owner, review_by]
 
+# Who may own a doc: set, `km validate` fails a doc in use whose owner is not on the list. When
+# someone leaves, reassign their docs (`km list --owner XY`) in the PR that removes them.
+# owners: [<MAINTAINER>]
+
 # review_by that `km approve` / `km promote` set on a doc without one, in days per type; null: the type
 # does not expire and needs no review_by. Only the types named here change km's defaults (see CONVENTIONS.md).
 # review_by_default: {note: 90}

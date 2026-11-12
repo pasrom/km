@@ -184,6 +184,32 @@ def default_review_by(doctype, start: datetime.date) -> datetime.date | None:
     return start + datetime.timedelta(days=days) if days else None
 
 
+# The roster: an optional `owners: [INITIALS, ...]` in schema.local.yaml. Set, `km validate` fails a
+# doc in use (not superseded or obsolete) whose owner is not on it; a doc without an owner is left to
+# status_rules (`review_requires: [owner]`). `km validate` and `km promote` refuse a bad roster.
+def owners_problem() -> str | None:
+    """Why the `owners` roster is unusable, or None (also when it is unset)."""
+    roster = SCHEMA.get("owners")
+    if roster is None or (isinstance(roster, list) and roster
+                          and all(isinstance(o, str) and o and o == o.strip() for o in roster)):
+        return None
+    return (f"owners must be a list of initials (strings without surrounding spaces; quote one YAML reads as yes/no or a number, "
+            f'such as "NO"), or left out for no roster, got {roster!r}')
+
+
+def off_roster(fm: dict) -> list[str]:
+    """The owners of a doc that are not on the roster: none when no roster is set or the doc has no owner."""
+    roster = SCHEMA.get("owners")
+    if not isinstance(roster, list):
+        return []
+    return [o for o in owners_of(fm) if o not in roster]
+
+
+def owners_of(fm: dict) -> list[str]:
+    """A doc's owners: its `owner`, one or a list, without empty entries."""
+    return [s for o in as_list(fm.get("owner")) if o is not None and (s := str(o).strip())]
+
+
 def is_ai_approver(who) -> bool:
     """Signed off by AI alone: every approver (one, or a list) is `ai:<model>`; a person among them
     counts as a human sign-off."""

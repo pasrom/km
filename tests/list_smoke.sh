@@ -35,6 +35,10 @@ paths --due today; [ "$out" = "a/one.md" ] && ok "--due today" || no "due today 
 out="$(cd "$T" && km list --due 2026-13-01 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && grep -q "not a date" <<< "$out"; } && ok "a bad date is refused" || no "bad date (rc=$rc: $out)"
 paths --all; [ "$out" = "a/_index.md a/one.md a/sub/two.md ab/four.md b/plain.md b/three.md" ] && ok "--all adds indexes and files without frontmatter, never untracked ones" || no "all ($out)"
+# the call /km queue makes to group what waits by owner
+L --status review --status accepted --fields path,status,signoff,review_by,owner --json
+kmpy -c 'import json, sys; r = json.load(sys.stdin); sys.exit([(d["path"], d["owner"]) for d in r] != [("a/one.md", "AA"), ("a/sub/two.md", "BB")])' <<< "$out" \
+  && ok "--fields ...,owner gives /km queue each waiting doc's owner" || no "queue owner fields ($out)"
 L a/one.md --fields path,tags,review_by --json
 kmpy -c 'import json, sys; sys.exit(json.load(sys.stdin) != [{"path": "a/one.md", "tags": ["x", "y"], "review_by": "2026-03-01"}])' <<< "$out" \
   && ok "--json keeps lists and dates as values" || no "json ($out)"

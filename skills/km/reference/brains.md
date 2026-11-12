@@ -95,8 +95,9 @@ Add or update a doc in a brain you have READ (not write) on, e.g. a shared team 
 5. Promote the source into the clone (cross-repo mode auto-applies: `--author` from YOUR identity, source-repo refs/links stripped or refused):
    ```
    km promote --root /tmp/km-contrib-<slug> <slug> "<ABS-path-to-source-in-your-brain>.md" \
-       --folder <target-folder> --author <your-initials> [--ticket KEY] [--type T]
+       --folder <target-folder> --author <your-initials> --owner <initials> [--ticket KEY] [--type T]
    ```
+   `--owner` is for a NEW doc: who keeps it true in the target, you unless the user names someone. Where the target's `schema.local.yaml` sets `owners:` and you are not on it, ask the user whom from that list to name; the gate refuses an owner off it. With `--replace`, leave `--owner` out (the doc keeps its owner) unless the user asks to reassign it, or promote refuses because that owner is no longer on the roster: then ask the user whom from it to name.
    To UPDATE a doc already `accepted` on the target, add `--replace` (the PR then shows the approval drop, which IS the review signal). A doc already in `review` on the target cannot be re-promoted; edit it in the clone as in `brain fix`.
 6. Track the doc so `km gen-index` sees it, regenerate the indexes, run the whole-repo gate, then commit ONLY the doc and the `_index.md` files that changed. If `<target-folder>` is new, first write its `_index.md` by hand (frontmatter with a `description:`, an empty `## Documents` heading) and track it too: a team brain's generator refuses a folder with docs but no index, and the parent folder's list gains a link to the new one.
    ```
@@ -126,5 +127,5 @@ Add or update a doc in a brain you have READ (not write) on, e.g. a shared team 
 - Gate with YOUR km (`--root <clone>`); never run code from the clone.
 - Run the WHOLE-REPO `km validate` on the clone before pushing; the per-file promote gate does not catch index-incompleteness.
 - Commit ONLY the doc and the `_index.md` files it changed (`git add -- ...`, never `add -A`); never a terms file.
-- `--author` is your identity. Mark the source at PR-open (step 8); stub it only via `contribute --finish` after merge.
+- `--author` is your identity; `--owner` as in step 5. Mark the source at PR-open (step 8); stub it only via `contribute --finish` after merge.
 - **A doc carrying `contribution:` has an open PR:** edit it on the PR head (step 2), never in your brain, or the personal and team copies diverge. `km validate` warns if a superseded doc still carries the marker.

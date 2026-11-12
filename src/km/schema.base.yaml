@@ -35,8 +35,8 @@ fields:
     enum: [draft, review, accepted, superseded, obsolete]
   author:
     required: true
-  owner:                  # responsible for keeping the fact true (staleness)
-    required: false
+  owner:                  # responsible for keeping the fact true (staleness); `km promote` defaults a new
+    required: false       # doc's to its author. A list names several owners.
   review_by:              # review-by date
     required: false
     format: iso8601
@@ -137,6 +137,11 @@ review_by_default:
   verbatim-block: null
   artifact: null
   "*": 182
+
+# The owners roster (optional, schema.local.yaml only): `owners: [AB, CD]`, the initials that may own
+# a doc. Set, `km validate` fails a doc that is not superseded or obsolete whose owner (each one, for a
+# list) is not on it; a doc without an owner is left to status_rules (`review_requires: [owner]`).
+# Unset: no check. A value that is not a non-empty list of strings stops km validate and km promote.
 
 # Universal defaults — brains EXTEND these in schema.local.yaml (lists are concatenated).
 exempt_files: [CLAUDE.md, README.md, CONVENTIONS.md, SKILL.md]

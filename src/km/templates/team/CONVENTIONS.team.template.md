@@ -37,7 +37,7 @@ tags: [tag1, tag2]                                   # required
 language: <en|de>                                    # required on served docs
 # Optional:
 description: "One-sentence summary."
-owner: <initials>                                    # responsible for keeping it true (staleness)
+owner: <initials>                                    # responsible for keeping it true (staleness); from the roster, if set
 review_by: 2027-01-15                                # required once accepted, unless the type does not expire
 approval: <human|ai>                                 # who may sign off; unset = approval_default (see Status lifecycle)
 approved_by: <initials | "ai:<model>">               # set by `km approve`, with approved_at and approved_digest
@@ -57,7 +57,7 @@ cites:                                               # external files (SharePoin
 ---
 ```
 
-On promote, `author` resolves `--author` > source frontmatter > `author_default` (in `schema.local.yaml`). The git committer is separate from `author` (the knowledge's originator).
+On promote, `author` resolves `--author` > source frontmatter > `author_default` (in `schema.local.yaml`). The git committer is separate from `author` (the knowledge's originator). A new doc's `owner` resolves `--owner` > source frontmatter > its `author`; `--replace` keeps the owner the doc has. Where `schema.local.yaml` sets a roster (`owners: [AB, CD]`), a doc not superseded or obsolete that names an owner must name one from it (the roster does not require an owner; `status_rules` such as `review_requires: [owner]` do): when someone leaves, reassign their docs in the same pull request that takes them off the roster.
 
 ## Document types
 

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: promote-owner-off-roster
+context:
+  scaffold_script: fixture.sh
