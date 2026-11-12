@@ -66,7 +66,7 @@ from km.common import APPROVAL_LEVELS, EXEMPT, approval_level, body_of, doc_at, 
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
-from km.common import BASE, PROBLEMS, review_by_days, review_by_default_problem, review_due
+from km.common import BASE, PROBLEMS, off_roster, owners_of, owners_problem, review_by_days, review_by_default_problem, review_due
 from km.common import RESERVED as RESERVED_NF
 from km.common import INDEX_SKIP as INDEX_SKIP_PREFIXES   # folders left out of the index lint but still valid link targets
 from km.common import SKIP as SKIP_PREFIXES
@@ -158,6 +158,8 @@ if SCHEMA.get("approval_default", "human") not in APPROVAL_LEVELS:
     _fatal.append(("", f"schema.local.yaml: approval_default must be ai or human, got {SCHEMA.get('approval_default')!r}"))
 if _rbd_why := review_by_default_problem():
     _fatal.append(("", f"schema.local.yaml: {_rbd_why}"))
+if _own_why := owners_problem():
+    _fatal.append(("", f"schema.local.yaml: {_own_why}"))
 _fatal.extend(("", _p) for _p in PROBLEMS)          # km.common's, raised here after the arguments, not by km.cli
 PROBLEMS.clear()
 
@@ -787,12 +789,17 @@ def main() -> int:
                 continue
             for r in _fields:
                 # review_by is the one field whose need depends on the type: one that does not expire has none
-                if _kind == "requires" and _blank(fm.get(r)) and (r != "review_by" or review_by_days(t)):
+                if _kind == "requires" and (_blank(fm.get(r)) or r == "owner" and not owners_of(fm)) and (r != "review_by" or review_by_days(t)):
                     errors.append(("status-rule", rel, f"{st} requires '{r}'" + (" with a value; it is empty" if r in fm else "")))
                 elif _kind == "forbids" and r in fm:
                     warnings.append(("status-rule", rel, f"{st} should not set '{r}'"))
                 elif _kind == "recommends" and r not in fm:
                     warnings.append(("status-soft", rel, f"{st} should record '{r}'"))
+        if st not in RETIRED_STATUS and (_off := off_roster(fm)):
+            _typed = any(not isinstance(o, str | None) and str(o).strip() in _off for o in as_list(fm.get("owner")))   # YAML read it as no text
+            errors.append(("owner-roster", rel, f"owner {', '.join(_off)} is not in the owners roster of schema.local.yaml: "
+                           f"reassign the doc to someone on it in this pull request (`owner:`), or add them to the roster"
+                           + ('; quote an owner YAML reads as yes/no, a number or a date (owner: "NO")' if _typed else "")))
         # an ai: approver counts only on a signed-off doc; a contradicting `approval` always does
         _why = approval_problem(fm, None if st == SERVED_STATUS else "")
         if _why:

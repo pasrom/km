@@ -20,6 +20,8 @@ scratch instead of keeping a copy). Safety rules:
     source WITH frontmatter never yields a double header. A new doc needs --folder and a type+author
     (from --flags or the source).
   * author resolves --author > source frontmatter > author_default (schema.local.yaml).
+  * A new doc's owner resolves --owner > source frontmatter > the author (said so when defaulted);
+    --replace keeps the existing doc's owner unless --owner is given.
   * --stub-source rewrites an IN-REPO source note into a superseded stub pointing at the promoted
     doc; the stub is built from the source's own frontmatter and gated the same way, skipped (source
     untouched) if it would be invalid. A source in another repo or a non-article (README/index/...)
@@ -45,7 +47,7 @@ from pathlib import Path
 import yaml
 
 from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, brain_path, default_review_by, known_file,
-                       md_named, resolve_slug, review_by_default_problem, submodule_prefixes, under, unportable,
+                       md_named, off_roster, owners_of, owners_problem, resolve_slug, review_by_default_problem, submodule_prefixes, under, unportable,
                        unportable_part, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
@@ -234,13 +236,13 @@ def main() -> int:
     ap.add_argument("--type", dest="doctype", default=None, help="doc type (else taken from the source frontmatter)")
     ap.add_argument("--title", default=None, help="title override (else source frontmatter, else the slug)")
     ap.add_argument("--author", default=None, help="author (else taken from the source frontmatter)")
-    ap.add_argument("--owner", default=None, help="owner for staleness (optional)")
+    ap.add_argument("--owner", default=None, help="who keeps the doc true (a new doc: else the source's owner, else the author)")
     ap.add_argument("--audience", default=None, help="who the doc is for, e.g. internal (else the source's; never defaulted)")
     ap.add_argument("--replace", action="store_true")
     ap.add_argument("--stub-source", action="store_true", help="rewrite an in-repo source note into a superseded stub pointing at the promoted doc")
     ap.add_argument("--ticket", default=None, help="Jira/work-item key -> the `ticket` frontmatter field")
     a = ap.parse_args()
-    if why := review_by_default_problem():
+    if why := review_by_default_problem() or owners_problem():
         print(f"promote: REFUSED — schema.local.yaml: {why}")
         return 2
 
@@ -275,6 +277,7 @@ def main() -> int:
         return 2
 
     existing = hits[0] if hits else None
+    owner_note = None   # how a new doc got its owner, when no --owner named one: the author, or the source's cross-repo
     if existing:
         ex_rel = existing.relative_to(ROOT).as_posix()
         try:
@@ -297,6 +300,8 @@ def main() -> int:
         for _k in _REVIEW:   # a review of the old text no longer holds
             fm.pop(_k, None)
         fm["timestamp"] = today
+        if _nz(a.owner):   # else the existing doc keeps its owner
+            fm["owner"] = a.owner
         target = existing
         ident = {"type": src_fm.get("type"), "title": src_fm.get("title"),
                  "author": src_fm.get("author"), "tags": src_fm.get("tags")}
@@ -332,8 +337,13 @@ def main() -> int:
         fm["author"] = author
         fm["status"] = "review"
         fm.setdefault("tags", [a.slug])
-        if a.owner:
+        if _nz(a.owner):
             fm["owner"] = a.owner
+        elif not (src_owners := owners_of(fm)):   # else the source's, a list too
+            fm["owner"] = author
+            owner_note = f"set to {author} (the author)"
+        elif cross_repo:   # named in another brain: say so, it may not be someone of this one
+            owner_note = f"kept from the source: {', '.join(src_owners)}"
         if "review_by" not in fm and (rb := default_review_by(doctype, datetime.date.today())):   # none: no expiry
             fm["review_by"] = rb.isoformat()
         if cross_repo:   # these reference the SOURCE repo and do not resolve in the target; and the
@@ -378,6 +388,11 @@ def main() -> int:
                 print(f"  - {_l}")
             return 2
 
+    if off := off_roster(fm):   # a replaced doc's own owner too: whoever left must be replaced
+        print(f"promote: REFUSED — owner {', '.join(off)} is not on the owners roster (schema.local.yaml); "
+              f"pass --owner <someone on it> for {rel_target}, nothing written.")
+        return 2
+
     content = dump(fm, body)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.parent / (target.stem + ".promote-tmp.md")
@@ -386,12 +401,14 @@ def main() -> int:
     if r.returncode != 0:
         tmp.unlink(missing_ok=True)
         print("promote: REFUSED — candidate fails the gate, nothing written:")
-        print(r.stdout)
+        print(r.stdout.replace(tmp.name, target.name))   # name the doc, not the temp file the gate saw
         return 1
     tmp.replace(target)  # atomic; never leaves a truncated target on interruption
 
     print(f"promote: {action}")
     print(f"         -> {rel_target}  (gate PASS)")
+    if owner_note:
+        print(f"owner {owner_note}; pass --owner to name someone else")
     if a.stub_source:
         _stub_source(Path(a.source), rel_target, prefixes, src_fm, ident, today)
     else:

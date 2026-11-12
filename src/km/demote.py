@@ -3,9 +3,10 @@
 being served forever. This is the staleness mechanism the model needs; run it on a schedule in CI.
 A type that does not expire (`review_by_default` null) is never demoted, whatever `review_by` it carries.
 
-Dry-run by default (lists what would change, exit 1 if any); `--apply` rewrites the files. A doc
-whose approval key it cannot find (quoted: `"approved_by": x`) is demoted all the same, so it leaves
-the served set, but the key stays and the run exits 1 after demoting the others: drop it by hand.
+Dry-run by default (lists what would change, exit 1 if any); `--apply` rewrites the files. Either
+names each doc's owner, who re-reviews it. A doc whose approval key it cannot find (quoted:
+`"approved_by": x`) is demoted all the same, so it leaves the served set, but the key stays and the
+run exits 1 after demoting the others: drop it by hand.
 
 With docs named, it sends those accepted docs back to review now, whatever their date: their
 approval and pre-reviews (`reviewed_by`) dropped, as `km repin` does; a key it cannot find (quoted)
@@ -22,7 +23,7 @@ import argparse
 import datetime
 import sys
 
-from km.common import (ROOT, SERVED_STATUS, approval_left, demote_raw, is_article, read, review_by_default_problem,
+from km.common import (ROOT, SERVED_STATUS, approval_left, demote_raw, is_article, owners_of, read, review_by_default_problem,
                        review_due, send_back, split_frontmatter, tracked_md)
 from km.edit import edit_sending_back, load_doc
 from km.paths import write_text
@@ -67,8 +68,9 @@ def main() -> int:
         if isinstance(d := load_doc(rel, ROOT / rel), str):   # strict: written back, bytes must survive
             stuck.append(d)
             continue
+        named = f"{rel} (owner: {', '.join(owners_of(fm)) or 'none'})"   # who re-reviews it
         if not apply:
-            stale.append(rel)
+            stale.append(named)
             continue
         # Edit the frontmatter block IN PLACE (only the status line, drop approval lines) so the
         # bot's diff stays reviewable as "just the demotion": no YAML round-trip, no reformat.
@@ -77,7 +79,7 @@ def main() -> int:
             stuck.append(f"{rel}: status line cannot be rewritten (or the block would no longer parse)")      # never report it as demoted
             continue
         left = approval_left(new_fm)
-        stale.append(f"{rel}: drop its {', '.join(left)} by hand" if left else rel)
+        stale.append(f"{named}: drop its {', '.join(left)} by hand" if left else named)
         partial += bool(left)
         write_text(ROOT / rel, new_fm + d.body)
 

@@ -213,6 +213,98 @@ printf -- '---\ntype: note\ntitle: Left\ntimestamp: 2026-08-26\nauthor: X\nstatu
 km validate --root "$T" "$T/inbox/left.md" 2>&1 | grep -q "superseded should not set 'contribution'" \
   && ok "validate warns on a superseded doc still carrying the marker" || no "validate warns on a superseded doc still carrying the marker"
 
+# Owner: a new doc's owner resolves --owner > the source's > the author, said so when defaulted;
+# --replace keeps the existing owner unless --owner is given
+printf 'plain body\n' > "$T/own.txt"
+out="$(km promote --root "$T" own-def "$T/own.txt" --folder bms --type note 2>&1)"
+{ grep -q '^owner: RPA$' "$T/bms/own-def.md" && out_has "^owner set to RPA (the author); pass --owner to name someone else$"; } \
+  && ok "owner: a new doc defaults to its author, and says so" || no "owner default ($out; $(cat "$T/bms/own-def.md"))"
+out="$(km promote --root "$T" own-flag "$T/own.txt" --folder bms --type note --owner CD 2>&1)"
+{ grep -q '^owner: CD$' "$T/bms/own-flag.md" && ! out_has "owner set to"; } && ok "owner: --owner wins, nothing said" || no "owner --owner ($out)"
+printf -- '---\ntype: note\ntitle: S\ntimestamp: 2026-08-26\nauthor: AB\nowner: [AB, CD]\nstatus: draft\ntags: [t]\n---\nb\n' > "$T/inbox/own-src.md"
+out="$(km promote --root "$T" own-src "$T/inbox/own-src.md" --folder bms 2>&1)"
+{ grep -q '^- CD$' "$T/bms/own-src.md" && ! out_has "owner set to"; } && ok "owner: the source's owner (a list too) is kept" || no "owner from source ($out)"
+printf -- '---\ntype: note\ntitle: S\ntimestamp: 2026-08-26\nauthor: AB\nowner: ""\nstatus: draft\ntags: [t]\n---\nb\n' > "$T/inbox/own-blank.md"
+out="$(km promote --root "$T" own-blank "$T/inbox/own-blank.md" --folder bms 2>&1)"
+{ grep -q '^owner: AB$' "$T/bms/own-blank.md" && out_has "owner set to AB (the author)"; } && ok "owner: a blank source owner counts as none" || no "owner blank source ($out)"
+OSRC="$(mktemp -d)"; printf -- '---\ntype: note\ntitle: O\ntimestamp: 2026-08-26\nstatus: draft\ntags: [t]\n---\nb\n' > "$OSRC/o.md"
+out="$(km promote --root "$T" own-xr "$OSRC/o.md" --folder bms --author EF 2>&1)"
+{ grep -q '^owner: EF$' "$T/bms/own-xr.md" && out_has "owner set to EF (the author)"; } && ok "owner: cross-repo defaults to --author too" || no "owner cross-repo ($out)"
+printf -- '---\ntype: note\ntitle: O\ntimestamp: 2026-08-26\nowner: GH\nstatus: draft\ntags: [t]\n---\nb\n' > "$OSRC/o2.md"
+out="$(km promote --root "$T" own-xr2 "$OSRC/o2.md" --folder bms --author EF 2>&1)"; rm -rf "$OSRC"
+{ grep -q '^owner: GH$' "$T/bms/own-xr2.md" && out_has "^owner kept from the source: GH; pass --owner to name someone else$" && ! out_has "owner set to"; } \
+  && ok "owner: cross-repo keeps the source's owner and says so" || no "owner cross-repo kept ($out)"
+sed -i.bak 's/^status: review$/status: accepted/' "$T/bms/own-flag.md" && rm -f "$T/bms/own-flag.md.bak"
+printf 'new body\n' > "$T/own2.txt"
+out="$(km promote --root "$T" own-flag "$T/own2.txt" --replace --author AB 2>&1)"
+{ grep -q '^owner: CD$' "$T/bms/own-flag.md" && grep -q '^new body$' "$T/bms/own-flag.md" && ! out_has "owner set to"; } \
+  && ok "owner: --replace keeps the existing owner" || no "owner --replace keeps ($out; $(cat "$T/bms/own-flag.md"))"
+sed -i.bak 's/^status: review$/status: accepted/' "$T/bms/own-flag.md" && rm -f "$T/bms/own-flag.md.bak"
+km promote --root "$T" own-flag "$T/own.txt" --replace --owner EF >/dev/null 2>&1
+grep -q '^owner: EF$' "$T/bms/own-flag.md" && ok "owner: --replace --owner sets the new owner" || no "owner --replace --owner ($(cat "$T/bms/own-flag.md"))"
+printf 'key AKIAABCDEFGHIJKLMNOP\n' > "$T/own-secret.txt"
+out="$(km promote --root "$T" own-secret "$T/own-secret.txt" --folder bms --type note 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "bms/own-secret.md" && ! out_has "promote-tmp" && [ ! -e "$T/bms/own-secret.md" ]; } \
+  && ok "promote: a gate refusal names the doc, not the temp file" || no "promote gate names ($rc: $out)"
+printf 'status_rules:\n  review_requires: [owner]\n' >> "$T/schema.local.yaml"
+out="$(km promote --root "$T" own-req "$T/own.txt" --folder bms --type note 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && grep -q '^owner: RPA$' "$T/bms/own-req.md"; } \
+  && ok "owner: with review_requires: [owner], a new doc promoted without --owner passes the gate" || no "owner review_requires ($rc: $out)"
+printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: AB\nowner: [""]\nstatus: review\ntags: [t]\n---\nb\n' > "$T/bms/own-blanklist.md"
+out="$(km validate --root "$T" "$T/bms/own-blanklist.md" 2>&1)"
+out_has "review requires 'owner'" && ok "owner: review_requires counts a list of blank owners as none" || no "owner blank list required ($out)"
+rm -f "$T/bms/own-blanklist.md"
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
+
+# Roster: owners: [...] in schema.local.yaml fails a doc in use whose owner is not on it
+mkdir -p "$T/ros"
+od(){ printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: AB\nstatus: %s\ntags: [t]\n%b---\nb\n' "$2" "${3:-}" > "$T/ros/$1"; }
+od on.md draft 'owner: AB\n'; od off.md review 'owner: ZZ\n'; od none.md draft
+od sup.md superseded 'owner: ZZ\nsuperseded_by: ros/on.md\n'; od obs.md obsolete 'owner: ZZ\n'; od _index.md draft 'owner: ZZ\n'
+od lon.md draft 'owner: [AB, CD]\n'; od loff.md draft 'owner: [AB, YY]\n'; od sp.md draft 'owner: " AB "\n'; od bl.md draft 'owner: [""]\n'
+R=(on.md off.md none.md sup.md obs.md _index.md lon.md loff.md sp.md bl.md)
+out="$(cd "$T/ros" && km validate --root "$T" "${R[@]}" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "roster: unset, any owner passes" || no "roster unset ($rc: $out)"
+printf 'owners: [AB, CD]\n' >> "$T/schema.local.yaml"
+out="$(cd "$T/ros" && km validate --root "$T" "${R[@]}" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "ros/off.md.*owner ZZ is not in the owners roster of schema.local.yaml: reassign the doc to someone on it in this pull request" \
+  && out_has "ros/loff.md.*owner YY is not" && ! out_has "ros/loff.md.*AB" && [ "$(grep -c 'ros/.*roster' <<< "$out")" = 2 ] \
+  && ! out_has "quote an owner"; } \
+  && ok "roster: an owner off it fails, naming the doc and the fix; on it (spaces stripped), no or a blank owner, retired docs, _index.md and a list on it pass" \
+  || no "roster set ($rc: $out)"
+out="$(km promote --root "$T" ros-new "$T/own.txt" --folder ros --type note --author YY 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && out_has "^promote: REFUSED .*owner YY is not on the owners roster (schema.local.yaml); pass --owner <someone on it> for ros/ros-new.md, nothing written.$" \
+  && [ ! -e "$T/ros/ros-new.md" ]; } \
+  && ok "roster: promote refuses an author off the roster as the default owner" || no "roster promote ($rc: $out)"
+od nos.md draft 'owner: NO\n'; od nos2.md draft 'owner: [1, ZZ]\n'
+out="$(km validate --root "$T" "$T/ros/nos.md" "$T/ros/nos2.md" 2>&1)"
+{ out_has "ros/nos.md - owner False is not.*quote an owner YAML reads as yes/no" && out_has "ros/nos2.md - owner 1, ZZ is not.*quote an owner"; } \
+  && ok "roster: an owner YAML read as no text gets the quoting hint" || no "roster typed hint ($out)"
+cp "$T/schema.local.yaml" "$T/sl.bak"; printf 'owners: [AB, CD, "1"]\n' >> "$T/schema.local.yaml"
+sed -i.bak '/^owners: \[AB, CD\]$/d' "$T/schema.local.yaml" && rm -f "$T/schema.local.yaml.bak"
+out="$(km validate --root "$T" "$T/ros/nos2.md" 2>&1)"
+{ out_has "ros/nos2.md - owner ZZ is not" && ! out_has "quote an owner"; } \
+  && ok "roster: no quoting hint when the owner off it is plain text" || no "roster hint scope ($out)"
+mv "$T/sl.bak" "$T/schema.local.yaml"; rm -f "$T/ros/nos.md" "$T/ros/nos2.md"
+od gone.md accepted 'owner: ZZ\n'
+out="$(km promote --root "$T" gone "$T/own.txt" --replace --author AB 2>&1)"; rc=$?
+{ [ "$rc" = 2 ] && out_has "owner ZZ is not on the owners roster.*pass --owner <someone on it> for ros/gone.md" && grep -q '^status: accepted$' "$T/ros/gone.md"; } \
+  && ok "roster: --replace of a doc whose owner left the roster asks for --owner" || no "roster replace ($rc: $out)"
+km promote --root "$T" ros-new "$T/own.txt" --folder ros --type note --author YY --owner CD >/dev/null 2>&1 \
+  && ok "roster: --owner on the roster lets it through" || no "roster promote --owner"
+for bad in 'owners: AB' 'owners: []' 'owners: [AB, NO]' 'owners: [AB, " "]' 'owners: ["AB ", CD]' 'owners: {AB: 1}'; do
+  printf '%s%s\n' "$BASE_LOCAL" "$bad" > "$T/schema.local.yaml"
+  out="$(km validate --root "$T" "$T/ros/on.md" 2>&1)"; rc=$?; out2="$(km promote --root "$T" ros-bad "$T/own.txt" --folder ros --type note 2>&1)"; rc2=$?
+  { [ "$rc" = 1 ] && out_has "owners must be a list of initials" && [ "$rc2" = 2 ] && grep -q "REFUSED .*schema.local.yaml: owners must be" <<< "$out2" \
+    && [ ! -e "$T/ros/ros-bad.md" ]; } && ok "roster: fails fast on $bad" || no "roster bad shape $bad ($rc $rc2: $out $out2)"
+done
+printf '%s' "$BASE_LOCAL" > "$T/schema.local.yaml"
+od noown.md review 'audience: internal\n'
+km approve --root "$T" "$T/ros/noown.md" --by AB >/dev/null 2>&1
+{ grep -q '^status: accepted$' "$T/ros/noown.md" && ! grep -q '^owner' "$T/ros/noown.md"; } \
+  && ok "approve never invents an owner" || no "approve owner ($(cat "$T/ros/noown.md"))"
+rm -rf "$T/ros"
+
 # Term scope: term_scan_prefixes scans a folder's docs whatever their audience; others stay as before
 gate(){ printf 'meta: {profile: smoke}\ngate:\n  enabled: true\n%b' "$1" > "$T/schema.local.yaml"; }
 errs(){ km validate --root "$T" "$@" 2>&1; }

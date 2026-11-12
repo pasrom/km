@@ -20,7 +20,7 @@ tags: [tag1, tag2, tag3]                             # required
 description: "One-sentence summary."
 resource: "https://…"                               # URI of the underlying asset (datasheet / repo / API)
 # Optional (governance):
-owner: <name>                                       # responsible for keeping the fact true
+owner: <name>                                       # responsible for keeping the fact true; a new doc: its author unless named
 review_by: 2027-01-15                               # review-by date; `km approve` sets the type's default
 project: <project-name>
 supersedes: <path.md>
@@ -33,6 +33,8 @@ translates: <path.md@abc1234def0>                    # linked translation source
 cites: [{url: "https://…", sha256: <hex>, retrieved: 2026-11-04}]  # external files; `km cite add --file` writes it
 ---
 ```
+
+A new doc's `owner` is its author unless someone else is named (`km promote --owner`). An optional roster in `schema.local.yaml`, `owners: [AB, CD]`, makes `km validate` fail a doc not superseded or obsolete whose owner is not on it.
 
 ## Document Types
 

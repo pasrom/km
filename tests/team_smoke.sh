@@ -103,11 +103,16 @@ mv "$T/root.bak" "$T/_index.md"; G add _index.md
 # --- demote ---
 printf -- '---\ntype: concept\ntitle: Old\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\napproved_by: TT\napproved_at: 2025-01-15\n---\nold\n' > "$T/process/old.md"
 printf -- '---\ntype: concept\ntitle: Cust\ntimestamp: 2026-01-15\nauthor: TT\nstatus: accepted\naudience: customer\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2099-01-01\n---\ncustomer <!-- internal note -->\n' > "$T/process/cust.md"
+sed 's/^title: Old$/title: Old2/; /^owner: TT$/d' "$T/process/old.md" > "$T/process/old2.md"
 G add -A
-kt demote >/dev/null; rc=$?
+out="$(kt demote)"; rc=$?
 [ "$rc" = 1 ] && ok "demote dry-run exits 1 when something is overdue" || no "demote dry-run exits 1 (rc=$rc)"
 grep -q '^status: accepted' "$T/process/old.md" && ok "dry-run leaves the file alone" || no "dry-run leaves the file alone"
-kt demote --apply >/dev/null
+echo "$out" | grep -qx "  - process/old.md (owner: TT)" && ok "dry-run names each doc's owner" || no "dry-run owner ($out)"
+out="$(kt demote --apply)"
+{ echo "$out" | grep -qx "  - process/old.md (owner: TT)" && echo "$out" | grep -qx "  - process/old2.md (owner: none)"; } \
+  && ok "--apply names each demoted doc's owner, and says when it has none" || no "--apply owner ($out)"
+G rm -qf process/old2.md
 { grep -q '^status: review$' "$T/process/old.md" && ! grep -q '^approved_' "$T/process/old.md"; } \
   && ok "--apply demotes to review and drops the approval" || no "--apply demotes to review and drops the approval"
 grep -q '^status: accepted' "$T/process/cust.md" && ok "a doc not yet due stays accepted" || no "a doc not yet due stays accepted"
@@ -154,7 +159,7 @@ rm -f "$T"/process/bl[1-4].md*; G add -A
 printf -- '---\ntype: concept\ntitle: Q\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\n"approved_by": TT\napproved_at: 2025-01-15\n---\nx\n' > "$T/process/q.md"
 printf -- '---\ntype: concept\ntitle: Q2\ntimestamp: 2025-01-15\nauthor: TT\nstatus: accepted\naudience: internal\nlanguage: en\ntags: [t]\nowner: TT\nreview_by: 2025-06-01\napproved_by: TT\napproved_at: 2025-01-15\n---\nx\n' > "$T/process/q2.md"
 cp "$T/process/q.md" "$T/q.bak"; cp "$T/process/q2.md" "$T/q2.bak"; G add -A; out="$(kt demote --apply)"; rc=$?
-{ [ "$rc" = 1 ] && out_has "demoted 2 doc" && out_has "  - process/q.md: drop its approved_by by hand" \
+{ [ "$rc" = 1 ] && out_has "demoted 2 doc" && out_has "  - process/q.md (owner: TT): drop its approved_by by hand" \
   && out_has "1 demoted doc(s) still carry an approval key" && demoted_clean "$T/process/q.md" "$T/q.bak" \
   && demoted_clean "$T/process/q2.md" "$T/q2.bak"; } \
   && ok "--apply demotes a doc whose approval key it cannot find, the rest byte for byte, and exits 1 after demoting the others" || no "--apply on a quoted approved_by (rc=$rc: $out; $(cat "$T/process/q.md"))"

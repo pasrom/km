@@ -22,11 +22,24 @@ offline_km()(
     || echo "eval fixture: no offline Python for km; km may not start in the sandbox" >&2
 )
 offline_km
-# brain DIR INITIALS: a personal brain in DIR, committed
+# brain DIR INITIALS [KM INIT ARGS...]: a brain in DIR (personal unless the args say --team), committed
 brain(){
   local remote; remote="$(mktemp -d)/km-remote"; fake_km_remote "$remote"
-  KM_REPO_URL="file://$remote" km init "$1" --initials "$2" >/dev/null
+  KM_REPO_URL="file://$remote" km init "$1" --initials "$2" "${@:3}" >/dev/null
   git init -q -b main "$1" && git -C "$1" "${G[@]}" add -A && git -C "$1" "${G[@]}" commit -q -m "chore: initialize knowledge base conventions"
+}
+# inbox_note DIR AUTHOR: a draft note in inbox/ to promote, by AUTHOR
+inbox_note(){
+  mkdir -p "$1/inbox"
+  printf -- '---\ntype: note\ntitle: Contactor coil current\ntimestamp: 2026-11-10\nauthor: %s\nstatus: draft\naudience: internal\nlanguage: en\ntags: [contactor]\n---\n\nThe contactor coil draws 1.2 A for 50 ms at pull-in, then 0.15 A holding.\n' "$2" > "$1/inbox/coil-current.md"
+}
+# team_brain DIR INITIALS [ROSTER]: a team brain with a docs/ folder, its indexes generated (a fresh
+# `km init --team` leaves the root list empty), and `owners: [ROSTER]` in schema.local.yaml if given
+team_brain(){
+  brain "$1" "$2" --team --name Eval-Brain --desc "an eval team" --folder docs=Docs
+  km gen-index --root "$1" >/dev/null
+  [ -z "${3:-}" ] || printf 'owners: [%s]\n' "$3" >> "$1/schema.local.yaml"
+  git -C "$1" "${G[@]}" commit -qam "chore: indexes and roster"
 }
 # doc DIR PATH TITLE STATUS BODY: a doc with km frontmatter
 doc(){

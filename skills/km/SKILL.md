@@ -106,11 +106,11 @@ Do not offer for simple lookups or single-source answers. Never offer it on cont
 
 All writes follow CONVENTIONS.md for frontmatter, folder placement, and naming. Always confirm before writing. Commit with `docs(<scope>): <description>`.
 
-- **Status:** New documents always start as `status: draft`. Sign a doc off, on the user's explicit OK, with `km approve <doc> --by <initials>` (see "Approval" in `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`), not by editing `status` by hand.
+- **Status, owner:** New documents always start as `status: draft`, with `owner:` the author unless the user names someone; the confirmation shows both. Sign a doc off, on the user's explicit OK, with `km approve <doc> --by <initials>` (see "Approval" in `${CLAUDE_SKILL_DIR}/reference/review-and-pr.md`), not by editing `status` by hand.
 - **Save:** Auto-detect type (note/concept/decision/transcript). Unclear folder → `inbox/`
 - **Decision:** Extract title, context, alternatives, consequences. Use `type: decision`
 - **Transcript:** Extract decisions + action items. Sections: Attendees, Summary, Decisions, Actions, Transcript
-- **Update:** Preserve frontmatter, update `timestamp`, show diff. A doc with `contribution:` is edited on its PR head instead (hard rule under "Contributing content" in `${CLAUDE_SKILL_DIR}/reference/brains.md`)
+- **Update:** Preserve frontmatter, update `timestamp`, show diff. A doc with `contribution:` is edited on its PR head instead (Rules)
 - **Archive:** Set `status: obsolete` or `superseded` + `superseded_by:` field. Never delete
 - **Cites:** a doc linking SharePoint or OneDrive files: Read (the tool) "Citing while you write" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md` and cite each link before the commit
 - **Generated files:** an image or diagram made from a source you can rerun (script, `.drawio`, small data) is committed with it in the same folder; the doc says how to regenerate it
