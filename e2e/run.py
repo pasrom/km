@@ -1,0 +1,284 @@
+"""Run the km e2e test against a sandbox team brain: `python3 e2e/run.py [options]`.
+
+Preflight (refuses to write anywhere unless the identities and the sandbox are what the environment
+names, and the maintainer's token cannot reach the repositories it must not), a lock, reset R1 (the
+sandbox's main regenerated from the seed with Actions off), the scenarios, then Actions off again.
+Writes report.json and report.md under $KM_E2E_WORKDIR/runs/<run id>/ (never into the repository).
+See e2e/README.md.
+"""
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import datetime
+import json
+import sys
+import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import scenarios as S                      # noqa: E402
+import seed                                # noqa: E402
+from lib import ApiError, Config, Ctx, Fail, Record, now   # noqa: E402
+
+LOCK = "KM_E2E_LOCK"
+LABELS = ("km:ready", "km:needs-human", "km:blocked")
+
+
+def say(msg: str) -> None:
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# --- preflight ----------------------------------------------------------------------------------
+def preflight(ctx: Ctx) -> list[str]:
+    """Problems that stop the run (empty: go). Warnings are printed."""
+    cfg, bad = ctx.cfg, []
+    for role, want in (("M", cfg.maint), ("C", cfg.contrib)):
+        got = ctx.ident(role)[0]
+        if got != want:
+            bad.append(f"{role}: the token is {got}, the environment names {want}")
+    for slug in cfg.must_not_reach:
+        for role in ("M", "C"):
+            st = ctx.status(role, f"repos/{slug}")
+            if st != 404:
+                bad.append(f"{role} reaches a repository it must not (HTTP {st} on one of KM_E2E_MUST_NOT_REACH)")
+    try:
+        repo = ctx.api("M", f"repos/{cfg.slug}")
+    except ApiError as e:
+        return bad + [f"cannot read the sandbox brain (HTTP {e.status})"]
+    if repo["owner"]["login"] != cfg.org or repo["owner"]["type"] != "Organization":
+        bad.append("the sandbox brain's owner is not the configured organisation")
+    if not repo["private"]:
+        bad.append("the sandbox brain is not private (the scenarios assume a private repository)")
+    if not (repo.get("permissions") or {}).get("admin"):
+        bad.append("M is not admin on the sandbox brain (reset and Actions switch need it)")
+    try:
+        fork = ctx.api("C", f"repos/{cfg.fork}")
+        if (fork.get("parent") or {}).get("full_name") != cfg.slug:
+            bad.append("C's repository of that name is not a fork of the sandbox brain")
+    except ApiError as e:
+        bad.append(f"C has no fork of the sandbox brain (HTTP {e.status})")
+    role = ctx.repo_api("M", f"collaborators/{cfg.contrib}/permission").get("role_name")
+    if role != "triage":
+        bad.append(f"C's role on the sandbox brain is {role}, not triage (the scenarios label and request reviewers as C)")
+    try:
+        var = ctx.repo_api("M", "actions/variables/KM_MAINTAINERS")["value"]
+        if cfg.maint.lower() not in var.lower().replace(",", " ").split():
+            bad.append("KM_MAINTAINERS does not name M")
+    except ApiError:
+        bad.append("the repository variable KM_MAINTAINERS is not set")
+    have = {lb["name"] for lb in ctx.repo_api("M", "labels?per_page=100")}
+    if missing := [lb for lb in LABELS if lb not in have]:
+        bad.append(f"labels missing: {missing}")
+    try:
+        usage = ctx.api("M", f"organizations/{cfg.org}/settings/billing/usage/summary")
+        items = [i for i in usage.get("usageItems", []) if i.get("sku", "").startswith("actions_linux")
+                 or i.get("product") == "actions"]
+        say(f"billing usage summary: {json.dumps(items)[:300]}")
+    except ApiError as e:
+        say(f"warning: the Actions usage summary is not readable with M's token (HTTP {e.status}); "
+            "check the allowance on the organisation's billing page")
+    return bad
+
+
+# --- lock ---------------------------------------------------------------------------------------
+def take_lock(ctx: Ctx, steal: bool) -> None:
+    try:
+        held = ctx.repo_api("M", f"actions/variables/{LOCK}")["value"]
+        if not steal:
+            raise SystemExit(f"e2e: run {held} holds the sandbox ({LOCK}); --steal-lock takes it over")
+        ctx.repo_api("M", f"actions/variables/{LOCK}", method="PATCH", data={"name": LOCK, "value": ctx.run_id})
+    except ApiError as e:
+        if e.status != 404:
+            raise
+        ctx.repo_api("M", "actions/variables", method="POST", data={"name": LOCK, "value": ctx.run_id})
+
+
+def drop_lock(ctx: Ctx) -> None:
+    try:
+        if ctx.repo_api("M", f"actions/variables/{LOCK}")["value"] == ctx.run_id:
+            ctx.repo_api("M", f"actions/variables/{LOCK}", method="DELETE")
+    except ApiError:
+        pass
+
+
+# --- Actions switch and reset R1 ----------------------------------------------------------------
+def actions(ctx: Ctx, on: bool) -> None:
+    ctx.repo_api("M", "actions/permissions", method="PUT",
+                 data={"enabled": True, "allowed_actions": "all"} if on else {"enabled": False})
+    say(f"Actions {'on' if on else 'off'}")
+
+
+def settle(ctx: Ctx, timeout: float = 420) -> None:
+    """Wait (bounded) until no run of the sandbox brain is queued or in progress."""
+    end = time.time() + timeout
+    while time.time() < end:
+        busy = sum(ctx.repo_api("M", f"actions/runs?status={s}&per_page=1")["total_count"] for s in ("queued", "in_progress"))
+        if not busy:
+            return
+        time.sleep(15)
+    say("warning: runs still busy; turning Actions off anyway")
+
+
+def reset(ctx: Ctx) -> dict:
+    """R1: Actions off, close PRs and issues, delete branches (sandbox and fork), force-push a freshly
+    seeded main to both, tag it e2e-baseline/<run id>. Actions are switched on by the caller."""
+    cfg = ctx.cfg
+    actions(ctx, False)
+    for kind in ("pulls", "issues"):
+        for item in ctx.repo_api("M", f"{kind}?state=open&per_page=100"):
+            if kind == "issues" and "pull_request" in item:
+                continue
+            ctx.repo_api("M", f"{kind}/{item['number']}", method="PATCH", data={"state": "closed"})
+            say(f"closed {kind[:-1]} #{item['number']}")
+    for role, slug in (("M", cfg.slug), ("C", cfg.fork)):
+        for b in ctx.api(role, f"repos/{slug}/branches?per_page=100"):
+            if b["name"] != "main":
+                ctx.api(role, f"repos/{slug}/git/refs/heads/{b['name']}", method="DELETE")
+                say(f"deleted branch {b['name']} in the {'sandbox' if role == 'M' else 'fork'}")
+    mount = None
+    if cfg.mount:
+        head = ctx.api("M", f"repos/{cfg.org}/{cfg.mount}/commits/main")
+        if not head["parents"]:
+            raise SystemExit("e2e: the mount repository needs at least two commits (it is pinned one behind its head)")
+        mount = (ctx.url(f"{cfg.org}/{cfg.mount}"), head["parents"][0]["sha"])   # one commit behind its head
+    out = ctx.dir / "seed"
+    say("seeding with the baseline km")
+    main = seed.build(out, ctx.km_cmd(cfg.baseline), datetime.date.today(), mount)
+    ctx.push("M", out, cfg.slug, "main:refs/heads/main", force=True)
+    tag = f"e2e-baseline/{ctx.run_id}"
+    ctx.git("M", out, "tag", tag)
+    ctx.push("M", out, cfg.slug, f"refs/tags/{tag}")
+    ctx.push("C", out, cfg.fork, "main:refs/heads/main", force=True)
+    say(f"main reset to {main[:7]} (tag {tag}), fork synced")
+    return {"main": main, "tag": tag, "mount_pin": mount[1] if mount else None}
+
+
+# --- scenarios ------------------------------------------------------------------------------------
+def run_one(ctx: Ctx, sid: str, fn, title: str) -> Record:
+    rec = Record(sid, title)
+    rec.started = time.time()
+    say(f"{sid}: start")
+    try:
+        fn(ctx, rec)
+        if rec.result == "pending":
+            rec.result = grade(rec)
+    except Fail as e:
+        rec.result = "fail"
+        rec.notes.append(f"stopped: {e}")
+    except Exception as e:                  # a driver or infrastructure problem, not a km finding
+        rec.result = "error"
+        rec.notes.append(f"error: {type(e).__name__}: {e}")
+        rec.notes.append("traceback: " + traceback.format_exc()[-1200:])
+    rec.seconds = time.time() - rec.started
+    for child in rec.children:
+        if child.result == "pending":
+            child.result = grade(child) if child.started else "skip"
+            if not child.started:
+                child.notes.append(f"not run: {rec.id} stopped before it")
+    say(f"{sid}: {rec.result} ({rec.seconds:.0f} s)" + "".join(f"; {c.id}: {c.result}" for c in rec.children))
+    return rec
+
+
+def grade(rec: Record) -> str:
+    """pass only with at least one check, all ok, and nothing stopped it."""
+    stopped = any(n.startswith("stopped") for n in rec.notes)
+    return "pass" if rec.checks and all(c.ok for c in rec.checks) and not stopped else "fail"
+
+
+def flat(recs: list[Record]) -> list[Record]:
+    return [r for rec in recs for r in (rec, *rec.children)]
+
+
+# --- report ---------------------------------------------------------------------------------------
+def report(ctx: Ctx, meta: dict, recs: list[Record]) -> None:
+    allr = flat(recs)
+    data = {**meta, "scenarios": [dataclasses.asdict(r) | {"children": None} for r in allr]}
+    (ctx.dir / "report.json").write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
+    lines = [f"# km e2e run {ctx.run_id}", "",
+             f"- candidate km: {meta['candidate']}, baseline km: {meta['baseline']}",
+             f"- sandbox: {ctx.cfg.slug}, baseline main {str(meta.get('reset', {}).get('main', '-'))[:7]}",
+             f"- wall time: {meta['wall_seconds'] / 60:.1f} min; Actions: {meta.get('runs', '?')} runs, "
+             f"{meta.get('jobs', '?')} jobs, about {meta.get('minutes', '?')} billed minutes (each job rounded up)",
+             "", "| Scenario | Result | Seconds | What |", "|---|---|---|---|"]
+    lines += [f"| {r.id} | {r.result} | {r.seconds:.0f} | {r.title} |" for r in allr]
+    for r in allr:
+        lines += ["", f"## {r.id}: {r.result}", "", r.title, ""]
+        lines += [f"- {'ok' if c.ok else 'FAIL'}: {c.what}. Expected: {c.expected}. Observed: {c.observed}" for c in r.checks]
+        lines += [f"- note: {n}" for n in r.notes if not n.startswith("traceback:")]
+        lines += [f"- {k}: {v}" for k, v in r.links.items()]
+    counts = {k: sum(r.result == k for r in allr) for k in ("pass", "fail", "error", "skip")}
+    lines += ["", f"Summary: {counts}"]
+    (ctx.dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    say(f"report: {ctx.dir / 'report.md'}; summary {counts}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="run.py")
+    ap.add_argument("--only", help="comma-separated scenario ids (E01 and E24 included only when named)")
+    ap.add_argument("--skip-reset", action="store_true", help="run on the sandbox as it is")
+    ap.add_argument("--run-id", default=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S"))
+    ap.add_argument("--workers", type=int, default=4, help="pull request scenarios run in parallel (default 4)")
+    ap.add_argument("--steal-lock", action="store_true")
+    ap.add_argument("--preflight", action="store_true", help="only the preflight")
+    a = ap.parse_args()
+    ctx = Ctx(Config.from_env(), a.run_id)
+    t0, start = time.time(), now()
+    say(f"run {ctx.run_id}: sandbox {ctx.cfg.slug}, candidate {ctx.cfg.candidate[:7]}, baseline {ctx.cfg.baseline[:7]}")
+    if bad := preflight(ctx):
+        for b in bad:
+            say(f"preflight: {b}")
+        return 2
+    say("preflight ok")
+    if a.preflight:
+        return 0
+    only = set(a.only.split(",")) if a.only else None
+    known = {S.FIRST[0], S.LAST[0], *(s[0] for s in S.PARALLEL)}
+    if only and (unknown := only - known):
+        say(f"unknown scenario ids {sorted(unknown)}; known: {sorted(known)}")
+        return 2
+    if only and S.FIRST[0] not in only and not a.skip_reset:
+        say("note: without E01 the scenarios run on the baseline seed (its km pins), not on the candidate")
+    pick = lambda sid: only is None or sid in only   # noqa: E731
+    meta: dict = {"run_id": ctx.run_id, "candidate": ctx.cfg.candidate, "baseline": ctx.cfg.baseline, "started": start}
+    recs: list[Record] = []
+    take_lock(ctx, a.steal_lock)
+    try:
+        if not a.skip_reset:
+            meta["reset"] = reset(ctx)
+        actions(ctx, True)
+        if pick(S.FIRST[0]):
+            recs.append(run_one(ctx, *S.FIRST))
+            if recs[-1].result != "pass":
+                say("E01 did not pass: the PR scenarios would run on the baseline; stopping")
+                return 1
+            S.sync_fork(ctx, recs[-1])
+        todo = [s for s in S.PARALLEL if pick(s[0])]
+        with ThreadPoolExecutor(max_workers=max(1, a.workers)) as pool:
+            futs = []
+            for s in todo:
+                futs.append(pool.submit(run_one, ctx, *s))
+                time.sleep(3)              # spread PR creation (secondary rate limits)
+            recs += [f.result() for f in futs]
+        if pick(S.LAST[0]):
+            recs.append(run_one(ctx, *S.LAST))
+    finally:                               # each step on its own: one failing must not skip the others
+        for step in (settle, lambda c: actions(c, False), drop_lock):
+            try:
+                step(ctx)
+            except Exception as e:
+                say(f"warning: cleanup step failed ({type(e).__name__}: {e}); check Actions and {LOCK} by hand")
+        meta["wall_seconds"] = time.time() - t0
+        try:
+            meta["runs"], meta["jobs"], meta["minutes"] = ctx.billed_minutes(start)
+        except Exception as e:             # the report still gets written
+            say(f"warning: could not count the minutes: {e}")
+        report(ctx, meta, recs)
+    return 0 if all(r.result in ("pass", "skip") for r in flat(recs)) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

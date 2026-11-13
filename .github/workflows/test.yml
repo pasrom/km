@@ -36,6 +36,8 @@ jobs:
       - run: bash tests/skill_smoke.sh
       - run: bash tests/hook_smoke.sh
       - run: bash tests/mounted_pins_smoke.sh
+      - name: e2e_smoke.sh (the e2e driver's seed and name check; the live run needs a sandbox)
+        run: bash tests/e2e_smoke.sh
       - name: team_smoke.sh, with a Latin-1 locale for its file-name encoding test
         run: sudo localedef -i en_US -f ISO-8859-1 en_US.ISO-8859-1 && bash tests/team_smoke.sh
       # Last, so no other suite sees it: uv for the launcher's cases in sync_smoke (skills/km/bin/km runs
