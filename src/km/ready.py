@@ -2,28 +2,33 @@
 
 The label counts when a person other than the pull request's author applied it last. Set by the
 author (or the author's Claude, which acts with the author's login), or by a bot or an app (which
-may act for the author), it counts only when every file
-the pull request changes is a doc at approval level `ai` at its head, and at the base too where it
-was there (a level the pull request lowered does not count): an AI review may then sign each one
-off, and CI (`km validate --signoff-since`) checks that it was. An `_index.md` that keeps its path
-and changes only its `## Documents` list is left aside: `km gen-index` writes that list and CI
-checks it (outside index_skip_prefixes, which gen-index skips). Any other `_index.md` change, a new
-one included, is level human whatever its frontmatter says: km validate checks no sign-off on an
-index. The levels are km's rule (common.approval_level) on each doc's frontmatter, read from
-GitHub without checking the pull request out, with the brain's approval_default, field aliases,
-skip_prefixes, index_skip_prefixes, exempt_files and reserved_no_frontmatter from schema.local.yaml
-at the base commit. It judges the commits the first read of the pull request names (the file list
-from comparing them, docs by blob id, base texts at the base commit) and reads the pull request and
+may act for the author), it counts when the pull request touches no control file and every doc it
+changes is at approval level `ai` at its head, and at the base too where it was there (a level the
+pull request lowered does not count): an AI review may then sign each one off, and CI (`km validate
+--signoff-since`) checks that it was. Other files (an image, a PDF, a generator script next to a
+page in a doc folder) do not stop it. A control file is one CI runs or reads, or one that steers an
+agent, an editor or a hook on a contributor's machine (the rule above CONTROL_NAMES: any dot path,
+any top-level file that is not a doc, agent instructions at any depth), on either side of a rename;
+so is a changed submodule, and any symlink in the trees read. An `_index.md` that keeps
+its path and changes only its `## Documents` list is left aside: `km gen-index` writes that list and
+CI checks it (outside index_skip_prefixes, which gen-index skips).
+Any other `_index.md` change, a new one included, is level human whatever its frontmatter says: km
+validate checks no sign-off on an index. The levels are km's rule (common.approval_level) on each
+doc's frontmatter, read from GitHub without checking the pull request out, with the brain's
+approval_default, field aliases, skip_prefixes, index_skip_prefixes, exempt_files and
+reserved_no_frontmatter from schema.local.yaml at the base commit. It judges the commits the first
+read of the pull request names (the file list from comparing them, the trees of the head, the merge
+base and the base, docs by blob id, base texts at the base commit) and reads the pull request and
 its label events again at the end: a push, a base change or a label change meanwhile does not count.
 
 Metadata, not authentication: it catches a self-granted label, not a determined author (a second
 account, a person who labels without reading).
 
 Fails closed: anything it cannot read or decide counts as level human. That is a failed or cut read
-(the file list, the base schema, a doc), a doc without frontmatter or whose frontmatter does not
-parse, holds a YAML anchor or merge key or is over the size limit, a removed doc or one moved out of
-the docs, a change to anything that is not a doc (schema.local.yaml, a workflow, a README), a head
-other than `--head`, a label applied by a deleted account, and a pull request that changes no doc.
+(the file list, a tree, the base schema, a doc), a doc without frontmatter or whose frontmatter does
+not parse, holds a YAML anchor or merge key or is over the size limit, a removed doc or one moved out
+of the docs or into them, a head other than `--head`, a label applied by a deleted account, and a
+pull request that changes no doc.
 
 Prints one line, `counts: ...` or `does not count: ...`, never a frontmatter value; a broken local
 schema.local.yaml is such a line too. Exit 0 when the label counts, 1 when not, 2 on a usage error.
@@ -32,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import sys
 import urllib.parse
@@ -40,8 +46,9 @@ from concurrent.futures import ThreadPoolExecutor
 import yaml
 
 from km import common
+from km.cites import fold
 from km.common import (_FM, OVERLAY_NAMES, approval_default_of, approval_level, merged_schema, split_frontmatter,
-                       was_doc, with_aliases)
+                       under, was_doc, with_aliases)
 from km.gen_index import kept_parts
 from km.paths import printable
 from km.remotes import gh_run
@@ -55,6 +62,29 @@ MAX_BLOCK = 65_536               # bytes of a frontmatter block
 UNSAFE = re.compile(r"(^|[^\w])&\S|(<<|\"<<\"|'<<')\s*(:|$)", re.M)
 SHA = re.compile(r"[0-9a-f]{40,64}")
 GHOST = "ghost"                  # the login GitHub shows for a deleted account
+# Control files: a pull request touching one needs another person's label, whatever its docs' levels.
+# They are what CI runs or reads and what steers an agent, an editor or a hook on a contributor's
+# machine. Rather than a list of tools that grows with each new one, the rule is structural:
+# - any path with a segment that starts with a dot: .github/ (workflows and their scripts), .gitmodules,
+#   .pre-commit-config.yaml, .gitattributes, .claude/, .vscode/, .husky/, .envrc, .cursorrules and
+#   every other tool's config, at any depth;
+# - any file at the top of the repository that is not a doc: schema.local.yaml, Makefile, lefthook.yml,
+#   mise.toml, CLAUDE.md, README.md; a brain keeps its pages in folders;
+# - the agent instructions and conventions below at any depth, a doc or not: an agent reads them in
+#   the folder it works in; and CODEOWNERS, which decides whose review GitHub asks for;
+# - CONTROL_PATHS: what CI reads outside those (scripts/, where a brain from the copy-in days keeps the
+#   km scripts its CI still runs, so any file there can shadow one of their imports; the dist/ that km
+#   serve writes into without emptying it and CI uploads whole), and the gate's
+#   forbidden_terms_file, which km validate reads;
+# - a changed submodule (its pointer changes what a mount holds) and any symlink in the trees by_level
+#   reads, changed or not: a link may point at a control file.
+# Files in the doc folders (images, PDFs, a generator script in _media/) are not control files.
+# Matched on the path as cites.fold folds it (NFC, casefolded): a checkout on a case-insensitive file
+# system opens claude.md as CLAUDE.md.
+CONTROL_NAMES = {"claude.md", "claude.local.md", "agents.md", "agents.override.md", "agent.md", "gemini.md",
+                 "conventions.md", "codeowners"}   # CODEOWNERS: GitHub reads it in docs/ and .github/ too
+INERT = {".gitkeep", ".ds_store"}    # dot files in a doc folder that nothing reads
+CONTROL_PATHS = ("scripts", "dist")
 
 
 def gh_text(*args: str) -> tuple[str | None, bool]:
@@ -117,6 +147,27 @@ def is_doc(path: str, schema: dict) -> bool:
     return path.endswith(".md") and was_doc(path, schema)
 
 
+def terms_file(schema: dict) -> str | None:
+    """The gate's forbidden_terms_file, which km validate reads, folded as control() compares it."""
+    gate = schema.get("gate")
+    tf = gate.get("forbidden_terms_file") if isinstance(gate, dict) else None
+    return posixpath.normpath(fold(tf)) if isinstance(tf, str) else None
+
+
+def control(path: str, schema: dict, terms: str | None) -> bool:
+    """Whether `path` is a control file (the rule above CONTROL_NAMES), judged on its name as a
+    case-insensitive file system compares it; `terms` is the gate's forbidden_terms_file."""
+    low = fold(path)
+    parts = low.split("/")
+    if len(parts) == 1:                  # a doc at the top is none if its name is exempt in another case (readme.md)
+        exempt = {fold(n) for n in (schema.get("exempt_files") or []) if isinstance(n, str)}
+        if low in exempt or not is_doc(path, schema):
+            return True
+    if parts[-1] in CONTROL_NAMES or under(low, CONTROL_PATHS) or low == terms:
+        return True
+    return any(p.startswith(".") for p in parts[:-1]) or parts[-1].startswith(".") and parts[-1] not in INERT
+
+
 def kept(text: str | None) -> tuple[str, str] | None:
     """What `km gen-index` keeps of an _index.md (gen_index.kept_parts, on the text as it reads it), or
     None, so it is level human: without frontmatter (a BOM before it too) or the heading, with
@@ -173,8 +224,20 @@ def verdict(repo: str, number: str, head: str | None) -> tuple[bool, str]:
     return counts, f"set by {'a bot or app' if automated else 'its author'}, and {why}"
 
 
+def tree_links(repo: str, sha: str) -> dict | None:
+    """The symlinks and submodules in the tree of a commit, {path: mode}, or None where the tree could
+    not be read in full (the API cuts a large one)."""
+    got = lines("api", f"repos/{repo}/git/trees/{sha}?recursive=1", "--jq",
+                '{truncated, links: [.tree[] | select(.mode == "120000" or .mode == "160000") | [.path, .mode]]} | tojson')
+    if not got or not isinstance(got[0], dict) or got[0].get("truncated") is not False \
+            or not isinstance(got[0].get("links"), list) or not all(isinstance(x, list) and len(x) == 2 for x in got[0]["links"]):
+        return None
+    return {str(p): str(m) for p, m in got[0]["links"]}
+
+
 def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -> tuple[bool, str]:
-    """Whether a label its author, a bot or an app set counts: every changed file a doc at level ai."""
+    """Whether a label its author, a bot or an app set counts: no control file changed, every changed
+    doc at level ai."""
     sha, base = (pr.get("head") or {}).get("sha"), (pr.get("base") or {}).get("sha")
     if head and sha != head:
         return False, "the head moved"
@@ -182,20 +245,30 @@ def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -
         return False, "the head or base commit could not be read"
     # the commits read now, not the live pull request: a push during the reads is caught at the end
     cmp = lines("api", f"repos/{repo}/compare/{base}...{sha}?per_page=1", "--jq",
-                "[.files[] | {filename, previous_filename, status, sha}] | tojson")
-    files = cmp[0] if cmp else None
+                "{mb: .merge_base_commit.sha, files: [.files[] | {filename, previous_filename, status, sha}]} | tojson")
+    files, mb = (cmp[0].get("files"), cmp[0].get("mb")) if cmp and isinstance(cmp[0], dict) else (None, None)
     if not isinstance(files, list) or len(files) != pr.get("changed_files") or len(files) >= MAX_FILES:
         return False, "its file list could not be read in full"
     schema = base_schema(repo, base)
     if schema is None:
         return False, "schema.local.yaml at the base could not be read"
     index_skip = tuple(x for x in (schema.get("index_skip_prefixes") or []) if isinstance(x, str))   # gen-index skips them
-    docs = []                                       # first every check without a read, then the reads
+    terms = terms_file(schema)
+    docs, paths = [], set()                         # first every check without a read, then the reads
     for f in files:
         path, status = str(f.get("filename") or ""), f.get("status")
         old = str(f.get("previous_filename") or path)
-        if not (is_doc(path, schema) and is_doc(old, schema)):
-            return False, f"it changes {printable(path if not is_doc(path, schema) else old)}, which is not a doc"
+        paths |= {path, old}
+        if bad := next((p for p in (path, old) if control(p, schema, terms)), None):
+            return False, f"it changes {printable(bad)}, a control file"
+        doc_now, doc_then = is_doc(path, schema), is_doc(old, schema)
+        if not (doc_now or doc_then):
+            if is_index(path) or is_index(old):     # an index km does not judge (under skip_prefixes)
+                return False, f"it changes {printable(path)}, an index outside the docs"
+            continue                                # a file next to the pages: an image, a script, data
+        if doc_now != doc_then:
+            return False, f"it moves {printable(old)} to {printable(path)}, " \
+                          f"{'into' if doc_now else 'out of'} the docs"
         if status == "removed":
             return False, f"it removes {printable(path)}"
         if (is_index(path) or is_index(old)) and old != path:
@@ -203,13 +276,26 @@ def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -
         if is_index(path) and path.startswith(index_skip):
             return False, f"{printable(path)} is an index under index_skip_prefixes, whose list nothing checks: level human"
         docs.append((path, f.get("sha"), None if status == "added" else old))
-
+    if not docs:
+        return False, "it changes no doc"
     def texts(doc):                                 # (at the head, at the base or "" where it was not)
         _, blob, old = doc
         head_text = raw(repo, f"git/blobs/{blob}")[0] if isinstance(blob, str) and SHA.fullmatch(blob) else None
         return head_text, "" if old is None else raw(repo, f"contents/{urllib.parse.quote(old)}?ref={base}")[0]
     with ThreadPoolExecutor(max_workers=8) as pool:
+        # the trees of the two sides compare diffs (the head and the merge base) and of the base the
+        # pull request merges into, which may hold a link the merge base does not
+        modes = [pool.submit(tree_links, repo, c) for c in (sha, mb, base)] if isinstance(mb, str) and SHA.fullmatch(mb) else []
         read = list(pool.map(texts, docs))
+    links = [m.result() for m in modes]
+    if not links or None in links:
+        return False, "the trees of its commits could not be read in full"
+    if bad := sorted(paths & {p for t in links for p in t}):
+        return False, f"it changes {printable(bad[0])}, a symlink or submodule"
+    # any symlink, changed or not, in any of the trees: what it points at may be a control file. A
+    # mount (submodule) that does not change holds no file of this brain.
+    if bad := sorted({p for t in links for p, m in t.items() if m == "120000"}):
+        return False, f"the brain holds the symlink {printable(bad[0])}, which may stand for a control file"
     n = 0
     for (path, _, old), (now, then) in zip(docs, read):
         if is_index(path):
@@ -226,7 +312,7 @@ def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -
         return False, "the head or base moved while it was read"
     if label_events(repo, number) != events:
         return False, f"the {LABEL} label changed while it was read"
-    return True, f"all {n} changed docs are at level ai"
+    return True, f"no control file changed and all {n} changed docs are at level ai"
 
 
 def main() -> int:
