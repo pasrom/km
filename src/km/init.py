@@ -180,6 +180,17 @@ def with_team_hooks(config: str) -> tuple[str, list[str]] | None:
 
 GEN_INDEX = "km-gen-index"   # km's hook that rewrites the `_index.md` lists, so a stale one fails the commit, not CI
 GEN_INDEX_AFTER = (1, 10, 1)  # the last km release without that hook
+SAFE_PATH_SINCE = (1, 11, 0)  # from this km on, Python runs with the brain's checkout off sys.path
+AFC = TEAM["team/approve-fork-ci.yml"]
+# approve-fork-ci approves a fork's ci run for any file but control files, a script in a doc folder too:
+# safe only where km keeps the checkout off sys.path, so never beside an older km
+AFC_PROMISE = f"CI starts by itself when the PR touches no control file, see `{AFC}`"
+AFC_TOO_OLD = ("runs Python with the checkout on sys.path, so a file the workflow lets through could stand "
+               "in for a module km imports")
+
+
+def safe_path(version: str) -> bool:
+    return (version_key(version) or ()) >= SAFE_PATH_SINCE
 
 
 def gen_index_hook(version: str) -> bool:
@@ -276,6 +287,11 @@ def render(a: argparse.Namespace) -> dict[str, str]:
         "<PLACEMENT_RULES>": "\n".join(f"- {r}" for r in rules),
     }
     out = {dst: template(tpl, values) for tpl, dst in TEAM.items()}
+    if not safe_path(a.pin):                      # no approve-fork-ci, and CLAUDE.md does not promise it
+        del out[AFC]
+        claude = out["CLAUDE.md"].replace(AFC_PROMISE, "a maintainer approves its CI run")
+        assert claude != out["CLAUDE.md"], "km's team CLAUDE.md template names approve-fork-ci"
+        out["CLAUDE.md"] = claude
     hooked = with_team_hooks(out[".pre-commit-config.yaml"])
     assert hooked, "km's own pre-commit template takes the team hooks"
     out[".pre-commit-config.yaml"] = hooked[0]
@@ -314,6 +330,8 @@ def main() -> int:
         (repo / dst).parent.mkdir(parents=True, exist_ok=True)
         write_text(repo / dst, text)
     print(f"km init: {'team' if a.team else 'personal'} brain in {repo}, pinned to km {a.pin}")
+    if a.team and not safe_path(a.pin):
+        print(f"km init: no {AFC}: km {a.pin} {AFC_TOO_OLD}; a fork's ci run waits for a person (km 1.11.0 or later has it)")
     if note := ensure_lf(repo):
         print(f"km init: {note}")
     return 0

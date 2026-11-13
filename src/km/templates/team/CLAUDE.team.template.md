@@ -14,7 +14,7 @@ The **<BRAIN>** is <TEAM>'s shared, **served** knowledge base: reviewed, current
 Knowledge management via the `/km` skill ([km](https://github.com/pasrom/km); install the plugin once with `/plugin marketplace add pasrom/km` and `/plugin install km@km`).
 
 - **Promote a finished note:** `km promote <slug> <source> --folder <dir> [--type T] [--stub-source]`
-- **Contribute without write access:** `/km contribute @<name>` (throwaway clone + fork PR; CI starts by itself when the PR changes only data, see `.github/workflows/approve-fork-ci.yml`)
+- **Contribute without write access:** `/km contribute @<name>` (throwaway clone + fork PR; CI starts by itself when the PR touches no control file, see `.github/workflows/approve-fork-ci.yml`)
 - **Before asking the maintainer:** run `/km pr`; a doc at level `human` needs a sign-off from a team member who knows its subject. Ask the maintainer only to merge, once the PR is `km:ready` (`.github/workflows/review-request-guide.yml` comments when asked earlier)
 - **Query:** "what do we know about X", `/km what is X`
 - **Update / supersede:** "update the X document", `/km update ...`

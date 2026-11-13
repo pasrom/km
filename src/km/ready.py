@@ -79,6 +79,7 @@ GHOST = "ghost"                  # the login GitHub shows for a deleted account
 # - a changed submodule (its pointer changes what a mount holds) and any symlink in the trees by_level
 #   reads, changed or not: a link may point at a control file.
 # Files in the doc folders (images, PDFs, a generator script in _media/) are not control files.
+# The team workflow approve-fork-ci mirrors this rule in jq (tests/team_smoke.sh keeps the two in step).
 # Matched on the path as cites.fold folds it (NFC, casefolded): a checkout on a case-insensitive file
 # system opens claude.md as CLAUDE.md.
 CONTROL_NAMES = {"claude.md", "claude.local.md", "agents.md", "agents.override.md", "agent.md", "gemini.md",

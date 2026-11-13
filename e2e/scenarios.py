@@ -78,9 +78,9 @@ def ci_final(ctx: Ctx, run_id: int, timeout: float = 480) -> dict:
     return ctx.poll(f"run {run_id} to run and complete", look, timeout)
 
 
-def fork_ci(ctx: Ctx, rec: Record, head: str, *, auto: bool) -> tuple[dict, dict, str]:
+def fork_ci(ctx: Ctx, rec: Record, head: str, *, auto: bool) -> tuple[dict, str]:
     """Wait for the fork path: ci waiting for approval, approve-fork-ci done, ci run (AUTO: by the
-    workflow; else still waiting). Returns (ci run as last read, approve-fork-ci run, its log)."""
+    workflow; else still waiting). Returns (ci run as last read, approve-fork-ci's log)."""
     ci = ctx.wait_run(head, "ci", "pull_request")
     rec.links["ci run"] = ci["html_url"]
     ap = ctx.wait_run(head, "approve-fork-ci", "pull_request_target")
@@ -91,7 +91,7 @@ def fork_ci(ctx: Ctx, rec: Record, head: str, *, auto: bool) -> tuple[dict, dict
         rec.must("approve-fork-ci approved the ci run", f"approved run {ci['id']}" in log,
                   f"log line 'approved run {ci['id']}'", grep(log, r"approved run|##\[notice\]") or "(no such line)")
         ci = ci_final(ctx, ci["id"])
-    return ci, ap, log
+    return ci, log
 
 
 def grep(text: str, pattern: str) -> str:
@@ -225,7 +225,7 @@ def e02(ctx: Ctx, rec: Record) -> None:
     body = body_with_table(f"Last reviewed: {head}", [(rel, "ai", AI)])
     pr, head = push_and_open(ctx, rec, d, br, "docs(product): add an invented storage note", body)
     n = pr["number"]
-    ci, _, _ = fork_ci(ctx, rec, head, auto=True)
+    ci, _ = fork_ci(ctx, rec, head, auto=True)
     rec.check("ci is green", ci["conclusion"] == "success", "success", ci["conclusion"])
     label_by(ctx, rec, "C", n)
     labels = [lb["name"] for lb in ctx.repo_api("M", f"issues/{n}/labels")]
@@ -247,7 +247,7 @@ def e03(ctx: Ctx, rec: Record) -> None:
     pr, head = push_and_open(ctx, rec, d, br, "docs(p9001): add a customer care guide (no review recorded)",
                              "Invented e2e test data: a customer page in review, no AI review, no sign-off.")
     n = pr["number"]
-    ci, _, _ = fork_ci(ctx, rec, head, auto=True)
+    ci, _ = fork_ci(ctx, rec, head, auto=True)
     log = ctx.run_log(ci["id"])
     rec.check("ci is red with a signoff finding for the page", ci["conclusion"] == "failure"
               and re.search(rf"signoff.*{re.escape(rel)}|{re.escape(rel)}.*is review, not signed off", log) is not None,
@@ -262,7 +262,7 @@ def e03(ctx: Ctx, rec: Record) -> None:
         head = commit(ctx, "C", d, "docs(p9001): approve the care guide (BBB)")
         ctx.push("C", d, ctx.cfg.fork, f"HEAD:refs/heads/{br}")
         e04.links[f"PR #{n}"] = pr["html_url"]
-        ci, _, _ = fork_ci(ctx, e04, head, auto=True)
+        ci, _ = fork_ci(ctx, e04, head, auto=True)
         e04.check("ci is green after the person's sign-off", ci["conclusion"] == "success", "success", ci["conclusion"])
         ctx.label("C", n, add=False, name="km:needs-human")
         label_by(ctx, e04, "C", n)
@@ -287,13 +287,13 @@ def e03b(ctx: Ctx, rec: Record) -> None:
     commit(ctx, "C", d, "docs(p9001): add invented winter tips with an AI review on record")
     pr, head = push_and_open(ctx, rec, d, br, "docs(p9001): add winter tips (AI review recorded)",
                              "Invented e2e test data: a customer page in review with an AI review, waiting for a person.")
-    ci, _, _ = fork_ci(ctx, rec, head, auto=True)
+    ci, _ = fork_ci(ctx, rec, head, auto=True)
     rec.check("ci is green: the page waits for the person with its AI review on record", ci["conclusion"] == "success",
               "success", ci["conclusion"])
 
 
 # --- E05 / E06: fork PRs, data only and with a script ------------------------------------------
-def fork_page_with_media(ctx: Ctx, rec: Record, script: bool) -> tuple[Path, str, str]:
+def fork_page_with_media(ctx: Ctx, rec: Record, script: bool) -> tuple[Path, str]:
     d, br = contrib_branch(ctx, rec)
     stem = f"e2e-{'runtime' if script else 'outline'}"
     rel, media = f"product/{stem}.md", f"product/{stem}_media"
@@ -307,13 +307,13 @@ def fork_page_with_media(ctx: Ctx, rec: Record, script: bool) -> tuple[Path, str
     commit(ctx, "C", d, "docs(product): add an invented page with a figure")
     km_ok(ctx, rec, d, "approve", rel, "--by", AI)
     commit(ctx, "C", d, f"docs(product): approve the figure page ({AI})")
-    return d, br, f"{media}/make_figure.py"
+    return d, br
 
 
 def e05(ctx: Ctx, rec: Record) -> None:
-    d, br, _ = fork_page_with_media(ctx, rec, script=False)
+    d, br = fork_page_with_media(ctx, rec, script=False)
     pr, head = push_and_open(ctx, rec, d, br, "docs(product): add a page with an SVG (fork, data only)", "Invented e2e test data.")
-    ci, _, _ = fork_ci(ctx, rec, head, auto=True)
+    ci, _ = fork_ci(ctx, rec, head, auto=True)
     rec.check("ci ran without a person, as attempt 2 by github-actions[bot]", ci["conclusion"] == "success"
               and ci["run_attempt"] >= 2 and ci["triggering_actor"]["login"] == "github-actions[bot]",
               "success, attempt >= 2, github-actions[bot]",
@@ -324,27 +324,19 @@ def e05(ctx: Ctx, rec: Record) -> None:
 
 
 def e06(ctx: Ctx, rec: Record) -> None:
-    d, br, script = fork_page_with_media(ctx, rec, script=True)
+    d, br = fork_page_with_media(ctx, rec, script=True)
     pr, head = push_and_open(ctx, rec, d, br, "docs(product): add a page with a figure and its script (fork)", "Invented e2e test data.")
-    ci, ap, log = fork_ci(ctx, rec, head, auto=False)
-    rec.check("approve-fork-ci names the script and approves nothing",
-              "files that are not data, not approved, a person approves" in log and json.dumps(script) in log,
-              f"notice 'files that are not data' and {json.dumps(script)}", grep(log, r"##\[notice\]|approved run"))
-    time.sleep(20)
-    ci = ctx.repo_api("M", f"actions/runs/{ci['id']}")
-    rec.must("ci still waits for a person", waiting(ci), "action_required", f"{ci['status']}/{ci.get('conclusion')}")
-    ctx.repo_api("M", f"actions/runs/{ci['id']}/approve", method="POST")
-    rec.notes.append(f"maintainer approved run {ci['id']} by API")
-    ci = ci_final(ctx, ci["id"])
-    rec.check("ci runs after the maintainer's approval and is green", ci["conclusion"] == "success", "success", ci["conclusion"])
+    ci, _ = fork_ci(ctx, rec, head, auto=True)
+    rec.check("ci (approved by approve-fork-ci: a script in a doc folder is no control file) is green",
+              ci["conclusion"] == "success", "success", ci["conclusion"])
     label_by(ctx, rec, "C", pr["number"])
     ready(ctx, rec, pr["number"], head, d, 0, r"^counts: set by its author, and no control file changed",
           "km ready: a generator script beside the page does not stop the author's label (1.17.0)")
 
 
 def e05_ctl(ctx: Ctx, rec: Record) -> None:
-    """A control file next to an AI-level page: approve-fork-ci passes CLAUDE.md as data (a Markdown
-    file at the top), km ready refuses the author's label for it."""
+    """A control file next to an AI-level page: approve-fork-ci leaves CLAUDE.md to a person, and km
+    ready refuses the author's label for it."""
     d, br = contrib_branch(ctx, rec, "E05-ctl")
     rel = "product/e2e-cleaning-note.md"
     write(d, rel, page("Cleaning note", "review", "Use a soft cloth. Invented."))
@@ -355,8 +347,17 @@ def e05_ctl(ctx: Ctx, rec: Record) -> None:
     km_ok(ctx, rec, d, "approve", rel, "--by", AI)
     commit(ctx, "C", d, f"docs(product): approve the cleaning note ({AI})")
     pr, head = push_and_open(ctx, rec, d, br, "docs(product): add a note and change CLAUDE.md (fork)", "Invented e2e test data.")
-    ci, _, _ = fork_ci(ctx, rec, head, auto=True)
-    rec.check("ci (approved as data by approve-fork-ci) is green", ci["conclusion"] == "success", "success", ci["conclusion"])
+    ci, log = fork_ci(ctx, rec, head, auto=False)
+    rec.check("approve-fork-ci names CLAUDE.md and approves nothing",
+              "control files, not approved, a person approves" in log and '"CLAUDE.md"' in log,
+              "notice 'control files' and \"CLAUDE.md\"", grep(log, r"##\[notice\]|approved run"))
+    time.sleep(20)
+    ci = ctx.repo_api("M", f"actions/runs/{ci['id']}")
+    rec.must("ci still waits for a person", waiting(ci), "action_required", f"{ci['status']}/{ci.get('conclusion')}")
+    ctx.repo_api("M", f"actions/runs/{ci['id']}/approve", method="POST")
+    rec.notes.append(f"maintainer approved run {ci['id']} by API")
+    ci = ci_final(ctx, ci["id"])
+    rec.check("ci runs after the maintainer's approval and is green", ci["conclusion"] == "success", "success", ci["conclusion"])
     label_by(ctx, rec, "C", pr["number"])
     ready(ctx, rec, pr["number"], head, d, 1, r"^does not count: set by its author, and it changes CLAUDE\.md, a control file",
           "km ready: the author's label does not count with a control file changed")

@@ -64,7 +64,8 @@ from pathlib import Path
 import yaml
 
 from km import KM_REF
-from km.init import GEN_INDEX, TEAM, ensure_lf, gen_index_hook, pin_values, template, with_gen_index, with_team_hooks
+from km.init import (AFC_TOO_OLD, GEN_INDEX, TEAM, ensure_lf, gen_index_hook, pin_values, safe_path, template,
+                     with_gen_index, with_team_hooks)
 from km.paths import git, repo_root, write_text
 from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
 
@@ -92,10 +93,13 @@ OLD_COPIES = {
 SHIPPED = {
     "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
-    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "3532f2cd52292d3e"},
+    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb"},
     "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7"},
     "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e"},
 }
+# approve-fork-ci versions that approved data endings only: the later ones approve any file but control
+# files, safe only beside km's ci and a km from 1.11.0 on, so upgrade does not widen one of these otherwise
+ALLOWLIST_AFC = {"accf1785f4710b4e", "70ad9729fd426ebd"}
 # ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
 # a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
 KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f"}
@@ -402,6 +406,21 @@ def main() -> int:
         for tpl in ("team/dependabot.yml", *SHIPPED):
             rel = TEAM[tpl]
             p = root / rel
+            if tpl == "team/approve-fork-ci.yml" and not safe_path(target):   # an older km, a --force downgrade too
+                why = f"km {target} {AFC_TOO_OLD}"
+                if not p.exists():
+                    done.append(f"did not add {rel}: {why}; km 1.11.0 or later has it")
+                elif (h := shipped_hash(p.read_text(encoding="utf-8"))) in ALLOWLIST_AFC:
+                    done.append(f"left {rel} at its data-only version: this km's version needs km 1.11.0 or later")
+                    if not km_ci and ci_text:
+                        done.append(f"{rel} lets a fork's ci run start unreviewed, but ci.yml is not km's unchanged one: "
+                                    f"check that ci.yml runs nothing from the checkout but km, or remove {rel}")
+                elif h in SHIPPED[tpl]:
+                    p.unlink()
+                    done.append(f"removed {rel}: {why}; a fork's ci run waits for a person again")
+                else:
+                    done.append(f"{rel} is the brain's own, and {why}: check that it approves data only, or remove it")
+                continue
             if tpl == "team/approve-fork-ci.yml" and not km_ci:     # checked on every upgrade: ci.yml may change later
                 if not p.exists():
                     ci_is = "ci.yml is not km's unchanged one" if ci_text else "there is no ci.yml"
@@ -422,7 +441,10 @@ def main() -> int:
                 if tpl == "team/review-request-guide.yml":
                     done.append(f"{rel} does nothing until the repository variable KM_MAINTAINERS lists the maintainers' GitHub logins")
             elif tpl in SHIPPED and (copy := p.read_text(encoding="utf-8")) != new and (h := shipped_hash(copy)) != shipped_hash(new):
-                if h in SHIPPED[tpl]:
+                if tpl == "team/approve-fork-ci.yml" and h in ALLOWLIST_AFC and not km_ci:
+                    done.append(f"left {rel}: this km's version approves a fork's ci run for any file but control files "
+                                f"(a script in a doc folder too), and ci.yml is not km's unchanged one")
+                elif h in SHIPPED[tpl]:
                     write_text(p, carry_pins(copy, new))
                     done.append(f"updated {rel} to this km's version (it was an earlier one, unchanged but for its action pins, keeping those newer than km's)")
                 else:
