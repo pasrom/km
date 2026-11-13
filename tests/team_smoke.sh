@@ -823,17 +823,33 @@ SB="$F/stub"; mkdir -p "$SB"
 cat > "$SB/gh" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
-  api) case "$2" in *"/commits/bad"*) echo 0 ;; *"/commits/down"*) exit 1 ;; *) echo 1 ;; esac ;;
+  api) case "$2" in *"/commits/bad"*) echo 0 ;; *"/commits/down"*) exit 1 ;;
+         *"/branches?"*) [ "$BRANCHES" = down ] && exit 1; echo "$BRANCHES" ;; *"/pulls?"*) [ "$PRS" = down ] && exit 1; echo "$PRS" ;;
+         *) echo 1 ;; esac ;;
   issue) echo "issue $*" >> "$GH_LOG" ;;
 esac
 SH
 printf '#!/bin/sh\n' > "$SB/sleep"; chmod +x "$SB/gh" "$SB/sleep"
 kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["check"]["steps"][0]["run"])' "$T/.github/workflows/main-guard.yml" > "$F/guard.sh"
-guard(){ GH_LOG="$F/gh.log" PATH="$SB:$PATH" REPO=o/r FORCED="$1" COMMITS="$2" PUSHER=p RUN=u bash "$F/guard.sh" >/dev/null 2>&1; }
+# guard FORCED COMMITS [CREATED [BRANCHES [PRS]]]: the repository's branches and its pull request count as gh answers them
+guard(){ GH_LOG="$F/gh.log" PATH="$SB:$PATH" REPO=o/r FORCED="$1" COMMITS="$2" CREATED="${3:-false}" \
+  BRANCHES="${4:-main}" PRS="${5:-0}" PUSHER=p RUN=u bash "$F/guard.sh" >/dev/null 2>&1; }
+flagged(){ rm -f "$F/gh.log"; ! guard false '["bad1"]' "$@" && grep -q "Direct push" "$F/gh.log"; }   # fails, opens an issue
+unflagged(){ rm -f "$F/gh.log"; ! guard false '["bad1"]' "$@" && [ ! -f "$F/gh.log" ]; }             # fails, no issue
 rm -f "$F/gh.log"; guard false '["good1","good2"]' && [ ! -f "$F/gh.log" ] && ok "main-guard passes commits from merged PRs" || no "main-guard passes merged commits"
 rm -f "$F/gh.log"; ! guard false '["good1","bad2"]' && grep -q "Direct push to main" "$F/gh.log" && ok "main-guard fails and opens an issue on a commit without a PR" || no "main-guard flags an unmerged commit"
 rm -f "$F/gh.log"; ! guard true '["good1"]' && grep -q "issue" "$F/gh.log" && ok "main-guard fails on a force push" || no "main-guard flags a force push"
 rm -f "$F/gh.log"; ! guard false '["good1","down2"]' && [ ! -f "$F/gh.log" ] && ok "a failed lookup fails main-guard without a false issue" || no "main-guard on a failed lookup"
+rm -f "$F/gh.log"; guard false '["bad1"]' true && [ ! -f "$F/gh.log" ] \
+  && ok "main-guard lets the first push into an empty repository through (it creates main, the only branch, and no pull request was opened)" || no "main-guard on the first push"
+bad=""
+flagged || bad+=" later-push"
+flagged true "main other" || bad+=" other-branch"
+flagged true main 1 || bad+=" had-a-pr"
+unflagged true down || bad+=" branches-down"
+unflagged true main down || bad+=" pulls-down"
+[ -z "$bad" ] && ok "...not a later direct push, nor one creating main beside another branch or after a pull request; a failed lookup fails without an issue" \
+  || no "main-guard first push:$bad"
 kmpy -c 'import km.upgrade as u; from km.init import template; raise SystemExit(u.ci_hash(template("team/ci.yml", {})) not in u.KM_CI)' \
   && ok "KM_CI lists the current team ci template" || no "team/ci.yml changed: add its ci_hash to KM_CI in upgrade.py"
 kmpy - <<'PY' && ok "a km ci.yml with the sign-off step turned on by upgrade still counts as km's" || no "with_signoff result not in KM_CI"

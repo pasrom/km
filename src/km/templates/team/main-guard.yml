@@ -1,12 +1,17 @@
-# Written by `km init --team`; owned by this repo.
+# Shipped by km (`km init --team` or `km upgrade`); km upgrade replaces it while it is unchanged; once
+# changed it is owned by this repo.
 name: main-guard
 
 # main changes only through a merged pull request (CONVENTIONS.md). Where the host cannot enforce that
 # (no branch protection for private repositories on GitHub's free plan), this run makes a direct push
 # visible: every commit pushed to main must belong to a merged pull request, and a force push never
 # passes. On a violation the run fails and opens an issue. Pushes made with GITHUB_TOKEN, such as the
-# staleness workflow's demotions, start no workflow and are not checked. Known gap: fast-forwarding
-# main to the head of an open pull request marks that request merged, so such a push passes.
+# staleness workflow's demotions, start no workflow and are not checked. The one push let through is
+# the first one into an empty repository, which creates main with nothing to open a pull request
+# against: it creates the branch, main is then the repository's only branch and no pull request was
+# ever opened (main, once the default branch, cannot be deleted and pushed again). Known gap:
+# fast-forwarding main to the head of an open pull request marks that request merged, so such a push
+# passes.
 on:
   push:
     branches: [main]
@@ -25,6 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           FORCED: ${{ github.event.forced }}
+          CREATED: ${{ github.event.created }}
           COMMITS: ${{ toJSON(github.event.commits.*.id) }}
           PUSHER: ${{ github.event.pusher.name }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -37,6 +43,13 @@ jobs:
               [ "$n" -gt 0 ] || echo "$sha"
             done
           }
+          if [ "$CREATED" = true ]; then   # the push created main: the first one?
+            branches=$(gh api "repos/$REPO/branches?per_page=2" --jq '[.[].name] | join(" ")')   # set -e: a failed lookup fails the run
+            prs=$(gh api "repos/$REPO/pulls?state=all&per_page=1" --jq 'length')
+            if [ "$branches" = main ] && [ "$prs" = 0 ]; then
+              echo "the first push into an empty repository: nothing to open a pull request against"; exit 0
+            fi
+          fi
           bad=$(unmerged $(jq -r '.[]' <<<"$COMMITS"))
           for wait in 30 60 120; do   # the link from a rebased commit to its PR can lag the merge
             [ -z "$bad" ] && break
