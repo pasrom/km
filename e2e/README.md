@@ -77,8 +77,8 @@ The report (`report.json`, `report.md`) is written to `$KM_E2E_WORKDIR/runs/<run
 | E03b | The same with an AI review recorded: `ci` green, the page waits for a person |
 | E04 | On E03's PR, a person's `km approve --by BBB` commit: `ci` green; `C`'s `km:ready` does not count (level human), `M`'s does |
 | E05 | Fork PR with a page and an SVG: approve-fork-ci approves the run, `ci` runs as attempt 2 by `github-actions[bot]`, `C`'s own label counts |
-| E05-ctl | Fork PR with an AI-level page and a change to `CLAUDE.md`: approved as data by approve-fork-ci, but `C`'s own label does not count (control file) |
-| E06 | Fork PR with a generator script beside a page: approve-fork-ci names the script and approves nothing; `ci` waits; `M` approves the run by API; `ci` green; `C`'s own label counts |
+| E05-ctl | Fork PR with an AI-level page and a change to `CLAUDE.md`: approve-fork-ci names the control file and approves nothing; `ci` waits; `M` approves the run by API; `ci` green; `C`'s own label does not count |
+| E06 | Fork PR with a generator script beside a page: approve-fork-ci approves the run (a script in a doc folder is no control file), `ci` green, `C`'s own label counts |
 | E08 | review-request-guide: one comment by `github-actions[bot]` listing the page under both lists, still one after a second request, switched by `km:ready` set and removed |
 | E08-draft | The guide is silent on a draft PR (skipped where the plan does not offer draft pull requests) |
 | E24 | A direct push and then a force push to `main`: main-guard red, an issue for each |

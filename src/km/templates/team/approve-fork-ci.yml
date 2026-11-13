@@ -3,14 +3,20 @@
 name: approve-fork-ci
 
 # A pull request from a fork by someone with read access only waits for "Approve and run" before CI
-# starts. This run approves that CI run when every file the pull request adds, changes, renames or
-# deletes is data (an allowlist of endings, below the top folder unless Markdown, nothing under
-# .github/): what the pinned km reads, never code CI runs. Anything else waits for a person: a
-# script, a config file, or a symlink or submodule even with such an ending. From km 1.11.0 on,
-# km runs Python with the checkout off sys.path, so a file in the pull request cannot shadow a
-# module km imports; with an older pinned km the allowlist is the defense (no importable module
-# name has a dot), and it stays as a second one. It assumes ci.yml is km's ci workflow: one that
-# runs code of its own from the checkout needs its own review first.
+# starts. This run approves that CI run when the pull request adds, changes, renames or deletes no
+# control file, the rule of `km ready` (above CONTROL_NAMES in km's src/km/ready.py): no path with a
+# segment that starts with a dot (.github/, .gitignore, .gitmodules, .pre-commit-config.yaml,
+# .claude/, ...; .gitkeep and .DS_Store in a folder excepted), no file at the top that is not
+# Markdown, no agent instructions or CODEOWNERS at any depth, nothing in the top folders scripts and
+# dist, on either side of a rename; and no symlink or submodule. Anything else waits for a person. A
+# script or any other file in a doc folder (a generator in _media/) passes: km's ci runs km validate
+# and km gen-index on a pull request, which read the docs and run nothing from the checkout, and km
+# runs Python with the checkout off sys.path. That needs km 1.11.0 or later: an older km ran with
+# the checkout on sys.path, where any Python file could stand in for a module it imports, so km
+# init, beside a pin to such a km, leaves this workflow out and km upgrade removes its own copy. The
+# rule is km ready's without the brain's schema (exempt_files, skip_prefixes, the gate's
+# forbidden_terms_file): those decide what km validate checks, not what runs. It assumes ci.yml is
+# km's ci workflow: one that runs code of its own from the checkout needs its own review first.
 # It never checks out the pull request's code: pull_request_target runs this file from main, and the
 # changed files are read from the API for exactly the commit whose run it approves. The token needs
 # `actions: write`, the only permission that allows approving a run, plus read access to the
@@ -61,15 +67,21 @@ jobs:
             echo "::notice::the API lists $listed of ${CHANGED:-?} changed files; not approved, a person approves"
             exit 0
           fi
-          # both sides of a rename count. A name passes only with a data ending (no module Python could
-          # import has a dot in its name) and, at the top of the repository, only as Markdown: the
-          # configuration there (schema.local.yaml, .gitmodules, ...) is for a person to approve
-          others="$(jq -c '[.files[] | .filename, (.previous_filename // empty)
-            | select(startswith(".github/")
-                or (test("\\.(md|svg|png|jpe?g|gif|webp|pdf|csv|txt|json|ya?ml|puml|drawio|html)$"; "i") | not)
-                or (contains("/") | not) and (endswith(".md") | not))]' <<<"$compare")"
+          # the control-file rule (header), on both sides of a rename. Names are compared as km ready
+          # folds them (NFC, casefolded), as a case-insensitive file system opens them: fold maps the
+          # characters that fold to ASCII, the only ones that can make a control name
+          control='def fold: ascii_downcase | gsub("[\u00df\u1e9e]"; "ss") | gsub("\u017f"; "s") | gsub("\u212a"; "k")
+              | gsub("\ufb00"; "ff") | gsub("\ufb01"; "fi") | gsub("\ufb02"; "fl") | gsub("\ufb03"; "ffi")
+              | gsub("\ufb04"; "ffl") | gsub("[\ufb05\ufb06]"; "st") | gsub("\u037e"; ";") | gsub("\u1fef"; "`");
+            def control: (contains("/") | not) and (endswith(".md") | not)
+              or (fold | split("/") | .[-1] as $n
+                | ($n | IN("claude.md", "claude.local.md", "agents.md", "agents.override.md", "agent.md",
+                    "gemini.md", "conventions.md", "codeowners"))
+                  or (.[0] | IN("scripts", "dist")) or any(.[:-1][]; startswith("."))
+                  or ($n | startswith(".")) and ($n | IN(".gitkeep", ".ds_store") | not));'
+          others="$(jq -c "$control"' [.files[] | .filename, (.previous_filename // empty) | select(control)]' <<<"$compare")"
           if [ "$others" != "[]" ]; then
-            echo "::notice::files that are not data, not approved, a person approves:"
+            echo "::notice::control files, not approved, a person approves:"
             jq -r '.[] | @json' <<<"$others"   # quoted: a file name cannot pose as a workflow command
             exit 0
           fi

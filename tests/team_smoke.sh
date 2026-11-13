@@ -725,6 +725,9 @@ rm "$N/$AF"; printf 'jobs:\n  t:\n    runs-on: x\n    steps:\n      - run: make\
 { echo "# an earlier km version"; cat "$AFT"; } > "$N/$AF"; upgrade_older "$N"
 { cmp -s "$N/$AF" "$AFT" && out_has "updated $AF to this km's version" && out_has "$AF lets a fork's ci run start unreviewed, but ci.yml is not km's unchanged one"; } \
   && ok "upgrade warns about an approve-fork-ci beside a ci.yml that is not km's, and still brings an earlier km copy up to date" || no "approve-fork-ci beside an edited ci ($out)"
+cp "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" "$N/$AF"; out="$(km upgrade --root "$N" 2>&1)"
+{ cmp -s "$N/$AF" "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" && out_has "left $AF: this km's version approves a fork's ci run for any file but control files"; } \
+  && ok "upgrade does not widen a data-only approve-fork-ci to the control-file rule beside a ci.yml that is not km's" || no "approve-fork-ci widened beside an edited ci ($out)"
 Z="$F/zero-indent"; mkdir -p "$Z/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$Z/.github/workflows/"
 printf 'meta: {profile: z}\n' > "$Z/schema.local.yaml"
 printf 'repos:\n- repo: https://github.com/pasrom/km\n  rev: %s  # frozen: %s\n  hooks:\n  - id: km-validate\n' "$KM_SHA" "$KM_REF" > "$Z/.pre-commit-config.yaml"
@@ -772,17 +775,32 @@ NEWH="km:km-validate: km:km-gen-index: pre-commit-hooks:no-commit-to-branch:--br
 km init "$F/t199" --team --name N --desc n --initials NN --folder d=D --pin v1.99.0 >/dev/null
 { [ "$(hooks_of "$F/t199/.pre-commit-config.yaml")" = "$NEWH" ] && [ "$(grep -c "pasrom/km" "$F/t199/.pre-commit-config.yaml")" = 1 ]; } \
   && ok "init --team pinning a km with the hook writes it into the km entry: one km pin" || no "init --pin v1.99.0 ($(cat "$F/t199/.pre-commit-config.yaml"))"
-km init "$F/t09" --team --name O --desc o --initials OO --folder d=D --pin v0.9.0 >/dev/null
+out="$(km init "$F/t09" --team --name O --desc o --initials OO --folder d=D --pin v0.9.0 2>&1)"
+{ [ ! -e "$F/t09/$AF" ] && out_has "no $AF: km v0.9.0 runs Python with the checkout on sys.path" \
+  && grep -q "a maintainer approves its CI run" "$F/t09/CLAUDE.md" && ! grep -q "approve-fork-ci" "$F/t09/CLAUDE.md"; } \
+  && ok "init --team pinning a km before 1.11.0 leaves approve-fork-ci out, and CLAUDE.md does not name it, with a note" || no "init --pin v0.9.0 writes approve-fork-ci ($out)"
 { grep -q "km-validate" "$F/t09/.pre-commit-config.yaml" && ! grep -q "km-gen-index" "$F/t09/.pre-commit-config.yaml"; } \
   && ok "init --team pinning a km without the hook does not name it (pre-commit would fail on the unknown id)" || no "init --pin v0.9.0 names km-gen-index"
 cp "$F/t09/.pre-commit-config.yaml" "$F/t09.before"; out="$(km upgrade --root "$F/t09" --pin v0.9.0 2>&1)"
 { cmp -s "$F/t09/.pre-commit-config.yaml" "$F/t09.before" && ! out_has "km-gen-index"; } && ok "upgrade to a km without the hook does not add it" || no "upgrade --pin v0.9.0 adds km-gen-index ($out)"
+{ [ ! -e "$F/t09/$AF" ] && out_has "did not add $AF: km v0.9.0 runs Python with the checkout on sys.path"; } \
+  && ok "upgrade to a km before 1.11.0 does not add approve-fork-ci, with a note" || no "upgrade --pin v0.9.0 adds approve-fork-ci ($out)"
 out="$(km upgrade --root "$F/t09" --pin v1.99.0 2>&1)"
 { [ "$(hooks_of "$F/t09/.pre-commit-config.yaml")" = "$NEWH" ] \
   && grep -q "rev: $NEW_SHA  # frozen: v1.99.0" "$F/t09/.pre-commit-config.yaml" && out_has "added the km-gen-index hook"; } \
   && ok "upgrade that moves the pin to a km with the hook adds it to the km entry" || no "upgrade adds km-gen-index ($out; $(cat "$F/t09/.pre-commit-config.yaml"))"
+[ -e "$F/t09/$AF" ] || no "upgrade to v1.99.0 adds no approve-fork-ci"
 out="$(km upgrade --root "$F/t09" --pin v0.9.0 --force 2>&1)"
 out_has "names the km-gen-index hook, which km v0.9.0 lacks: remove it by hand" && ok "upgrade --force back to a km without the hook says to remove it" || no "downgrade note ($out)"
+{ [ ! -e "$F/t09/$AF" ] && out_has "removed $AF: km v0.9.0 runs Python"; } \
+  && ok "upgrade --force back to a km before 1.11.0 removes km's approve-fork-ci, with a note" || no "downgrade keeps approve-fork-ci ($out)"
+{ cat "$AFT"; echo "# the brain's own line"; } > "$F/t09/$AF"; out="$(km upgrade --root "$F/t09" --pin v0.9.0 2>&1)"
+{ [ -e "$F/t09/$AF" ] && out_has "$AF is the brain's own, and km v0.9.0 runs Python"; } \
+  && ok "upgrade warns about a brain's own approve-fork-ci beside a km before 1.11.0 and leaves it" || no "own approve-fork-ci beside an old km ($out)"
+cp "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" "$F/t09/$AF"; out="$(km upgrade --root "$F/t09" --pin v0.9.0 2>&1)"
+{ cmp -s "$F/t09/$AF" "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" && out_has "left $AF at its data-only version"; } \
+  && ok "upgrade keeps a data-only approve-fork-ci beside a km before 1.11.0 as it is" || no "data-only approve-fork-ci beside an old km ($out)"
+rm "$F/t09/$AF"
 I="$F/gen-index"; mkdir -p "$I/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$I/.github/workflows/"; printf 'meta: {profile: i}\n' > "$I/schema.local.yaml"
 cat > "$I/.pre-commit-config.yaml" <<YML
 default_install_hook_types: [pre-commit, pre-push]
@@ -936,11 +954,14 @@ TIMELINE="$(BASE_AT 2025-12-31T23:55:00Z)" RUN="$(RUN_OF f/r x 2026-01-01T00:00:
 RUN="$(RUN_OF f/r x 2025-12-31T23:59:35Z)" approves run-30s-before-event '[{"filename":"d/a.md"}]'
 # the commit's run listing has left out a fork's waiting run for minutes while the unfiltered one held it
 W="$(RUN_OF f/r x 2026-01-01T00:00:09Z)"
+# a script or other file in a doc folder runs in no CI step: only control files wait for a person
+approves script-in-doc-folder '[{"filename":"d/a.md"},{"filename":"d/a_media/make_figure.py"},{"filename":"d/a_media/f.svg"},{"filename":"d/.gitkeep"}]'
+approves rename-in-doc-folder '[{"filename":"d/b.md","previous_filename":"d/a.py"}]'
 RUN="$OTHER_RUN" RUNS_ALL="$W" approves only-in-unfiltered-listing '[{"filename":"d/a.md"}]'
 called "api repos/o/r/actions/runs?per_page=100&exclude_pull_requests=true" || missed="$missed unfiltered-listing-read"
 RUNS_ALL="$OTHER_RUN,$W" AF_FAIL=head_sha= approves commit-listing-fails '[{"filename":"d/a.md"}]'
 RUN="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request action_required null)" approves status-action-required '[{"filename":"d/a.md"}]'
-[ -z "$missed" ] && ok "approve-fork-ci also approves a waiting run only the unfiltered listing holds or when the commit's listing fails, beside an earlier closed pull request, after a base change long before the run, a run stamped up to 30 s before the event, on a default branch other than main, and for a branch name it must encode" \
+[ -z "$missed" ] && ok "approve-fork-ci also approves a script in a doc folder, a waiting run only the unfiltered listing holds or when the commit's listing fails, beside an earlier closed pull request, after a base change long before the run, a run stamped up to 30 s before the event, on a default branch other than main, and for a branch name it must encode" \
   || no "approve-fork-ci did not approve:$missed"
 AF_FAIL=/approve afrun '[{"filename":"d/a.md"}]'; rc=$?
 { [ $rc = 2 ] && grep -q "^::warning::could not approve run 7" "$AFD/out"; } \
@@ -950,10 +971,14 @@ AF_FAIL=compare/ refuse compare-fails '[{"filename":"d/a.md"}]'
 AF_FAIL=git/trees refuse tree-fails '[{"filename":"d/a.md"}]'
 AF_FAIL=pulls refuse pulls-fails '[{"filename":"d/a.md"}]'
 AF_FAIL=timeline refuse timeline-fails '[{"filename":"d/a.md"}]'
-refuse script '[{"filename":"d/a.md"},{"filename":"d/run.py"}]'
 refuse .github '[{"filename":".github/workflows/x.yml"}]'
 refuse top-level-yaml '[{"filename":"schema.local.yaml"}]'
-refuse rename '[{"filename":"d/a.md","previous_filename":"d/a.py"}]'
+refuse gitignore '[{"filename":"d/a.md"},{"filename":".gitignore"}]'
+refuse top-level-script '[{"filename":"make.py"}]'
+refuse scripts '[{"filename":"scripts/x.md"}]'
+refuse agent-instructions-in-a-folder '[{"filename":"d/sub/Agents.MD"}]'
+refuse rename '[{"filename":"d/a.md","previous_filename":"scripts/a.md"}]'
+TREE='{"truncated":false,"tree":[{"path":"d/m","mode":"160000"}]}' refuse submodule '[{"filename":"d/m"}]'
 TREE='{"truncated":false,"tree":[{"path":"d/l.md","mode":"120000"}]}' refuse symlink '[{"filename":"d/l.md"}]'
 TREE='{"truncated":true,"tree":[]}' refuse truncated '[{"filename":"d/a.md"}]'
 refuse count '[{"filename":"d/a.md"}]' 2
@@ -987,7 +1012,34 @@ RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request_target)" ref
 RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request completed '"success"')" refuse unfiltered-finished '[{"filename":"d/a.md"}]'
 RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request in_progress null)" refuse unfiltered-running '[{"filename":"d/a.md"}]'
 RUNS_ALL="$W" AF_FAIL=actions/runs refuse both-listings-fail '[{"filename":"d/a.md"}]'
-[ -z "$refused" ] && ok "approve-fork-ci leaves code, .github, top-level config, renames, links, a bad count, failed reads, other pull requests, a changed base, other forks, branches, commits and events, a run that does not wait, failed run listings, and an older run to a person, with a notice" \
+# the workflow's control rule is km ready's without the brain's schema;
+# the characters that fold to ASCII are listed from Python's own tables
+control=""; eval "$(sed -n "/^control='/,/'\$/p" "$F/af.sh")"
+kmpy - <<'PY' > "$F/af.paths"
+import json, sys
+from km import ready
+from km.cites import fold
+# every name and folder of the rule, from ready's own constants, at the top, in a folder and deeper,
+# in another case, and as a near miss
+names = sorted(ready.CONTROL_NAMES | ready.INERT | {"x.md", "x.py", "x.svg", ".envrc", "makefile", "_index.md",
+                                                     "schema.local.yaml"})
+paths = [f"{d}{v}" for n in names for v in (n, n.upper(), n.title(), n + ".bak")
+         for d in ("", "d/", "d/a_media/", ".d/")]
+paths += [f"{d}{c}/{n}" for c in ready.CONTROL_PATHS for d in ("", "d/") for n in ("x.md", "x.py")]
+paths += [f"{c}x/a.md" for c in ready.CONTROL_PATHS] + list(ready.CONTROL_PATHS)
+odd = [c for c in map(chr, range(0x80, 0x110000)) if not 0xD800 <= ord(c) < 0xE000 and fold(c).isascii()]
+for c in odd:
+    paths.append(f"d/x{c}y.md")
+    for n in [*(f"d/{n}" for n in ready.CONTROL_NAMES), *(f"{p}/x.md" for p in ready.CONTROL_PATHS)]:
+        if fold(c) in n:
+            paths.append(n.replace(fold(c), c, 1))
+json.dump([{"p": p, "want": ready.control(p, {}, None)} for p in paths], sys.stdout)
+PY
+# a failed extraction or run checks nothing: the table must hold both answers and jq must run
+sync="$(jq -c "$control"' if any(.[]; .want) and any(.[]; .want | not) then [.[] | select((.p | control) != .want) | .p] else "no table" end' "$F/af.paths")" \
+  || sync="jq failed"
+[ "$sync" = "[]" ] || refused="$refused out-of-sync-with-km-ready:$sync"
+[ -z "$refused" ] && ok "approve-fork-ci leaves control files (km ready's rule: dot paths, the top but Markdown, agent instructions, scripts/, dist/), links, submodules, a bad count, failed reads, other pull requests, a changed base, other forks, branches, commits and events, a run that does not wait, failed run listings, and an older run to a person, with a notice" \
   || no "approve-fork-ci approved or crashed on:$refused"
 else no "the approve-fork-ci tests need jq"; fi
 
