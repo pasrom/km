@@ -29,7 +29,7 @@ For someone who just set up a computer for the brain, often not a developer. Ans
 When the user runs `/km init` (or confirms after "CONVENTIONS.md missing" prompt):
 
 1. Ask for the user's author initials (e.g. `ABC`) and, optionally, domain folders with a one-line purpose each (without any, `inbox/` alone).
-2. `km init . --initials <XX> [--folder <dir>="<purpose>" ...]`: writes `CONVENTIONS.md`, `CLAUDE.md` (kept if one exists), `inbox/_index.md`, a minimal `schema.local.yaml`, a `.gitattributes` that keeps text files LF (kept if one exists) and the pre-commit hook pinned to this km's release commit (`--pin <version>` for another release; a km that is not released yet cannot be pinned). It refuses a repo that already has a `CONVENTIONS.md`.
+2. `km init . --initials <XX> [--folder <dir>="<purpose>" ...]`: writes `CONVENTIONS.md`, `CLAUDE.md` (kept if one exists), `inbox/_index.md`, a minimal `schema.local.yaml`, a `.gitattributes` that keeps text files LF (kept if one exists) and the pre-commit hook pinned to this km's release commit (`--pin <version>` for another release; `--pin <commit>`, a full sha of km's repository, pins a km that is not released yet, with the version that commit names). It refuses a repo that already has a `CONVENTIONS.md`.
 3. Commit: `chore: initialize knowledge base conventions`
 
 ## Team brain init (`/km init --team`)

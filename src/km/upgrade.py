@@ -67,7 +67,8 @@ from km import KM_REF
 from km.init import (AFC_TOO_OLD, GEN_INDEX, TEAM, ensure_lf, gen_index_hook, pin_values, safe_path, template,
                      with_gen_index, with_team_hooks)
 from km.paths import git, repo_root, write_text
-from km.pins import SCHEMA_LINK, hook_rev, movable_refs, read_pins, resolve, set_pins, set_schema_link, version_key, workflow_files
+from km.pins import (SCHEMA_LINK, hook_rev, movable_refs, pin_target, read_pins, resolve, set_pins, set_schema_link,
+                     version_key, workflow_files)
 
 COPIED = {                            # a file km copied in -> text only km's copy of it carries
     "scripts/validate.py": "Validate knowledge-base frontmatter against the km schema",
@@ -326,12 +327,12 @@ def with_full_history(text: str) -> str | None:
 def main() -> int:
     ap = argparse.ArgumentParser(prog="km upgrade", description="Move a brain to this km version.")
     ap.add_argument("--force", action="store_true", help="also move a pin to a newer km back to this one")
-    ap.add_argument("--pin", metavar="VERSION", default=KM_REF, help="the km release to pin (default: this km, %(default)s)")
+    ap.add_argument("--pin", metavar="VERSION", default=KM_REF, help="the km release, or a km commit sha, to pin (default: this km, %(default)s)")
     a = ap.parse_args()
     root = repo_root()
     if not any((root / f).is_file() for f in ("CONVENTIONS.md", "schema.local.yaml", "schema.yaml")):
         sys.exit(f"km upgrade: {root} has no CONVENTIONS.md or schema file; not a km brain")
-    target = a.pin
+    target, commit = pin_target(a.pin)       # a commit: an unreleased km, its version read from it
     pins = read_pins(root)
     newer = sorted(f"{f} pins {p.version}" for f, ps in pins.items() for p in ps
                    if (k := version_key(p.version)) and k > (version_key(target) or ()))
@@ -339,16 +340,16 @@ def main() -> int:
         sys.exit(f"km upgrade: the target is km {target}, but {'; '.join(newer)}. Update km, or pass --force.")
     rewrites = {rel: tpl for rel, (tpl, known) in OLD_COPIES.items()
                 if (root / rel).is_file() and fingerprint((root / rel).read_text(encoding="utf-8")) in known}
-    current = all(p.is_commit and p.version == target for ps in pins.values() for p in ps)
+    current = all(p.is_commit and p.version == target and (not commit or p.ref == commit) for ps in pins.values() for p in ps)
     def crosses(after: tuple[int, ...]) -> bool:
         """Whether this upgrade moves a pin at or below that release to a km past it (decided before the pins move)."""
         return (version_key(target) or ()) > after and any(
             (k := version_key(p.version)) and k <= after for ps in pins.values() for p in ps)
     digest_crossing, index_crossing = crosses(DIGEST_AFTER), crosses(INDEX_AFTER)
     if rewrites or not current:               # decided before any write, so a failed lookup changes nothing
-        values = pin_values(target)
+        values = pin_values(target, commit)
     else:                                      # already on the release: still check it is the release's commit
-        values = {"<KM_SHA>": sha, "<KM_VERSION>": target} if pins and (sha := resolve(target)) else {}
+        values = {"<KM_SHA>": sha, "<KM_VERSION>": target} if (sha := commit or (pins and resolve(target))) else {}
     stray = sorted({p.ref for ps in pins.values() for p in ps if values and p.ref != values["<KM_SHA>"]})
 
     done: list[str] = [f"a pin names km {target} but points at {r[:12]}, not its release commit; re-pinned"
