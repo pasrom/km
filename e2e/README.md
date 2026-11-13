@@ -31,7 +31,7 @@ Everything that names the sandbox comes from the environment; nothing here names
 | `KM_E2E_CONTRIB_GH_CONFIG_DIR` | Fallback when there is no token file: a gh config folder holding `C`'s login. Its git credential helper (`gh auth git-credential`) can hand out another stored login, so the preflight warns |
 | `KM_E2E_MUST_NOT_REACH` | Comma-separated `owner/repo` slugs both identities must get HTTP 404 on (the real brains). The run stops otherwise |
 | `KM_E2E_BASELINE_REF` | The km commit that seeds the brain (the previous release) |
-| `KM_E2E_CANDIDATE_REF` | The km commit under test (a release commit, or a candidate pushed to km's repository) |
+| `KM_E2E_CANDIDATE_REF` | The km commit under test (a release commit, or a candidate pushed to km's repository; E01 pins it by `--pin <commit>`) |
 | `KM_E2E_WORKDIR` | Clones, seed and reports (default `~/.cache/km-e2e`); never inside a repository |
 | `KM_E2E_KM_URL` | Where km is fetched from (default km's GitHub repository) |
 | `KM_E2E_DENY_FILE` | Optional, for `check_names.py`: a file outside the repository with terms `e2e/` must not contain |

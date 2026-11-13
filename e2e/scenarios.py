@@ -138,18 +138,19 @@ def e01(ctx: Ctx, rec: Record) -> None:
     ctx.git("M", d, "checkout", "-q", "-b", br)
     version = ctx.km(d, "--version").stdout.strip()
     # what the upgrade must replace: the shipped workflows whose text (pins aside) the candidate changed,
-    # read from a fresh candidate init against the baseline's own files
-    # (an unreleased candidate cannot init without a stand-in tag: the check is then skipped, noted)
+    # read from a fresh candidate init against the baseline's own files. Both pin the candidate commit,
+    # so an unreleased candidate is tested as itself, not as the release its version names
     fresh = ctx.dir / "E01-fresh"
     r = ctx.km(ctx.dir, "init", str(fresh), "--team", "--name", "E2E-Brain", "--desc", "the e2e sandbox team",
-               "--initials", "AAA", "--folder=process=x", "--folder=product=x", "--folder=projects=x")
+               "--initials", "AAA", "--folder=process=x", "--folder=product=x", "--folder=projects=x",
+               "--pin", ctx.cfg.candidate)
     if r.returncode:
         rec.notes.append(f"observed: a fresh candidate init failed ({r.returncode}), replacement not checked: {r.stderr[-200:]}")
     flows_dir = Path(".github") / "workflows"
     shipped = sorted(p.name for p in (fresh / flows_dir).iterdir()) if not r.returncode else []
     unpin = lambda p: re.sub(r"pasrom/km@[\w.\-]+[^\n]*", "pasrom/km@PIN", p.read_text(encoding="utf-8")) if p.is_file() else None   # noqa: E731
     expect = sorted(f for f in shipped if unpin(d / flows_dir / f) != unpin(fresh / flows_dir / f))
-    km_ok(ctx, rec, d, "upgrade")
+    km_ok(ctx, rec, d, "upgrade", "--pin", ctx.cfg.candidate)
     flows = "\n".join(p.read_text(encoding="utf-8") for p in (d / ".github" / "workflows").iterdir()
                       if p.suffix in (".yml", ".yaml"))
     flow_pins = set(re.findall(r"pasrom/km@([\w.\-]+)", flows))   # km.pins PIN
