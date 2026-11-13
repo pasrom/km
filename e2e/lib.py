@@ -25,10 +25,17 @@ from typing import Any
 
 KM_URL = "https://github.com/pasrom/km"
 TIMEOUT = {"api": 60, "gh": 120, "git": 300, "km": 600}   # seconds per subprocess (km: uvx may fetch km first)
+RUN_PAGES = 3                    # pages of 100 of the newest runs read unfiltered for waiting (runs())
+TRANSIENT_PUSH = re.compile(r"remote rejected\].*\(failed\)|HTTP 5\d\d|returned error: 5\d\d|timed out|no answer in")
 
 
 class Fail(Exception):
     """A scenario cannot go on (an assertion it depends on failed, or a wait ran out)."""
+
+
+def waiting(run: dict) -> bool:
+    """Whether a workflow run waits for a person's approval."""
+    return run["status"] == "action_required" or run.get("conclusion") == "action_required"
 
 
 class ApiError(Exception):
@@ -149,6 +156,7 @@ class Ctx:
         self._envs: dict[str, dict[str, str]] = {}
         self.lock = threading.Lock()          # guards the shared run list below (scenarios run in threads)
         self._runs: tuple[float, list[dict]] = (0.0, [])
+        self.started: str | None = None       # GitHub time the run started (run.py sets it)
 
     def close(self) -> None:
         shutil.rmtree(self._empty_gh, ignore_errors=True)
@@ -168,6 +176,9 @@ class Ctx:
         base = clean_env()
         base |= {"GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1", "GIT_TERMINAL_PROMPT": "0",
                  "GIT_SSH_COMMAND": "false", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        # git's credentials for github.com: the role's, for every git the role runs (the driver's and km's)
+        base |= {"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": "",
+                 "GIT_CONFIG_KEY_1": "credential.https://github.com.helper", "GIT_CONFIG_VALUE_1": self.helper(role)}
         if tf := self.cfg.token_file(role):
             base |= {"GH_TOKEN": tf.read_text().strip(), "GH_CONFIG_DIR": str(self._empty_gh), "KM_E2E_TOKEN_FILE": str(tf)}
         else:
@@ -179,7 +190,17 @@ class Ctx:
 
     # --- GitHub API ----------------------------------------------------------------------------
     def api(self, role: str, path: str, method: str = "GET", data: dict | None = None) -> Any:
-        """One REST call as ROLE. A write to any repository but the sandbox's is refused here."""
+        """One REST call as ROLE. A write to any repository but the sandbox's is refused here. A read that
+        meets a server error (5xx) or no answer is tried twice more; a write is not (it may have happened)."""
+        for attempt in range(3):
+            try:
+                return self._api(role, path, method, data)
+            except ApiError as e:
+                if method != "GET" or not (e.status == 0 or e.status >= 500) or attempt == 2:
+                    raise
+                time.sleep(5 * (attempt + 1))
+
+    def _api(self, role: str, path: str, method: str, data: dict | None) -> Any:
         path = path.lstrip("/")
         if method != "GET":
             m = re.match(r"repos/([^/]+/[^/?]+)", path)
@@ -243,8 +264,7 @@ class Ctx:
                                 "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email}
         if date:
             env |= {"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}
-        cmd = ["git", "-c", "credential.helper=", "-c", f"credential.https://github.com.helper={self.helper(role)}",
-               "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args]
+        cmd = ["git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args]
         try:
             r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                                timeout=TIMEOUT["git"])
@@ -260,7 +280,14 @@ class Ctx:
     def push(self, role: str, cwd: Path, remote_slug: str, *refspecs: str, force: bool = False) -> None:
         if remote_slug not in self.cfg.writable():
             raise SystemExit(f"e2e guard: refused a push to {remote_slug}: not a sandbox repository")
-        self.git(role, cwd, "push", "-q", *(["--force"] if force else []), self.url(remote_slug), *refspecs)
+        for attempt in range(3):          # GitHub rejects a push now and then ("remote rejected ... (failed)")
+            try:
+                self.git(role, cwd, "push", "-q", *(["--force"] if force else []), self.url(remote_slug), *refspecs)
+                return
+            except Fail as e:
+                if attempt == 2 or not TRANSIENT_PUSH.search(str(e)):
+                    raise
+                time.sleep(10)
 
     def clone(self, role: str, slug: str, dest: Path, branch: str = "main") -> Path:
         if dest.exists():
@@ -273,7 +300,7 @@ class Ctx:
         return ["uvx", "--quiet", "--no-config", "--from", f"git+{self.cfg.km_url}@{ref}", "km"]
 
     def km(self, cwd: Path, *args: str, ref: str | None = None, role: str = "M") -> subprocess.CompletedProcess:
-        """The candidate km (or REF) in CWD, as itself (KM_LOCAL), with ROLE's GitHub access (km ready)."""
+        """The candidate km (or REF) in CWD, as itself (KM_LOCAL), with ROLE's GitHub and git access."""
         env = self.env(role) | {"KM_LOCAL": "1", "KM_REPO_URL": self.cfg.km_url}   # --pin reads the candidate there
         cmd = [*self.km_cmd(ref or self.cfg.candidate), *args]
         try:
@@ -299,10 +326,10 @@ class Ctx:
         approval (observed for minutes), so the newest runs are also read unfiltered."""
         with self.lock:                   # one read of the newest runs serves every waiting thread for 8 s
             if time.time() - self._runs[0] > 8:
-                self._runs = (time.time(), self.repo_api("M", "actions/runs?per_page=100&exclude_pull_requests=true")["workflow_runs"])
+                self._runs = (time.time(), self.run_pages("exclude_pull_requests=true", self.started, RUN_PAGES))
             newest = self._runs[1]
         found = {r["id"]: r for r in newest if r["head_sha"] == sha}
-        if not found:                     # older than the newest 100
+        if not found:                     # older than this run
             found = {r["id"]: r for r in self.repo_api("M", f"actions/runs?head_sha={sha}&per_page=100")["workflow_runs"]}
         return [r for r in found.values() if (workflow is None or r["name"] == workflow) and (event is None or r["event"] == event)]
 
@@ -328,14 +355,19 @@ class Ctx:
             time.sleep(10)
         return ""
 
+    def failed_steps(self, run_id: int) -> list[str]:
+        """The names of the steps that failed in RUN_ID's jobs."""
+        jobs = self.repo_api("M", f"actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+        return [st["name"] for j in jobs for st in j.get("steps") or [] if st.get("conclusion") == "failure"]
+
     # --- pull requests -------------------------------------------------------------------------
     def branch(self, scenario: str) -> str:
         return f"e2e/{self.run_id}/{scenario}"
 
-    def open_pr(self, role: str, head: str, title: str, body: str, draft: bool = False) -> dict:
+    def open_pr(self, role: str, head: str, title: str, body: str, draft: bool = False, base: str = "main") -> dict:
         owner = self.cfg.contrib if role == "C" else self.cfg.org
         return self.repo_api(role, "pulls", method="POST", data={
-            "title": f"[e2e {self.run_id}] {title}", "head": f"{owner}:{head}", "base": "main", "body": body,
+            "title": f"[e2e {self.run_id}] {title}", "head": f"{owner}:{head}", "base": base, "body": body,
             "draft": draft})
 
     def label(self, role: str, n: int, add: bool = True, name: str = "km:ready") -> None:
@@ -357,16 +389,21 @@ class Ctx:
         return r.returncode, (r.stdout + r.stderr).strip()
 
     # --- cost ----------------------------------------------------------------------------------
+    def run_pages(self, query: str, since: str | None, pages: int) -> list[dict]:
+        """The sandbox brain's runs, newest first, page by page until one reaches back before SINCE (the
+        run's start: the reset and the lock make it a lower bound), at most PAGES pages."""
+        runs: list[dict] = []
+        for page in range(1, pages + 1):
+            got = self.repo_api("M", f"actions/runs?per_page=100&page={page}{'&' + query if query else ''}")["workflow_runs"]
+            runs += got
+            if len(got) < 100 or (since and got[-1]["created_at"] < since):
+                break
+        return runs
+
     def billed_minutes(self, since: str) -> tuple[int, int, int]:
         """(runs, jobs, minutes) of the sandbox brain's runs created since SINCE: each job that ran is
         rounded up to a whole minute, as GitHub bills it."""
-        runs, page = [], 1
-        while True:
-            got = self.repo_api("M", f"actions/runs?created=%3E%3D{since}&per_page=100&page={page}")["workflow_runs"]
-            runs += got
-            if len(got) < 100:
-                break
-            page += 1
+        runs = self.run_pages(f"created=%3E%3D{since}", None, 1000)
         jobs = minutes = 0
         for r in runs:
             for j in self.repo_api("M", f"actions/runs/{r['id']}/jobs?filter=all&per_page=100")["jobs"]:
