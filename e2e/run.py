@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import catalogue as C2                     # noqa: E402
 import scenarios as S                      # noqa: E402
 import seed                                # noqa: E402
 from check_names import NAME               # noqa: E402
@@ -33,6 +34,8 @@ LOCK = "KM_E2E_LOCK"
 MARKER = "KM_E2E_SANDBOX"
 SLUG = re.compile(rf"{NAME}/{NAME}")
 LABELS = ("km:ready", "km:needs-human", "km:blocked")
+PARALLEL = [*S.PARALLEL, *C2.PARALLEL]
+SCENARIOS = [S.FIRST, C2.AFTER_FIRST, *PARALLEL, *C2.TAIL, S.LAST]   # in the order a full run starts them
 
 
 def say(msg: str) -> None:
@@ -275,7 +278,7 @@ def report(ctx: Ctx, meta: dict, recs: list[Record]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="run.py")
-    ap.add_argument("--only", help="comma-separated scenario ids (E01 and E24 included only when named)")
+    ap.add_argument("--only", help="comma-separated scenario ids: only these run (E01 too: without it the rest runs on the baseline)")
     ap.add_argument("--skip-reset", action="store_true", help="run on the sandbox as it is")
     ap.add_argument("--run-id", default=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S-")
                     + os.urandom(2).hex(), help="unique per run: the lock and every branch name carry it")
@@ -292,6 +295,7 @@ def main() -> int:
 
 def run(ctx: Ctx, a: argparse.Namespace) -> int:
     t0, start = time.time(), now()
+    ctx.started = start
     say(f"run {ctx.run_id}: sandbox {ctx.cfg.slug}, candidate {ctx.cfg.candidate[:7]}, baseline {ctx.cfg.baseline[:7]}")
     if bad := preflight(ctx):
         for b in bad:
@@ -301,10 +305,13 @@ def run(ctx: Ctx, a: argparse.Namespace) -> int:
     if a.preflight:
         return 0
     only = set(a.only.split(",")) if a.only else None
-    known = {S.FIRST[0], S.LAST[0], *(s[0] for s in S.PARALLEL)}
+    known = {s[0] for s in SCENARIOS}
     if only and (unknown := only - known):
         say(f"unknown scenario ids {sorted(unknown)}; known: {sorted(known)}")
         return 2
+    if a.skip_reset:
+        say("note: --skip-reset keeps main as the last run left it; after its E17 an accepted page links to a "
+            "demoted one, so every pull request's ci is red")
     if only and S.FIRST[0] not in only and not a.skip_reset:
         say("note: without E01 the scenarios run on the baseline seed (its km pins), not on the candidate")
     pick = lambda sid: only is None or sid in only   # noqa: E731
@@ -323,8 +330,15 @@ def run(ctx: Ctx, a: argparse.Namespace) -> int:
             if recs[-1].result != "pass":
                 say("E01 did not pass: the PR scenarios would run on the baseline; stopping")
                 return 1
-            S.sync_fork(ctx, recs[-1])
-        todo = [s for s in S.PARALLEL if pick(s[0])]
+        if pick(C2.AFTER_FIRST[0]):           # it brings the fork up to main itself (km sync)
+            recs.append(run_one(ctx, *C2.AFTER_FIRST))
+        if recs:                           # main moved (E01) or the fork was set behind (E27): bring it along
+            try:                           # a no-op after a working E27; the PR scenarios branch from main anyway
+                S.sync_fork(ctx, recs[0])
+            except ApiError as e:
+                say(f"warning: the fork could not be synced with main (HTTP {e.status}); km doctor in the fork would say behind")
+                recs[0].notes.append(f"fork sync failed: HTTP {e.status}")
+        todo = [s for s in PARALLEL if pick(s[0])]
         with ThreadPoolExecutor(max_workers=max(1, a.workers)) as pool:
             futs = []
             try:
@@ -336,8 +350,9 @@ def run(ctx: Ctx, a: argparse.Namespace) -> int:
                 pool.shutdown(wait=True, cancel_futures=True)
                 recs += [f.result() for f in futs if f.done() and not f.cancelled() and not f.exception()]
                 raise
-        if pick(S.LAST[0]):
-            recs.append(run_one(ctx, *S.LAST))
+        for s in (*C2.TAIL, S.LAST):       # these change main: one after another, E24 last
+            if pick(s[0]):
+                recs.append(run_one(ctx, *s))
     finally:                               # each step on its own: a failing one or a second signal skips no other
         if locked and not holds_lock(ctx):
             say(f"warning: {LOCK} no longer names this run (taken over with --steal-lock?): leaving the sandbox as it is")

@@ -11,9 +11,10 @@ import re
 import time
 from pathlib import Path
 
-from lib import ApiError, Ctx, Fail, Record, now
+from lib import ApiError, Ctx, Fail, Record, now, waiting
 
 MARKER = "<!-- km:review-request-guide -->"
+CONTROL = "control files, not approved, a person approves"   # approve-fork-ci's notice (km ready's rule)
 AI = "ai:e2e-cli"
 
 
@@ -36,8 +37,9 @@ def commit(ctx: Ctx, role: str, d: Path, msg: str) -> str:
     return ctx.head(role, d)
 
 
-def km_ok(ctx: Ctx, rec: Record, d: Path, *args: str) -> str:
-    r = ctx.km(d, *args)
+def km_ok(ctx: Ctx, rec: Record, d: Path, *args: str, role: str = "C") -> str:
+    """km in D as ROLE (the owner of the clone; C's unless said), which must exit 0."""
+    r = ctx.km(d, *args, role=role)
     rec.must(f"km {' '.join(args[:2])} exits 0", r.returncode == 0, "0", f"{r.returncode}: {(r.stdout + r.stderr)[-300:]}")
     return r.stdout
 
@@ -57,6 +59,33 @@ def contrib_branch(ctx: Ctx, rec: Record, sid: str | None = None) -> tuple[Path,
     return d, br
 
 
+def maint_branch(ctx: Ctx, rec: Record) -> tuple[Path, str]:
+    """A clone of the sandbox brain as M with a new branch on main."""
+    d = ctx.clone("M", ctx.cfg.slug, ctx.dir / rec.id)
+    br = ctx.branch(rec.id)
+    ctx.git("M", d, "checkout", "-q", "-b", br)
+    return d, br
+
+
+def add_signed_page(ctx: Ctx, rec: Record, d: Path, stem: str, title: str, body: str, *, svg: bool = False,
+                    script: bool = False) -> None:
+    """product/STEM.md in review (with an SVG and a generator script under STEM_media/ when asked), indexed
+    and committed, then signed off by AI in a commit of its own."""
+    media = f"product/{stem}_media"
+    if svg:
+        write(d, f"{media}/figure.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>\n')
+        body += f"\n\n![figure]({stem}_media/figure.svg)"
+    if script:
+        write(d, f"{media}/make_figure.py", 'print("writes figure.svg (invented)")\n')
+        body += f"\n\nRegenerate with `python3 {stem}_media/make_figure.py`."
+    rel = f"product/{stem}.md"
+    write(d, rel, page(title, "review", body))
+    gen_index(ctx, rec, d)
+    commit(ctx, "C", d, f"docs(product): add an invented page ({stem})")
+    km_ok(ctx, rec, d, "approve", rel, "--by", AI)
+    commit(ctx, "C", d, f"docs(product): approve {stem} ({AI})")
+
+
 def push_and_open(ctx: Ctx, rec: Record, d: Path, br: str, title: str, body: str, role: str = "C",
                   draft: bool = False) -> tuple[dict, str]:
     ctx.push(role, d, ctx.cfg.fork if role == "C" else ctx.cfg.slug, f"HEAD:refs/heads/{br}")
@@ -64,10 +93,6 @@ def push_and_open(ctx: Ctx, rec: Record, d: Path, br: str, title: str, body: str
     pr = ctx.open_pr(role, br, title, body, draft=draft)
     rec.links[f"PR #{pr['number']}"] = pr["html_url"]
     return pr, head
-
-
-def waiting(run: dict) -> bool:
-    return run["status"] == "action_required" or run.get("conclusion") == "action_required"
 
 
 def ci_final(ctx: Ctx, run_id: int, timeout: float = 480) -> dict:
@@ -78,18 +103,25 @@ def ci_final(ctx: Ctx, run_id: int, timeout: float = 480) -> dict:
     return ctx.poll(f"run {run_id} to run and complete", look, timeout)
 
 
+def approve_run(ctx: Ctx, rec: Record, run_id: int) -> dict:
+    """M approves the waiting run by API; returns it once it ran and completed."""
+    ctx.repo_api("M", f"actions/runs/{run_id}/approve", method="POST")
+    rec.notes.append(f"maintainer approved run {run_id} by API")
+    return ci_final(ctx, run_id)
+
+
 def fork_ci(ctx: Ctx, rec: Record, head: str, *, auto: bool) -> tuple[dict, str]:
     """Wait for the fork path: ci waiting for approval, approve-fork-ci done, ci run (AUTO: by the
     workflow; else still waiting). Returns (ci run as last read, approve-fork-ci's log)."""
     ci = ctx.wait_run(head, "ci", "pull_request")
-    rec.links["ci run"] = ci["html_url"]
+    rec.links[f"ci run ({head[:7]})"] = ci["html_url"]   # per head: a scenario may have several
     ap = ctx.wait_run(head, "approve-fork-ci", "pull_request_target")
-    rec.links["approve-fork-ci run"] = ap["html_url"]
+    rec.links[f"approve-fork-ci run ({head[:7]})"] = ap["html_url"]
     rec.check("approve-fork-ci succeeds", ap["conclusion"] == "success", "success", ap["conclusion"])
     log = ctx.run_log(ap["id"])
     if auto:
         rec.must("approve-fork-ci approved the ci run", f"approved run {ci['id']}" in log,
-                  f"log line 'approved run {ci['id']}'", grep(log, r"approved run|##\[notice\]") or "(no such line)")
+                 f"log line 'approved run {ci['id']}'", grep(log, r"approved run|##\[notice\]") or "(no such line)")
         ci = ci_final(ctx, ci["id"])
     return ci, log
 
@@ -133,9 +165,7 @@ def hook_km_revs(text: str) -> set[str]:
 
 # --- E01: upgrade from the baseline release to the candidate ----------------------------------
 def e01(ctx: Ctx, rec: Record) -> None:
-    d = ctx.clone("M", ctx.cfg.slug, ctx.dir / "E01")
-    br = ctx.branch("E01")
-    ctx.git("M", d, "checkout", "-q", "-b", br)
+    d, br = maint_branch(ctx, rec)
     version = ctx.km(d, "--version").stdout.strip()
     # what the upgrade must replace: the shipped workflows whose text (pins aside) the candidate changed,
     # read from a fresh candidate init against the baseline's own files. Both pin the candidate commit,
@@ -150,7 +180,7 @@ def e01(ctx: Ctx, rec: Record) -> None:
     shipped = sorted(p.name for p in (fresh / flows_dir).iterdir()) if not r.returncode else []
     unpin = lambda p: re.sub(r"pasrom/km@[\w.\-]+[^\n]*", "pasrom/km@PIN", p.read_text(encoding="utf-8")) if p.is_file() else None   # noqa: E731
     expect = sorted(f for f in shipped if unpin(d / flows_dir / f) != unpin(fresh / flows_dir / f))
-    km_ok(ctx, rec, d, "upgrade", "--pin", ctx.cfg.candidate)
+    km_ok(ctx, rec, d, "upgrade", "--pin", ctx.cfg.candidate, role="M")
     flows = "\n".join(p.read_text(encoding="utf-8") for p in (d / ".github" / "workflows").iterdir()
                       if p.suffix in (".yml", ".yaml"))
     flow_pins = set(re.findall(r"pasrom/km@([\w.\-]+)", flows))   # km.pins PIN
@@ -178,8 +208,13 @@ def e01(ctx: Ctx, rec: Record) -> None:
     ready(ctx, rec, n, head, d, 1, r"^does not count: set by its author, and it changes \S+, a control file",
           "km ready: the author's label on a change to the workflows does not count (control file)")
 
-    merged = ctx.repo_api("M", f"pulls/{n}/merge", method="PUT", data={"merge_method": "rebase"})
-    main = merged["sha"]
+    try:
+        main = ctx.repo_api("M", f"pulls/{n}/merge", method="PUT", data={"merge_method": "rebase"})["sha"]
+    except ApiError as e:                 # a server error or no answer may come after the merge happened
+        if 0 < e.status < 500:
+            raise
+        main = ctx.poll("the merge after a server error", lambda: (p := ctx.repo_api("M", f"pulls/{n}"))["merged"]
+                        and p["merge_commit_sha"], 60, 10)
     rec.notes.append(f"merged by rebase, main at {main[:7]}")
     push_ci = ctx.wait_run(main, "ci", "push")
     rec.links["ci run (main)"] = push_ci["html_url"]
@@ -293,27 +328,17 @@ def e03b(ctx: Ctx, rec: Record) -> None:
               "success", ci["conclusion"])
 
 
-# --- E05 / E06: fork PRs, data only and with a script ------------------------------------------
+# --- E05 / E06: fork PRs without a control file (a page, an SVG, a script beside them) ---------
 def fork_page_with_media(ctx: Ctx, rec: Record, script: bool) -> tuple[Path, str]:
     d, br = contrib_branch(ctx, rec)
     stem = f"e2e-{'runtime' if script else 'outline'}"
-    rel, media = f"product/{stem}.md", f"product/{stem}_media"
-    write(d, f"{media}/figure.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>\n')
-    body = f"![figure]({stem}_media/figure.svg)"
-    if script:
-        write(d, f"{media}/make_figure.py", 'print("writes figure.svg (invented)")\n')
-        body += f"\n\nRegenerate with `python3 {stem}_media/make_figure.py`."
-    write(d, rel, page("Lamp figure", "review", body))
-    gen_index(ctx, rec, d)
-    commit(ctx, "C", d, "docs(product): add an invented page with a figure")
-    km_ok(ctx, rec, d, "approve", rel, "--by", AI)
-    commit(ctx, "C", d, f"docs(product): approve the figure page ({AI})")
+    add_signed_page(ctx, rec, d, stem, "Lamp figure", "A figure. Invented.", svg=True, script=script)
     return d, br
 
 
 def e05(ctx: Ctx, rec: Record) -> None:
     d, br = fork_page_with_media(ctx, rec, script=False)
-    pr, head = push_and_open(ctx, rec, d, br, "docs(product): add a page with an SVG (fork, data only)", "Invented e2e test data.")
+    pr, head = push_and_open(ctx, rec, d, br, "docs(product): add a page with an SVG (fork, no control file)", "Invented e2e test data.")
     ci, _ = fork_ci(ctx, rec, head, auto=True)
     rec.check("ci ran without a person, as attempt 2 by github-actions[bot]", ci["conclusion"] == "success"
               and ci["run_attempt"] >= 2 and ci["triggering_actor"]["login"] == "github-actions[bot]",
@@ -335,14 +360,19 @@ def e06(ctx: Ctx, rec: Record) -> None:
           "km ready: a generator script beside the page does not stop the author's label (1.17.0)")
 
 
+def touch_claude_md(d: Path) -> None:
+    """A line added to CLAUDE.md: a control file for approve-fork-ci and km ready."""
+    with (d / "CLAUDE.md").open("a", encoding="utf-8") as f:
+        f.write("\nInvented e2e line: a contributor's change to the agent instructions.\n")
+
+
 def e05_ctl(ctx: Ctx, rec: Record) -> None:
     """A control file next to an AI-level page: approve-fork-ci leaves CLAUDE.md to a person, and km
     ready refuses the author's label for it."""
     d, br = contrib_branch(ctx, rec, "E05-ctl")
     rel = "product/e2e-cleaning-note.md"
     write(d, rel, page("Cleaning note", "review", "Use a soft cloth. Invented."))
-    with (d / "CLAUDE.md").open("a", encoding="utf-8") as f:
-        f.write("\nInvented e2e line: a contributor's change to the agent instructions.\n")
+    touch_claude_md(d)
     gen_index(ctx, rec, d)
     commit(ctx, "C", d, "docs(product): add a cleaning note and touch CLAUDE.md")
     km_ok(ctx, rec, d, "approve", rel, "--by", AI)
@@ -350,14 +380,12 @@ def e05_ctl(ctx: Ctx, rec: Record) -> None:
     pr, head = push_and_open(ctx, rec, d, br, "docs(product): add a note and change CLAUDE.md (fork)", "Invented e2e test data.")
     ci, log = fork_ci(ctx, rec, head, auto=False)
     rec.check("approve-fork-ci names CLAUDE.md and approves nothing",
-              "control files, not approved, a person approves" in log and '"CLAUDE.md"' in log,
+              CONTROL in log and '"CLAUDE.md"' in log,
               "notice 'control files' and \"CLAUDE.md\"", grep(log, r"##\[notice\]|approved run"))
     time.sleep(20)
     ci = ctx.repo_api("M", f"actions/runs/{ci['id']}")
     rec.must("ci still waits for a person", waiting(ci), "action_required", f"{ci['status']}/{ci.get('conclusion')}")
-    ctx.repo_api("M", f"actions/runs/{ci['id']}/approve", method="POST")
-    rec.notes.append(f"maintainer approved run {ci['id']} by API")
-    ci = ci_final(ctx, ci["id"])
+    ci = approve_run(ctx, rec, ci["id"])
     rec.check("ci runs after the maintainer's approval and is green", ci["conclusion"] == "success", "success", ci["conclusion"])
     label_by(ctx, rec, "C", pr["number"])
     ready(ctx, rec, pr["number"], head, d, 1, r"^does not count: set by its author, and it changes CLAUDE\.md, a control file",
@@ -475,15 +503,15 @@ def find_guard_issue(ctx: Ctx, since: str, needle: str) -> dict | None:
         return None
 
 
-# id: (function, title); the order of PARALLEL is the order they start in
+# id: (function, title); the order of PARALLEL is the order they start in. catalogue.py adds phase 2.
 FIRST = ("E01", e01, "upgrade from the baseline release to the candidate by PR, rebase merge, main-guard")
 PARALLEL = [
     ("E02", e02, "AI-level page with the author's own km:ready (CLI stand-in for /km pr)"),
     ("E03", e03, "customer page in review without an AI review: CI red with a signoff finding"),
     ("E03b", e03b, "customer page in review with an AI review on record: CI green, waits for a person"),
-    ("E05", e05, "fork PR with a page and an SVG: approved as data, CI without a person, author label counts"),
+    ("E05", e05, "fork PR with a page and an SVG: approved by approve-fork-ci, CI without a person, author label counts"),
     ("E05-ctl", e05_ctl, "fork PR with an AI-level page and CLAUDE.md: author label does not count"),
-    ("E06", e06, "fork PR with a generator script: waits for a person, approved by API, author label counts"),
+    ("E06", e06, "fork PR with a generator script beside a page: approved by approve-fork-ci (no control file), author label counts"),
     ("E08", e08, "review-request guide: created once, updated, switched by the label"),
     ("E08-draft", e08_draft, "review-request guide is silent on a draft PR"),
 ]
