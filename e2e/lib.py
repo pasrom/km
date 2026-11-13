@@ -274,7 +274,7 @@ class Ctx:
 
     def km(self, cwd: Path, *args: str, ref: str | None = None, role: str = "M") -> subprocess.CompletedProcess:
         """The candidate km (or REF) in CWD, as itself (KM_LOCAL), with ROLE's GitHub access (km ready)."""
-        env = self.env(role) | {"KM_LOCAL": "1"}
+        env = self.env(role) | {"KM_LOCAL": "1", "KM_REPO_URL": self.cfg.km_url}   # --pin reads the candidate there
         cmd = [*self.km_cmd(ref or self.cfg.candidate), *args]
         try:
             return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL,
