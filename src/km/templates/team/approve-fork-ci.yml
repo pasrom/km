@@ -128,13 +128,23 @@ jobs:
             echo "::notice::a pull request from this branch was retargeted less than 5 minutes ago, or the event is dated in the future; not approved, a person approves"
             exit 0
           fi
-          for try in $(seq 1 18); do
-            # the fork names its branch: pass it to jq as data, never inside the expression
-            runs="$( { gh api "repos/$REPO/actions/runs?head_sha=$SHA&status=action_required&event=pull_request" || echo '{}'; } \
-              | jq -r --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --argjson cut "$cut" \
-                '.workflow_runs[]? | select(.path == ".github/workflows/ci.yml"
+          # The API's head_sha, event and status filters have left a fork's waiting run out of their
+          # listing for minutes, while it showed in the unfiltered one: read this commit's runs and, when
+          # none of them matches, the newest runs of the repository, and select here. A run waiting for
+          # approval reads action_required as its status or as its conclusion
+          waiting() {   # the fork names its branch: pass it to jq as data, never inside the expression
+            { gh api "repos/$REPO/actions/runs?$1" || echo '{}'; } \
+              | jq -r --arg sha "$SHA" --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --argjson cut "$cut" \
+                '.workflow_runs[]? | select(.head_sha == $sha and .event == "pull_request"
+                  and (.status == "action_required" or .conclusion == "action_required")
+                  and .path == ".github/workflows/ci.yml"
                   and .head_repository.full_name == $repo and .head_branch == $ref)
-                | {id, at: (try (.created_at | fromdateiso8601) catch 0)} | select(.at >= $cut) | "\(.id):\(.at)"')"
+                | {id, at: (try (.created_at | fromdateiso8601) catch 0)} | select(.at >= $cut) | "\(.id):\(.at)"' \
+              || true
+          }
+          for try in $(seq 1 18); do
+            runs="$(waiting "head_sha=$SHA&per_page=100")"
+            [ -n "$runs" ] || runs="$(waiting "per_page=100&exclude_pull_requests=true")"
             [ -n "$runs" ] || [ "$try" = 18 ] && break
             sleep 10
           done
