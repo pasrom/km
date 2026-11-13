@@ -30,7 +30,7 @@ import yaml
 
 from km import KM_REF
 from km.paths import TEMPLATES, sets_no_eol, write_text
-from km.pins import ITEM, KM_REPO_LINE, km_entries, resolve, version_key
+from km.pins import ITEM, KM_REPO_LINE, km_entries, pin_target, resolve, version_key
 
 PERSONAL = {                          # template -> path in the brain (repo-owned after init)
     "CONVENTIONS.template.md": "CONVENTIONS.md",
@@ -60,9 +60,10 @@ PLACEHOLDERS = ("<BRAIN>", "<TEAM>", "<MAINTAINER>", "<profile>", "<date>", "<FO
                 "<PLACEMENT_RULES>", "<folder>", "<purpose>", "<KM_SHA>", "<KM_VERSION>")
 
 
-def pin_values(version: str) -> dict[str, str]:
-    """The placeholders for the km release a brain pins: its version and the commit it tags."""
-    sha = resolve(version)
+def pin_values(version: str, commit: str | None = None) -> dict[str, str]:
+    """The placeholders for the km release a brain pins: its version and the commit it tags, or COMMIT
+    (an unreleased km commit, see pins.pin_target)."""
+    sha = commit or resolve(version)
     if not sha:
         sys.exit(f"km {version} has no release commit to pin (not released yet, or the km repository cannot "
                  f"be reached): pass --pin <released version>")
@@ -275,7 +276,7 @@ def render(a: argparse.Namespace) -> dict[str, str]:
     """Every file init writes, keyed by its path in the brain."""
     folders = _folders(a.folder or [])
     values = {"<MAINTAINER>": _plain("--initials", a.initials), "<date>": datetime.date.today().isoformat(),
-              "<FOLDER_ROWS>": "\n".join(f"| `{n}/` | {p} |" for n, p in folders), **pin_values(a.pin)}
+              "<FOLDER_ROWS>": "\n".join(f"| `{n}/` | {p} |" for n, p in folders), **pin_values(a.pin, a.commit)}
     if not a.team:
         return {dst: template(tpl, values) for tpl, dst in PERSONAL.items()}
     if not (a.name and a.desc and folders):
@@ -314,8 +315,9 @@ def main() -> int:
     ap.add_argument("--desc", help="team brain: one line on whose brain it is, e.g. 'the QA team'")
     ap.add_argument("--rule", action="append", metavar="TEXT", help="team brain: a placement rule")
     ap.add_argument("--profile", help="team brain: meta.profile slug (default: the lowercased name)")
-    ap.add_argument("--pin", metavar="VERSION", default=KM_REF, help="the km release to pin (default: this km, %(default)s)")
+    ap.add_argument("--pin", metavar="VERSION", default=KM_REF, help="the km release, or a km commit sha, to pin (default: this km, %(default)s)")
     a = ap.parse_args()
+    a.pin, a.commit = pin_target(a.pin)
     repo = Path(a.repo)
     rendered = render(a)
     if not a.team and (repo / "CLAUDE.md").exists():

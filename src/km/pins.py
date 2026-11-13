@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -149,6 +152,36 @@ def resolve(version: str) -> str | None:
     out = git("ls-remote", repo_url(), tag, tag + "^{}").stdout
     refs = {name: sha for sha, _, name in (line.partition("\t") for line in out.splitlines())}
     return refs.get(tag + "^{}") or refs.get(tag)   # an annotated tag: the commit it points at
+
+
+def version_at(sha: str) -> str | None:
+    """`vX.Y.Z` of the km at commit SHA of km's repository, as its src/km/__init__.py names it: for an
+    unreleased commit, such as a release candidate before its tag. None when that commit or its version
+    cannot be read."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}     # a remote that asks for a login fails, never waits
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            fetched = not git("init", "-q", "--bare", d).returncode and not git(
+                "fetch", "-q", "--depth", "1", repo_url(), sha, cwd=Path(d), env=env, timeout=300).returncode
+        except subprocess.TimeoutExpired:
+            fetched = False
+        out = git("show", f"{sha}:src/km/__init__.py", cwd=Path(d)) if fetched else None
+    m = re.search(r"""^__version__\s*=\s*["'](\d+\.\d+\.\d+)["']""", out.stdout, re.M) if out and not out.returncode else None
+    return f"v{m.group(1)}" if m else None
+
+
+def pin_target(pin: str) -> tuple[str, str | None]:
+    """--pin as (version, commit): a release version and None (its tag names the commit), or for a full
+    commit sha of km's repository the version that commit names and the sha. Exits when that version
+    cannot be read: an unknown version would count as no km at all."""
+    if not SHA.fullmatch(pin):
+        if re.fullmatch(r"[0-9a-fA-F]{7,64}", pin):
+            sys.exit(f"km: --pin {pin}: a commit is pinned by its full 40-character lowercase sha")
+        return pin, None
+    if not (version := version_at(pin)):
+        sys.exit(f"km: cannot read the km version at commit {pin} of {repo_url()}: not a km commit, or the "
+                 f"repository cannot be reached")
+    return version, pin
 
 
 def version_key(version: str | None) -> tuple[int, ...] | None:

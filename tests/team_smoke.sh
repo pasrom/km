@@ -801,6 +801,41 @@ cp "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" "$F/t09/$AF"; out="$(km upg
 { cmp -s "$F/t09/$AF" "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" && out_has "left $AF at its data-only version"; } \
   && ok "upgrade keeps a data-only approve-fork-ci beside a km before 1.11.0 as it is" || no "data-only approve-fork-ci beside an old km ($out)"
 rm "$F/t09/$AF"
+# --pin with a commit of km's repository: an unreleased km, its version read from that commit
+SR="$F/sha-remote"; git init -q "$SR"; mkdir -p "$SR/src/km"
+sha_at(){ printf '%s' "$1" > "$SR/src/km/__init__.py"; git -C "$SR" add -A; git -C "$SR" "${G[@]}" commit -q --allow-empty -m "$2"; git -C "$SR" rev-parse HEAD; }
+C_NEW="$(sha_at '__version__ = "1.99.0"
+' new)"; C_OLD="$(sha_at '__version__ = "1.10.1"
+' old)"; C_NONE="$(sha_at 'no version here' none)"
+skm(){ KM_REPO_URL="file://$SR" km "$@"; }
+out="$(skm init "$F/s1" --team --name S --desc s --initials SS --folder d=D --pin "$C_NEW" 2>&1)"
+{ grep -q "pasrom/km@$C_NEW # v1.99.0" "$F/s1/.github/workflows/ci.yml" && grep -q "rev: $C_NEW  # frozen: v1.99.0" "$F/s1/.pre-commit-config.yaml" \
+  && [ -e "$F/s1/$AF" ]; } && ok "init --team --pin <commit> pins that commit with the version it names, approve-fork-ci included" || no "init --pin <commit> ($out)"
+skm init "$F/s2" --team --name S --desc s --initials SS --folder d=D --pin "$C_OLD" >/dev/null 2>&1
+{ grep -q "pasrom/km@$C_OLD # v1.10.1" "$F/s2/.github/workflows/ci.yml" && [ ! -e "$F/s2/$AF" ]; } \
+  && ok "init --team --pin <commit of a km before 1.11.0> leaves approve-fork-ci out" || no "init --pin <old commit> writes approve-fork-ci"
+refused=""
+for c in "$C_NONE" 0123456789abcdef0123456789abcdef01234567; do
+  out="$(skm init "$F/s-$c" --team --name S --desc s --initials SS --folder d=D --pin "$c" 2>&1)" && refused="$refused init:$c"
+  echo "$out" | grep -q "cannot read the km version at commit $c" || refused="$refused init-message:$c"
+  [ ! -e "$F/s-$c" ] || refused="$refused init-wrote:$c"
+  out="$(skm upgrade --root "$F/s1" --pin "$c" 2>&1)" && refused="$refused upgrade:$c"
+done
+grep -q "pasrom/km@$C_NEW # v1.99.0" "$F/s1/.github/workflows/ci.yml" || refused="$refused upgrade-moved-the-pin"
+[ -z "$refused" ] && ok "init and upgrade refuse a commit whose km version cannot be read, and change nothing" || no "unreadable commit pinned:$refused"
+out="$(skm upgrade --root "$F/s1" --pin "$C_OLD" --force 2>&1)"
+{ grep -q "pasrom/km@$C_OLD # v1.10.1" "$F/s1/.github/workflows/ci.yml" && [ ! -e "$F/s1/$AF" ] && out_has "removed $AF: km v1.10.1"; } \
+  && ok "upgrade --pin <commit of a km before 1.11.0> --force moves the pins there and removes approve-fork-ci" || no "upgrade --pin <old commit> ($out)"
+out="$(skm upgrade --root "$F/s1" --pin "$C_NEW" 2>&1)"
+{ grep -q "pasrom/km@$C_NEW # v1.99.0" "$F/s1/.github/workflows/ci.yml" && [ -e "$F/s1/$AF" ] && out_has "added $AF"; } \
+  && ok "upgrade --pin <commit> moves every pin to that commit and adds approve-fork-ci for its version" || no "upgrade --pin <new commit> ($out)"
+out="$(skm upgrade --root "$F/s1" --pin "$C_NEW" 2>&1)"; out_has "already on km v1.99.0" && ok "upgrade --pin <commit> again finds the brain on that commit" || no "upgrade --pin <commit> twice ($out)"
+C_NEW2="$(sha_at '__version__ = '"'1.99.0'"'  # same version, later commit
+' new2)"; out="$(skm upgrade --root "$F/s1" --pin "$C_NEW2" 2>&1)"
+{ grep -q "pasrom/km@$C_NEW2 # v1.99.0" "$F/s1/.github/workflows/ci.yml" && ! out_has "not its release commit"; } \
+  && ok "upgrade --pin <another commit of the same version> moves the pins as an upgrade, not as a stray pin" || no "upgrade --pin <same-version commit> ($out)"
+out="$(skm init "$F/s4" --team --name S --desc s --initials SS --folder d=D --pin "${C_NEW:0:7}" 2>&1)"
+{ echo "$out" | grep -q "full 40-character lowercase sha" && [ ! -e "$F/s4" ]; } && ok "init --pin with a short sha says to pass the full one" || no "init --pin <short sha> ($out)"
 I="$F/gen-index"; mkdir -p "$I/.github/workflows"; cp "$T/.github/workflows/staleness.yml" "$I/.github/workflows/"; printf 'meta: {profile: i}\n' > "$I/schema.local.yaml"
 cat > "$I/.pre-commit-config.yaml" <<YML
 default_install_hook_types: [pre-commit, pre-push]
