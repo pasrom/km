@@ -23,11 +23,12 @@ Everything that names the sandbox comes from the environment; nothing here names
 |---|---|
 | `KM_E2E_ORG` | The sandbox organisation: owner of the sandbox brain. The driver refuses a brain owned by anyone else |
 | `KM_E2E_REPO` | The sandbox brain's repository name |
-| `KM_E2E_MOUNT_REPO` | Optional: a repository in the same organisation mounted at `mounted/notes`, pinned one commit behind its head |
+| `KM_E2E_MOUNT_REPO` | Optional: a repository in the same organisation mounted at `mounted/notes`, pinned one commit behind its head. Only read |
 | `KM_E2E_MAINT_LOGIN` | `M`'s login; also the login in the brain's `KM_MAINTAINERS` variable |
 | `KM_E2E_MAINT_TOKEN_FILE` | A file holding `M`'s fine-grained token. Resource owner: the sandbox organisation only. Repository permissions: administration, actions, contents, issues, pull requests, variables, workflows (read and write), metadata (read) |
 | `KM_E2E_CONTRIB_LOGIN` | `C`'s login. `C` has triage on the sandbox brain and a fork of it named like the brain |
-| `KM_E2E_CONTRIB_GH_CONFIG_DIR` | A gh config folder holding `C`'s login, used for `C`'s API calls and as `C`'s git credential helper |
+| `KM_E2E_CONTRIB_TOKEN_FILE` | A file holding `C`'s token (for example from `gh auth token` under `C`'s gh config, `chmod 600`). Used like `M`'s |
+| `KM_E2E_CONTRIB_GH_CONFIG_DIR` | Fallback when there is no token file: a gh config folder holding `C`'s login. Its git credential helper (`gh auth git-credential`) can hand out another stored login, so the preflight warns |
 | `KM_E2E_MUST_NOT_REACH` | Comma-separated `owner/repo` slugs both identities must get HTTP 404 on (the real brains). The run stops otherwise |
 | `KM_E2E_BASELINE_REF` | The km commit that seeds the brain (the previous release) |
 | `KM_E2E_CANDIDATE_REF` | The km commit under test (a release commit, or a candidate pushed to km's repository) |
@@ -35,11 +36,11 @@ Everything that names the sandbox comes from the environment; nothing here names
 | `KM_E2E_KM_URL` | Where km is fetched from (default km's GitHub repository) |
 | `KM_E2E_DENY_FILE` | Optional, for `check_names.py`: a file outside the repository with terms `e2e/` must not contain |
 
-Isolation: `M`'s calls run with `GH_TOKEN` read from the token file and an empty `GH_CONFIG_DIR`, so no other login on the machine is used; `C`'s with `C`'s config folder. Git runs with `GIT_CONFIG_GLOBAL=/dev/null`, no system config, no SSH, no hooks, and only the role's credential helper. Every write goes through one function that refuses any repository but the sandbox brain, its mount and `C`'s fork. The token is never put in argv or printed.
+Isolation: each role's API calls run with `GH_TOKEN` read from its token file, and its git pushes with a credential helper that reads the same file, for `https://github.com` only. An empty `GH_CONFIG_DIR` keeps gh from reading a stored login, but gh still prefers `GH_TOKEN`, so the token file is what fixes the identity. The preflight then checks the login each token belongs to. Git runs with `GIT_CONFIG_GLOBAL=/dev/null`, no system config, no SSH and no hooks. Every write goes through one function that refuses any repository but the sandbox brain and `C`'s fork. Tokens are never put in argv or printed. Every gh, git and km call has a time limit.
 
 ## Sandbox set-up (once)
 
-Done by hand, checked by the preflight on every run: a free organisation with "members can fork private repositories" on; the private brain with rebase merge only and forking allowed; fork pull request workflows run, with approval required, no write token, no secrets; default workflow permissions write with "Allow GitHub Actions to create and approve pull requests"; the variable `KM_MAINTAINERS`; the labels `km:ready`, `km:needs-human`, `km:blocked`; `C` at triage with its fork. Branch protection is not available on the free plan for a private repository; main-guard is what reports a direct push.
+Done by hand, checked by the preflight on every run: a free organisation with "members can fork private repositories" on; the private brain with rebase merge only and forking allowed; fork pull request workflows run, with approval required, no write token, no secrets; default workflow permissions write with "Allow GitHub Actions to create and approve pull requests"; the variable `KM_MAINTAINERS`; the variable `KM_E2E_SANDBOX=1`; the labels `km:ready`, `km:needs-human`, `km:blocked`; `C` at triage with its fork. Branch protection is not available on the free plan for a private repository; main-guard is what reports a direct push.
 
 ## Run
 
@@ -54,11 +55,11 @@ python3 e2e/run.py --only E05,E06    # a subset (on main as it is after the rese
 
 A run:
 
-1. Preflight. Both logins are the configured ones; both get 404 on every `KM_E2E_MUST_NOT_REACH` repository; the brain is owned by `KM_E2E_ORG`, private, `M` is admin, `C`'s fork exists, `C` is at triage, `KM_MAINTAINERS` names `M`, the labels exist. The Actions usage summary of the organisation is printed when the token can read it, otherwise a warning.
+1. Preflight. Before any call: every `KM_E2E_MUST_NOT_REACH` entry is `owner/repo`, and `M`'s token is fine-grained (`github_pat_`). Then: both logins are the configured ones; both get 404 on every `KM_E2E_MUST_NOT_REACH` repository; the brain is owned by `KM_E2E_ORG`, private, `M` is admin, `C`'s fork exists, `C` is at triage, `KM_MAINTAINERS` names `M`, the labels exist, and the brain carries the repository variable `KM_E2E_SANDBOX=1`, which marks it as a repository the run may reset. The Actions usage summary of the organisation is printed when the token can read it, otherwise a warning.
 2. Lock (`KM_E2E_LOCK`).
 3. Reset R1: Actions off; open pull requests and issues closed; every branch but `main` deleted in the brain and in the fork; a freshly seeded `main` force-pushed to both and tagged `e2e-baseline/<run id>`. With Actions off, these pushes start no workflow.
 4. Actions on; E01 (merges to `main`), the fork synced; the pull request scenarios in parallel; E24 last.
-5. Wait (bounded) for runs to finish; Actions off; lock released; report.
+5. Wait (bounded) for runs to finish; Actions off; lock released; report. This also runs on Ctrl-C and SIGTERM. A run that does not hold the lock at this point (it never got it, or another run took it over with `--steal-lock`) leaves the sandbox as it is and writes no report. A hard kill (`kill -9`, a crash of the machine) skips it: Actions may then stay on and the lock stay set. Switch Actions off by hand and use `--steal-lock` on the next run.
 
 The report (`report.json`, `report.md`) is written to `$KM_E2E_WORKDIR/runs/<run id>/`, with the Actions minutes the run used (each job rounded up to a minute, as billed). It names the sandbox, so it stays outside the repository. Pull requests and issues of a run stay until the next reset closes them, for inspection.
 

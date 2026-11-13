@@ -27,4 +27,4 @@ where = ["src"]
 km = ["schema.base.yaml", "templates/*", "templates/team/*"]
 
 [tool.pyright]
-extraPaths = ["src"]
+extraPaths = ["src", "e2e"]
