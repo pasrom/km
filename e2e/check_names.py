@@ -1,9 +1,11 @@
 """Fail when e2e/ names a GitHub organisation, account or repository: `check_names.py [PATH...]`.
 
 The e2e driver is public and runs against a private sandbox whose names come from the environment
-(e2e/README.md). The only repository it may name literally is km's own, `pasrom/km`. A slug is looked
+(e2e/README.md). The only repositories it may name literally are km's own, `pasrom/km`, and the
+upstream tools the agent image downloads by release (`cli/cli`, `astral-sh/uv`). A slug is looked
 for where GitHub names one: after `github.com/` (or `github.com:`), after an API path's `repos/`, as
-the owner after `orgs/`, `organizations/`, `users/`, `ghcr.io/`, in an owner-only `github.com/` link, a
+the owner after `orgs/`, `organizations/`, `users/`, `ghcr.io/`, in an owner-only `github.com/` link (not
+a subdomain's such as `api.github.com/`), a
 `<owner>.github.io` host and a `users.noreply.github.com` address; after `githubusercontent.com/`,
 `uses:`, `--repo`, `-R`, `km ready` and `gh repo <verb>`. Host names match in any case. A placeholder
 (`{org}`, `$ORG`, `<org>`) starts with a character no login has, so it never matches.
@@ -21,11 +23,12 @@ import re
 import sys
 from pathlib import Path
 
-ALLOWED = {("pasrom", "km")}
+# km's own; and the upstream tools the agent image downloads by release (e2e/container/Dockerfile)
+ALLOWED = {("pasrom", "km"), ("cli", "cli"), ("astral-sh", "uv")}
 NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]*"
 SLUG = re.compile(rf"(?:github\.com[/:]|githubusercontent\.com/|\brepos/|\buses:\s*|--repo[= ]\s*|(?<![\w-])(?-i:-R)\s*"
                   rf"|\bkm\s+ready\s+|\bgh\s+repo\s+\w+\s+)({NAME})/({NAME})", re.I)
-OWNER = re.compile(rf"(?:\b(?:orgs|organizations|users)/|github\.com/)({NAME})(?![\w.-]*/[A-Za-z0-9])"
+OWNER = re.compile(rf"(?:\b(?:orgs|organizations|users)/|(?<![\w.-])github\.com/)({NAME})(?![\w.-]*/[A-Za-z0-9])"
                    rf"|\bghcr\.io/({NAME})"
                    r"|(?<![\w$.{<-])([A-Za-z0-9][A-Za-z0-9-]*)\.github\.io"
                    rf"|(?<![\w$.{{<+-])(?:\d+\+)?({NAME})@users\.noreply\.github\.com", re.I)
