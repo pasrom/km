@@ -20,8 +20,8 @@
   workflow and its script, the review-request-guide workflow, and the pre-commit hooks that refuse a commit on main and a push to main,
   whichever it lacks, km's km-gen-index hook in its km entry once the target release has it, and its
   km ci workflow gets the `workflow_dispatch` trigger, so a workflow that opens a pull request with
-  GITHUB_TOKEN can run the check on it. The bump-mounted-pins workflow and script, approve-fork-ci
-  and review-request-guide are copies of km code: one that is still a version km shipped (its action pins aside) is replaced
+  GITHUB_TOKEN can run the check on it. The bump-mounted-pins workflow and script, approve-fork-ci,
+  review-request-guide and main-guard are copies of km code: one that is still a version km shipped (its action pins aside) is replaced
   by this km's, one the brain changed is left with a note.
 - Each accepted doc approved before km recorded what an approval covers (`approved_by` set, no
   `approved_digest`) gets the digest of its current content, once: when the brain moves from a km
@@ -86,7 +86,7 @@ OLD_COPIES = {
     ".pre-commit-config.yaml": ("pre-commit-config.template.yaml", {"8ef7f1ea977e2308", "d6819c5f6e97baa1"}),
 }
 # The km files a team brain carries as copies (the bump-mounted-pins job holding the app token must
-# not install km; the security fixes of approve-fork-ci and review-request-guide must reach every brain) ->
+# not install km; the fixes of approve-fork-ci, review-request-guide and main-guard must reach every brain) ->
 # shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
 # is still one of them is replaced by the current template, an edited one is left with a note.
 SHIPPED = {
@@ -94,6 +94,7 @@ SHIPPED = {
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
     "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd"},
     "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7"},
+    "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e"},
 }
 # ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
 # a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
@@ -398,7 +399,7 @@ def main() -> int:
     signoff = False                           # whether km's ci workflow runs the sign-off check after this upgrade
     if team:
         km_ci = ".github/workflows/ci.yml" in rewrites or ci_hash(ci_text) in KM_CI   # km's, or km's copy-in rewritten to it
-        for tpl in ("team/dependabot.yml", "team/main-guard.yml", *SHIPPED):
+        for tpl in ("team/dependabot.yml", *SHIPPED):
             rel = TEAM[tpl]
             p = root / rel
             if tpl == "team/approve-fork-ci.yml" and not km_ci:     # checked on every upgrade: ci.yml may change later
