@@ -1,10 +1,10 @@
 """Shared parts of the e2e driver: configuration, the two roles' GitHub and git access, the write
 guard, waiting, and the per-scenario record. Standard library only; GitHub through the `gh` CLI.
 
-Roles: M, the maintainer, uses a fine-grained token read from a file (never from argv, never printed)
-with an empty gh config, so no other login on the machine is used. C, the contributor, uses its own gh
-config folder. Every write goes through `Ctx.api` or `Ctx.push`, which refuse any repository but the
-sandbox brain, its mount and C's fork of the brain.
+Roles: M, the maintainer, and C, the contributor, each use a token read from a file (never from argv,
+never printed) with an empty gh config, so no stored login on the machine stands in; C may instead
+fall back to its own gh config folder. Every write goes through `Ctx.api` or `Ctx.push`, which refuse
+any repository but the sandbox brain and C's fork of it (the mount is only read).
 """
 from __future__ import annotations
 
@@ -14,14 +14,17 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 KM_URL = "https://github.com/pasrom/km"
+TIMEOUT = {"api": 60, "gh": 120, "git": 300, "km": 600}   # seconds per subprocess (km: uvx may fetch km first)
 
 
 class Fail(Exception):
@@ -41,6 +44,11 @@ def need(name: str) -> str:
     return v
 
 
+def optional_path(name: str) -> Path | None:
+    v = os.environ.get(name, "").strip()
+    return Path(v).expanduser() if v else None
+
+
 @dataclass
 class Config:
     org: str
@@ -49,7 +57,8 @@ class Config:
     maint: str
     maint_token_file: Path
     contrib: str
-    contrib_gh_dir: Path
+    contrib_token_file: Path | None
+    contrib_gh_dir: Path | None
     must_not_reach: list[str]
     workdir: Path
     baseline: str
@@ -61,7 +70,8 @@ class Config:
         return cls(
             org=need("KM_E2E_ORG"), repo=need("KM_E2E_REPO"), mount=os.environ.get("KM_E2E_MOUNT_REPO", ""),
             maint=need("KM_E2E_MAINT_LOGIN"), maint_token_file=Path(need("KM_E2E_MAINT_TOKEN_FILE")).expanduser(),
-            contrib=need("KM_E2E_CONTRIB_LOGIN"), contrib_gh_dir=Path(need("KM_E2E_CONTRIB_GH_CONFIG_DIR")).expanduser(),
+            contrib=need("KM_E2E_CONTRIB_LOGIN"), contrib_token_file=optional_path("KM_E2E_CONTRIB_TOKEN_FILE"),
+            contrib_gh_dir=optional_path("KM_E2E_CONTRIB_GH_CONFIG_DIR"),
             must_not_reach=[s.strip() for s in need("KM_E2E_MUST_NOT_REACH").split(",") if s.strip()],
             workdir=Path(os.environ.get("KM_E2E_WORKDIR", "~/.cache/km-e2e")).expanduser(),
             baseline=need("KM_E2E_BASELINE_REF"), candidate=need("KM_E2E_CANDIDATE_REF"),
@@ -76,7 +86,10 @@ class Config:
         return f"{self.contrib}/{self.repo}"
 
     def writable(self) -> set[str]:
-        return {self.slug, self.fork} | ({f"{self.org}/{self.mount}"} if self.mount else set())
+        return {self.slug, self.fork}     # the mount is only read
+
+    def token_file(self, role: str) -> Path | None:
+        return self.maint_token_file if role == "M" else self.contrib_token_file
 
 
 @dataclass
@@ -100,11 +113,11 @@ class Record:
     started: float = 0.0
     seconds: float = 0.0
 
-    def check(self, what: str, ok: bool, expected: str, observed: str) -> bool:
-        self.checks.append(Check(what, bool(ok), expected, str(observed)[:500]))
+    def check(self, what: str, ok: object, expected: object, observed: object) -> bool:
+        self.checks.append(Check(what, bool(ok), str(expected), str(observed)[:500]))
         return bool(ok)
 
-    def must(self, what: str, ok: bool, expected: str, observed: str) -> None:
+    def must(self, what: str, ok: object, expected: object, observed: object) -> None:
         if not self.check(what, ok, expected, observed):
             raise Fail(what)
 
@@ -137,6 +150,9 @@ class Ctx:
         self.lock = threading.Lock()          # guards the shared run list below (scenarios run in threads)
         self._runs: tuple[float, list[dict]] = (0.0, [])
 
+    def close(self) -> None:
+        shutil.rmtree(self._empty_gh, ignore_errors=True)
+
     # --- process environments -------------------------------------------------------------------
     def env(self, role: str) -> dict[str, str]:
         """ROLE's process environment (built once; a copy each call)."""
@@ -145,24 +161,24 @@ class Ctx:
         return dict(self._envs[role])
 
     def _env(self, role: str) -> dict[str, str]:
-        base = clean_env()
-        base |= {"GH_PROMPT_DISABLED": "1", "NO_COLOR": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "false",
-                 "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
-                 "KM_E2E_MAINT_TOKEN_FILE": str(self.cfg.maint_token_file),
-                 "KM_E2E_CONTRIB_GH_CONFIG_DIR": str(self.cfg.contrib_gh_dir)}
-        if role == "M":
-            base |= {"GH_TOKEN": self.cfg.maint_token_file.read_text().strip(), "GH_CONFIG_DIR": str(self._empty_gh)}
-        elif role == "C":
-            base |= {"GH_CONFIG_DIR": str(self.cfg.contrib_gh_dir)}
-        else:
+        """A role with a token file: GH_TOKEN from it and an empty gh config, so no stored login can stand
+        in. C without one (KM_E2E_CONTRIB_GH_CONFIG_DIR, a fallback): its own gh config folder."""
+        if role not in ("M", "C"):
             raise ValueError(role)
+        base = clean_env()
+        base |= {"GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1", "GIT_TERMINAL_PROMPT": "0",
+                 "GIT_SSH_COMMAND": "false", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        if tf := self.cfg.token_file(role):
+            base |= {"GH_TOKEN": tf.read_text().strip(), "GH_CONFIG_DIR": str(self._empty_gh), "KM_E2E_TOKEN_FILE": str(tf)}
+        else:
+            base |= {"GH_CONFIG_DIR": str(self.cfg.contrib_gh_dir)}
         return base
 
     def login(self, role: str) -> str:
         return self.cfg.maint if role == "M" else self.cfg.contrib
 
     # --- GitHub API ----------------------------------------------------------------------------
-    def api(self, role: str, path: str, method: str = "GET", data: dict | None = None):
+    def api(self, role: str, path: str, method: str = "GET", data: dict | None = None) -> Any:
         """One REST call as ROLE. A write to any repository but the sandbox's is refused here."""
         path = path.lstrip("/")
         if method != "GET":
@@ -172,8 +188,11 @@ class Ctx:
         cmd = ["gh", "api", "--include", "-X", method, path]
         if data is not None:
             cmd += ["--input", "-"]
-        r = subprocess.run(cmd, input=json.dumps(data) if data is not None else None, env=self.env(role),
-                           capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, input=json.dumps(data) if data is not None else "", env=self.env(role),
+                               capture_output=True, text=True, timeout=TIMEOUT["api"])
+        except subprocess.TimeoutExpired:
+            raise ApiError(0, f"gh api {method} {path}: no answer in {TIMEOUT['api']} s") from None
         head, _, body = r.stdout.replace("\r\n", "\n").partition("\n\n")
         while head.startswith("HTTP/") and body.startswith("HTTP/"):   # a redirect: the last response counts
             head, _, body = body.partition("\n\n")
@@ -197,7 +216,11 @@ class Ctx:
 
     def gh(self, role: str, *args: str) -> subprocess.CompletedProcess:
         """A gh subcommand as ROLE, read-only uses only (run view, ...)."""
-        return subprocess.run(["gh", *args], env=self.env(role), capture_output=True, text=True)
+        try:
+            return subprocess.run(["gh", *args], env=self.env(role), capture_output=True, text=True,
+                                  stdin=subprocess.DEVNULL, timeout=TIMEOUT["gh"])
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(["gh", *args], 124, "", "timed out")
 
     def ident(self, role: str) -> tuple[str, str]:
         if role not in self.idents:
@@ -206,11 +229,13 @@ class Ctx:
         return self.idents[role]
 
     # --- git ----------------------------------------------------------------------------------
-    HELPERS = {
-        "M": '!f(){ test "$1" = get || exit 0; echo username=x-access-token; '
-             'printf "password=%s\\n" "$(cat "$KM_E2E_MAINT_TOKEN_FILE")"; }; f',
-        "C": '!GH_CONFIG_DIR="$KM_E2E_CONTRIB_GH_CONFIG_DIR" gh auth git-credential',
-    }
+    # the role's token from its file (KM_E2E_TOKEN_FILE in the role's environment), for github.com only
+    FILE_HELPER = ('!f(){ test "$1" = get || exit 0; echo username=x-access-token; '
+                   'printf "password=%s\\n" "$(cat "$KM_E2E_TOKEN_FILE")"; }; f')
+    GH_HELPER = "!gh auth git-credential"   # C's fallback: GH_CONFIG_DIR in its environment names the login
+
+    def helper(self, role: str) -> str:
+        return self.FILE_HELPER if self.cfg.token_file(role) else self.GH_HELPER
 
     def git(self, role: str, cwd: Path | None, *args: str, check: bool = True, date: str | None = None) -> str:
         name, email = self.ident(role)
@@ -218,9 +243,13 @@ class Ctx:
                                 "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email}
         if date:
             env |= {"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}
-        cmd = ["git", "-c", "credential.helper=", "-c", f"credential.helper={self.HELPERS[role]}",
+        cmd = ["git", "-c", "credential.helper=", "-c", f"credential.https://github.com.helper={self.helper(role)}",
                "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args]
-        r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                               timeout=TIMEOUT["git"])
+        except subprocess.TimeoutExpired:
+            raise Fail(f"git {' '.join(args[:3])}: no answer in {TIMEOUT['git']} s") from None
         if check and r.returncode != 0:
             raise Fail(f"git {' '.join(args[:3])} failed: {r.stderr.strip()[-400:]}")
         return r.stdout
@@ -246,8 +275,12 @@ class Ctx:
     def km(self, cwd: Path, *args: str, ref: str | None = None, role: str = "M") -> subprocess.CompletedProcess:
         """The candidate km (or REF) in CWD, as itself (KM_LOCAL), with ROLE's GitHub access (km ready)."""
         env = self.env(role) | {"KM_LOCAL": "1"}
-        return subprocess.run([*self.km_cmd(ref or self.cfg.candidate), *args], cwd=cwd, env=env,
-                              capture_output=True, text=True)
+        cmd = [*self.km_cmd(ref or self.cfg.candidate), *args]
+        try:
+            return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                  timeout=TIMEOUT["km"])
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(cmd, 124, "", f"no answer in {TIMEOUT['km']} s")
 
     # --- waiting -------------------------------------------------------------------------------
     def poll(self, what: str, fn, timeout: float = 300, every: float = 10):

@@ -12,9 +12,13 @@ import argparse
 import dataclasses
 import datetime
 import json
+import os
+import re
+import signal
 import sys
 import time
 import traceback
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -22,9 +26,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scenarios as S                      # noqa: E402
 import seed                                # noqa: E402
+from check_names import NAME               # noqa: E402
 from lib import ApiError, Config, Ctx, Fail, Record, now   # noqa: E402
 
 LOCK = "KM_E2E_LOCK"
+MARKER = "KM_E2E_SANDBOX"
+SLUG = re.compile(rf"{NAME}/{NAME}")
 LABELS = ("km:ready", "km:needs-human", "km:blocked")
 
 
@@ -36,6 +43,26 @@ def say(msg: str) -> None:
 def preflight(ctx: Ctx) -> list[str]:
     """Problems that stop the run (empty: go). Warnings are printed."""
     cfg, bad = ctx.cfg, []
+    # before any call: the settings themselves (a typo here must not point the run at a real repository)
+    if bad := [f"KM_E2E_MUST_NOT_REACH: {s!r} is not owner/repo" for s in cfg.must_not_reach if not SLUG.fullmatch(s)]:
+        return bad
+    if not (cfg.contrib_token_file or cfg.contrib_gh_dir):
+        return ["set KM_E2E_CONTRIB_TOKEN_FILE (or, as a fallback, KM_E2E_CONTRIB_GH_CONFIG_DIR)"]
+    tokens = {}
+    for role in ("M", "C"):
+        if tf := cfg.token_file(role):
+            try:
+                tokens[role] = tf.read_text().strip()
+            except OSError as e:
+                return [f"{role}'s token file cannot be read ({type(e).__name__})"]
+    if not tokens["M"].startswith("github_pat_"):
+        return ["M's token is not a fine-grained token (github_pat_...): it could reach more than the sandbox organisation"]
+    if "C" in tokens and not tokens["C"].startswith("github_pat_"):
+        say("warning: C's token is not fine-grained: it reaches every repository C can, so C's account itself "
+            "must have no access beyond the sandbox (the 404 checks cover only KM_E2E_MUST_NOT_REACH)")
+    if not cfg.contrib_token_file:
+        say("warning: C has no token file; its git credentials come from `gh auth git-credential` under "
+            "KM_E2E_CONTRIB_GH_CONFIG_DIR, which can fall back to another stored login (KM_E2E_CONTRIB_TOKEN_FILE avoids it)")
     for role, want in (("M", cfg.maint), ("C", cfg.contrib)):
         got = ctx.ident(role)[0]
         if got != want:
@@ -55,6 +82,12 @@ def preflight(ctx: Ctx) -> list[str]:
         bad.append("the sandbox brain is not private (the scenarios assume a private repository)")
     if not (repo.get("permissions") or {}).get("admin"):
         bad.append("M is not admin on the sandbox brain (reset and Actions switch need it)")
+    try:                                   # the sandbox says it is one: a real brain never carries this
+        marked = ctx.repo_api("M", f"actions/variables/{MARKER}")["value"] == "1"
+    except ApiError:
+        marked = False
+    if not marked:
+        bad.append(f"the repository variable {MARKER}=1 is not set on the sandbox brain (it marks a repository the run may reset)")
     try:
         fork = ctx.api("C", f"repos/{cfg.fork}")
         if (fork.get("parent") or {}).get("full_name") != cfg.slug:
@@ -94,7 +127,19 @@ def take_lock(ctx: Ctx, steal: bool) -> None:
     except ApiError as e:
         if e.status != 404:
             raise
-        ctx.repo_api("M", "actions/variables", method="POST", data={"name": LOCK, "value": ctx.run_id})
+        try:
+            ctx.repo_api("M", "actions/variables", method="POST", data={"name": LOCK, "value": ctx.run_id})
+        except ApiError as e2:            # another run created it since the read
+            if e2.status in (409, 422):
+                raise SystemExit(f"e2e: another run took the sandbox ({LOCK}) just now") from None
+            raise
+
+
+def holds_lock(ctx: Ctx) -> bool:
+    try:
+        return ctx.repo_api("M", f"actions/variables/{LOCK}")["value"] == ctx.run_id
+    except ApiError:
+        return False
 
 
 def drop_lock(ctx: Ctx) -> None:
@@ -183,6 +228,18 @@ def run_one(ctx: Ctx, sid: str, fn, title: str) -> Record:
     return rec
 
 
+def cleanup_steps(locked: bool, meta: dict, start: str) -> list[tuple[str, Callable[[Ctx], object], str]]:
+    """What ends a run: (name, step, what to do if it fails). A run that does not hold the lock (it never
+    got it, or another run took it over) leaves the sandbox, the lock included, as it is."""
+    if not locked:
+        return []
+    return [("wait for runs", settle, "could not wait for the runs to finish"),
+            ("Actions off", lambda c: actions(c, False), "could not switch Actions off: switch them off by hand"),
+            ("drop the lock", drop_lock, f"could not drop the lock: delete the repository variable {LOCK} by hand"),
+            ("count the minutes", lambda c: meta.update(zip(("runs", "jobs", "minutes"), c.billed_minutes(start))),
+             "could not count the Actions minutes: the report has none")]
+
+
 def grade(rec: Record) -> str:
     """pass only with at least one check, all ok, and nothing stopped it."""
     stopped = any(n.startswith("stopped") for n in rec.notes)
@@ -220,12 +277,20 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="run.py")
     ap.add_argument("--only", help="comma-separated scenario ids (E01 and E24 included only when named)")
     ap.add_argument("--skip-reset", action="store_true", help="run on the sandbox as it is")
-    ap.add_argument("--run-id", default=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S"))
+    ap.add_argument("--run-id", default=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S-")
+                    + os.urandom(2).hex(), help="unique per run: the lock and every branch name carry it")
     ap.add_argument("--workers", type=int, default=4, help="pull request scenarios run in parallel (default 4)")
     ap.add_argument("--steal-lock", action="store_true")
     ap.add_argument("--preflight", action="store_true", help="only the preflight")
     a = ap.parse_args()
     ctx = Ctx(Config.from_env(), a.run_id)
+    try:
+        return run(ctx, a)
+    finally:
+        ctx.close()
+
+
+def run(ctx: Ctx, a: argparse.Namespace) -> int:
     t0, start = time.time(), now()
     say(f"run {ctx.run_id}: sandbox {ctx.cfg.slug}, candidate {ctx.cfg.candidate[:7]}, baseline {ctx.cfg.baseline[:7]}")
     if bad := preflight(ctx):
@@ -245,8 +310,11 @@ def main() -> int:
     pick = lambda sid: only is None or sid in only   # noqa: E731
     meta: dict = {"run_id": ctx.run_id, "candidate": ctx.cfg.candidate, "baseline": ctx.cfg.baseline, "started": start}
     recs: list[Record] = []
-    take_lock(ctx, a.steal_lock)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a kill runs the cleanup below, like Ctrl-C
+    locked = False
     try:
+        take_lock(ctx, a.steal_lock)
+        locked = True                      # from here the sandbox is this run's to clean up
         if not a.skip_reset:
             meta["reset"] = reset(ctx)
         actions(ctx, True)
@@ -259,26 +327,33 @@ def main() -> int:
         todo = [s for s in S.PARALLEL if pick(s[0])]
         with ThreadPoolExecutor(max_workers=max(1, a.workers)) as pool:
             futs = []
-            for s in todo:
-                futs.append(pool.submit(run_one, ctx, *s))
-                time.sleep(3)              # spread PR creation (secondary rate limits)
-            recs += [f.result() for f in futs]
+            try:
+                for s in todo:
+                    futs.append(pool.submit(run_one, ctx, *s))
+                    time.sleep(3)          # spread PR creation (secondary rate limits)
+                recs += [f.result() for f in futs]
+            except BaseException:          # a signal: start no queued scenario, let the running ones end
+                pool.shutdown(wait=True, cancel_futures=True)
+                recs += [f.result() for f in futs if f.done() and not f.cancelled() and not f.exception()]
+                raise
         if pick(S.LAST[0]):
             recs.append(run_one(ctx, *S.LAST))
-    finally:                               # each step on its own: one failing must not skip the others
-        for step in (settle, lambda c: actions(c, False), drop_lock):
+    finally:                               # each step on its own: a failing one or a second signal skips no other
+        if locked and not holds_lock(ctx):
+            say(f"warning: {LOCK} no longer names this run (taken over with --steal-lock?): leaving the sandbox as it is")
+            locked = False
+        for _, step, if_failed in cleanup_steps(locked, meta, start):
             try:
                 step(ctx)
-            except Exception as e:
-                say(f"warning: cleanup step failed ({type(e).__name__}: {e}); check Actions and {LOCK} by hand")
-        meta["wall_seconds"] = time.time() - t0
-        try:
-            meta["runs"], meta["jobs"], meta["minutes"] = ctx.billed_minutes(start)
-        except Exception as e:             # the report still gets written
-            say(f"warning: could not count the minutes: {e}")
-        report(ctx, meta, recs)
+            except BaseException as e:
+                say(f"warning: {if_failed} ({type(e).__name__}: {e})")
+        if locked:
+            meta["wall_seconds"] = time.time() - t0
+            try:
+                report(ctx, meta, recs)
+            except BaseException as e:
+                say(f"warning: could not write the report ({type(e).__name__}: {e})")
     return 0 if all(r.result in ("pass", "skip") for r in flat(recs)) else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

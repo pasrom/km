@@ -103,7 +103,7 @@ def ready(ctx: Ctx, rec: Record, n: int, head: str, d: Path, expect: int, patter
     """km ready on the PR at HEAD: exit EXPECT and a line matching PATTERN (label_by has waited for the
     label event to show)."""
     rc, out = ctx.km_ready(n, head, d)
-    rec.check(what, rc == expect and re.search(pattern, out) is not None, f"exit {expect}, /{pattern}/", f"exit {rc}: {out}")
+    rec.check(what, rc == expect and re.search(pattern, out, re.M) is not None, f"exit {expect}, /{pattern}/", f"exit {rc}: {out}")
 
 
 def label_by(ctx: Ctx, rec: Record, role: str, n: int) -> None:
@@ -137,6 +137,18 @@ def e01(ctx: Ctx, rec: Record) -> None:
     br = ctx.branch("E01")
     ctx.git("M", d, "checkout", "-q", "-b", br)
     version = ctx.km(d, "--version").stdout.strip()
+    # what the upgrade must replace: the shipped workflows whose text (pins aside) the candidate changed,
+    # read from a fresh candidate init against the baseline's own files
+    # (an unreleased candidate cannot init without a stand-in tag: the check is then skipped, noted)
+    fresh = ctx.dir / "E01-fresh"
+    r = ctx.km(ctx.dir, "init", str(fresh), "--team", "--name", "E2E-Brain", "--desc", "the e2e sandbox team",
+               "--initials", "AAA", "--folder=process=x", "--folder=product=x", "--folder=projects=x")
+    if r.returncode:
+        rec.notes.append(f"observed: a fresh candidate init failed ({r.returncode}), replacement not checked: {r.stderr[-200:]}")
+    flows_dir = Path(".github") / "workflows"
+    shipped = sorted(p.name for p in (fresh / flows_dir).iterdir()) if not r.returncode else []
+    unpin = lambda p: re.sub(r"pasrom/km@[\w.\-]+[^\n]*", "pasrom/km@PIN", p.read_text(encoding="utf-8")) if p.is_file() else None   # noqa: E731
+    expect = sorted(f for f in shipped if unpin(d / flows_dir / f) != unpin(fresh / flows_dir / f))
     km_ok(ctx, rec, d, "upgrade")
     flows = "\n".join(p.read_text(encoding="utf-8") for p in (d / ".github" / "workflows").iterdir()
                       if p.suffix in (".yml", ".yaml"))
@@ -144,9 +156,11 @@ def e01(ctx: Ctx, rec: Record) -> None:
     hook_pins = hook_km_revs((d / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
     rec.must("every km pin (workflows and pre-commit) moved to the candidate commit",
              flow_pins == hook_pins == {ctx.cfg.candidate}, ctx.cfg.candidate, f"workflows {sorted(flow_pins)}, hook {sorted(hook_pins)}")
-    changed = ctx.git("M", d, "status", "--porcelain").split()
-    rec.check("km upgrade replaced the shipped main-guard (changed in the candidate)",
-              ".github/workflows/main-guard.yml" in changed, "main-guard.yml changed", changed)
+    got = sorted(f for f in shipped if (d / flows_dir / f).is_file()     # one the upgrade removed is not "got"
+                 and (d / flows_dir / f).read_bytes() == (fresh / flows_dir / f).read_bytes())
+    if shipped:
+        rec.check("km upgrade replaced every shipped workflow the candidate changed, as the candidate writes it",
+                  set(expect) <= set(got), f"{expect} equal to a fresh candidate init", f"equal: {got}")
     head = commit(ctx, "M", d, f"chore(km): upgrade to km {version}")
     pr, head = push_and_open(ctx, rec, d, br, f"chore(km): upgrade to km {version}",
                              "Upgrade of the e2e sandbox from the baseline release to the candidate.", role="M")
@@ -179,19 +193,15 @@ def e01(ctx: Ctx, rec: Record) -> None:
               and "every commit came from a merged pull request" in glog,
               "success, 'every commit came from a merged pull request'", f"{guard['conclusion']}: {grep(glog, 'merged pull request|direct push')}")
 
-    # observe: a fresh candidate init against the upgraded tree, for the files km ships
-    fresh = ctx.dir / "E01-fresh"
-    r = ctx.km(ctx.dir, "init", str(fresh), "--team", "--name", "E2E-Brain", "--desc", "the e2e sandbox team",
-               "--initials", "AAA", "--folder=process=x", "--folder=product=x", "--folder=projects=x")
-    if r.returncode == 0:
-        ctx.git("M", d, "fetch", "-q", "origin", "main")
-        ctx.git("M", d, "checkout", "-q", "FETCH_HEAD")
-        shipped = [p.relative_to(fresh).as_posix() for p in fresh.rglob("*") if p.is_file()
-                   and (p.relative_to(fresh).parts[0] == ".github" or p.name in (".pre-commit-config.yaml", ".gitattributes"))]
-        differ = sorted(p for p in shipped if not (d / p).is_file() or (d / p).read_bytes() != (fresh / p).read_bytes())
-        rec.notes.append(f"observed: fresh candidate init vs upgraded tree, km-shipped files that differ: {differ or 'none'}")
-    else:
-        rec.notes.append(f"observed: fresh candidate init failed ({r.returncode}): {r.stderr[-200:]}")
+    if not shipped:
+        return
+    # observe: a fresh candidate init against the merged tree, for every file km ships
+    ctx.git("M", d, "fetch", "-q", "origin", "main")
+    ctx.git("M", d, "checkout", "-q", "FETCH_HEAD")
+    files = [p.relative_to(fresh).as_posix() for p in fresh.rglob("*") if p.is_file()
+             and (p.relative_to(fresh).parts[0] == ".github" or p.name in (".pre-commit-config.yaml", ".gitattributes"))]
+    differ = sorted(p for p in files if not (d / p).is_file() or (d / p).read_bytes() != (fresh / p).read_bytes())
+    rec.notes.append(f"observed: fresh candidate init vs merged tree, km-shipped files that differ: {differ or 'none'}")
 
 
 def sync_fork(ctx: Ctx, rec: Record) -> None:
@@ -412,6 +422,8 @@ def e08_draft(ctx: Ctx, rec: Record) -> None:
     try:
         pr, head = push_and_open(ctx, rec, d, br, "docs(process): a draft pull request", "Invented e2e test data.", draft=True)
     except ApiError as e:
+        if e.status != 422 or "draft" not in e.body.lower():
+            raise                          # only "draft pull requests are not supported here" is a skip
         rec.result = "skip"
         rec.notes.append(f"a draft pull request cannot be opened here (HTTP {e.status}): {e.body[:200]}")
         return

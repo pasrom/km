@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for the pure parts of the e2e driver (e2e/): the name check that keeps the public driver
-# free of organisation, account and repository names, and the seed generator (deterministic, valid).
+# free of organisation, account and repository names, the steps that end a run (run.py, imported), and
+# the seed generator (deterministic, valid).
 # The live run itself needs a sandbox and two identities (e2e/README.md) and is not run here.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -9,15 +10,22 @@ E2E="$REPO/e2e"
 
 echo "== name check"
 out="$(env -u KM_E2E_DENY_FILE "$PY" "$E2E/check_names.py" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && ok "e2e/ names no repository but pasrom/km" || no "e2e/ names something ($out)"
+[ "$rc" = 0 ] && ok "e2e/ and this test name no repository but pasrom/km" || no "e2e/ names something ($out)"
+grep 'e2e' "$REPO/README.md" > "$T/readme-e2e.txt"
+out="$(env -u KM_E2E_DENY_FILE "$PY" "$E2E/check_names.py" "$T/readme-e2e.txt" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "the README's e2e lines name nothing" || no "README e2e lines ($out)"
 mkdir -p "$T/names"
-printf 'clone https://github.com/pasrom/km.git and pasrom/km@abc\napi repos/{org}/{repo}/pulls\nuses: $ORG/$REPO\n' > "$T/names/clean.txt"
+printf 'clone https://github.com/pasrom/km.git and pasrom/km@abc\napi repos/{org}/{repo}/pulls\nuses: $ORG/$REPO\ncp -r e2e/runs out\n' > "$T/names/clean.txt"
 out="$(env -u KM_E2E_DENY_FILE "$PY" "$E2E/check_names.py" "$T/names/clean.txt" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && ok "km's own slug and placeholders pass" || no "placeholders flagged ($out)"
-for line in 'see https://github.com/acme-team/brain' 'gh api repos/acme-team/brain/pulls' 'GET orgs/acme-team' \
-            'git@github.com:acme-team/brain.git' 'uses: acme-team/action@v1' 'gh pr list -R acme-team/brain' \
-            'see https://github.com/pasrom/other' 'km ready acme-team/brain 5' 'gh repo clone acme-team/brain' \
-            'see https://github.com/acme-team'; do
+[ "$rc" = 0 ] && ok "km's own slug, placeholders and a lowercase -r path pass" || no "placeholders flagged ($out)"
+# the planted names are built from variables, so this file passes the check it tests
+O=acme-team P=pasrom
+for line in "see https://github.com/$O/brain" "gh api repos/$O/brain/pulls" "GET orgs/$O" \
+            "git@github.com:$O/brain.git" "uses: $O/action@v1" "gh pr list -R $O/brain" "gh pr list -R$O/brain" \
+            "see https://github.com/$P/other" "km ready $O/brain 5" "gh repo clone $O/brain" \
+            "see https://github.com/$O" "see https://github.com/$O/" "see https://GitHub.COM/$O/brain" \
+            "https://raw.githubusercontent.com/$O/brain/main/x.md" "https://$O.github.io/brain" \
+            "ghcr.io/$O/image:1" "12345+$O@users.noreply.github.com" "$O@users.noreply.github.com"; do
   printf '%s\n' "$line" > "$T/names/one.txt"
   out="$(env -u KM_E2E_DENY_FILE "$PY" "$E2E/check_names.py" "$T/names/one.txt" 2>&1)"; rc=$?
   [ "$rc" = 1 ] && ok "flagged: $line" || no "not flagged: $line ($rc: $out)"
@@ -32,6 +40,14 @@ KM_E2E_DENY_FILE="$T/deny.txt" "$PY" "$E2E/check_names.py" "$T/names/deny.txt" >
 printf 'the secretco-team repository\n' > "$T/names/deny.txt"
 KM_E2E_DENY_FILE="$T/deny.txt" "$PY" "$E2E/check_names.py" "$T/names/deny.txt" >/dev/null 2>&1 \
   && no "a deny term joined by a hyphen passed" || ok "a deny term joined by a hyphen fails"
+
+echo "== run cleanup"
+out="$(cd "$E2E" && "$PY" -B -c 'import run
+print([n for n, _, _ in run.cleanup_steps(False, {}, "")]); print([n for n, _, _ in run.cleanup_steps(True, {}, "")])' 2>&1)"
+{ [ "$(sed -n 1p <<< "$out")" = "[]" ] \
+  && [ "$(sed -n 2p <<< "$out")" = "['wait for runs', 'Actions off', 'drop the lock', 'count the minutes']" ]; } \
+  && ok "a run without the lock leaves the sandbox alone; one with it settles, switches Actions off, then drops the lock" \
+  || no "cleanup steps ($out)"
 
 echo "== seed"
 fake_km_remote "$T/kmremote"

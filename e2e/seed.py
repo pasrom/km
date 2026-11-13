@@ -17,6 +17,7 @@ import datetime
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -225,10 +226,15 @@ class Builder:
         # no GitHub login of the machine's user reaches km or git: an empty gh config, no tokens, no prompts
         self.env = {k: v for k, v in os.environ.items() if k not in NO_LOGIN}
         self.env |= {**IDENT, "KM_LOCAL": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
-                     "GIT_TERMINAL_PROMPT": "0", "GH_CONFIG_DIR": tempfile.mkdtemp(prefix="km-e2e-seed-gh-")}
+                     "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1",
+                     "GH_CONFIG_DIR": tempfile.mkdtemp(prefix="km-e2e-seed-gh-")}
 
     def run(self, *cmd: str) -> str:
-        r = subprocess.run(cmd, cwd=self.out, env=self.env, capture_output=True, text=True)
+        try:                              # km through uvx may fetch km first
+            r = subprocess.run(cmd, cwd=self.out, env=self.env, capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=600)
+        except subprocess.TimeoutExpired:
+            sys.exit(f"seed: {' '.join(cmd)}: no answer in 600 s")
         if r.returncode != 0:
             sys.exit(f"seed: {' '.join(cmd)} failed ({r.returncode}):\n{r.stdout}{r.stderr}")
         return r.stdout
@@ -248,6 +254,13 @@ def build(out: Path, km: list[str], date: datetime.date, mount: tuple[str, str] 
     """Write the seeded brain into the empty folder `out`; returns the head commit."""
     out.mkdir(parents=True, exist_ok=False)
     b = Builder(out, km, date)
+    try:
+        return _build(b, out, date, mount)
+    finally:
+        shutil.rmtree(b.env["GH_CONFIG_DIR"], ignore_errors=True)
+
+
+def _build(b: Builder, out: Path, date: datetime.date, mount: tuple[str, str] | None) -> str:
     b.km("init", str(out), "--team", "--name", "E2E-Brain", "--desc", "the e2e sandbox team",
          "--initials", "AAA", *[f"--folder={n}={p}" for n, p in FOLDERS])
     b.run("git", "init", "-q", "-b", "main")
