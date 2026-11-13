@@ -694,6 +694,9 @@ rm "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
 cp "$REPO/tests/fixtures/approve-fork-ci-1.13.0.yml" "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$AF" "$AFT" && out_has "updated $AF to this km's version"; } \
   && ok "upgrade replaces the approve-fork-ci km 1.12.0 and 1.13.0 shipped" || no "upgrade replaces the 1.13.0 approve-fork-ci ($out)"
+cp "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$AF" "$AFT" && out_has "updated $AF to this km's version"; } \
+  && ok "upgrade replaces the approve-fork-ci km 1.13.1 to 1.17.0 shipped" || no "upgrade replaces the 1.13.1 approve-fork-ci ($out)"
 echo "# the brain's own guard" >> "$O/$AF"; cp "$O/$AF" "$F/af.before"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$AF" "$F/af.before" && out_has "left $AF: the brain changed it"; } \
   && ok "upgrade leaves a brain's own approve-fork-ci byte for byte, with a note" || no "upgrade overwrote approve-fork-ci ($out)"
@@ -878,7 +881,8 @@ case "$*" in
   */issues/*/timeline*) n="$*"; n="${n#*/issues/}"; n="${n%%/*}"
     if [ -f "$AF_DIR/pulls2.seen" ] && [ -f "$AF_DIR/timeline.late.json" ]; then cat "$AF_DIR/timeline.late.json"
     elif [ -f "$AF_DIR/timeline.$n.json" ]; then cat "$AF_DIR/timeline.$n.json"; else cat "$AF_DIR/timeline.json"; fi ;;
-  *actions/runs\?*) cat "$AF_DIR/runs.json" ;;
+  *actions/runs\?head_sha=*) cat "$AF_DIR/runs.json" ;;
+  *actions/runs\?*) cat "$AF_DIR/runs.all.json" ;;
 esac
 SH
 chmod +x "$AB/gh"
@@ -887,10 +891,14 @@ kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["appr
 # exit 0; 2 when it exited 0 with neither; 3 when it failed (a crash would turn every fork pull request
 # red). TREE, PRS, PRS2 (the pull requests from the second lookup on, the one right before approving),
 # TIMELINE (of every pull request), TIMELINE2 (of pull request 2 only), TIMELINE_LATE (of every pull
-# request from the second lookup on), SINCE (the event's time), RUN, AF_REF (the fork's branch),
+# request from the second lookup on), SINCE (the event's time), RUN (the commit's run listing), RUNS_ALL
+# (the unfiltered run listing, empty by default), AF_REF (the fork's branch),
 # AF_DEFAULT and AF_FAIL (a call that fails) override the stand-in; the calls it made are in $AFD/calls
 AFD="$F/af"; mkdir -p "$AFD"
-RUN_OF(){ printf '{"id":7,"path":".github/workflows/ci.yml","head_repository":{"full_name":"%s"},"head_branch":"%s","created_at":"%s"}' "$@"; }
+# RUN_OF FORK BRANCH CREATED [SHA EVENT STATUS CONCLUSION-JSON]: run 7 of ci.yml, by default one that waits
+RUN_OF(){ printf '{"id":7,"path":".github/workflows/ci.yml","head_repository":{"full_name":"%s"},"head_branch":"%s","created_at":"%s","head_sha":"%s","event":"%s","status":"%s","conclusion":%s}' \
+  "$1" "$2" "$3" "${4:-s}" "${5:-pull_request}" "${6:-completed}" "${7:-\"action_required\"}"; }
+OTHER_RUN='{"id":8,"path":".github/workflows/approve-fork-ci.yml","head_sha":"s","event":"pull_request_target","status":"in_progress","conclusion":null}'
 PR(){ printf '{"number":%s,"state":"%s","base":{"ref":"%s"}}' "$@"; }
 BASE_AT(){ printf '[{"event":"base_ref_changed","created_at":"%s"}]' "$1"; }   # a timeline with a base change at that time
 afrun(){ local prs tree='{"truncated":false,"tree":[]}' run
@@ -900,7 +908,7 @@ afrun(){ local prs tree='{"truncated":false,"tree":[]}' run
   [ -z "${TIMELINE2:-}" ] || printf '%s' "$TIMELINE2" > "$AFD/timeline.2.json"
   [ -z "${TIMELINE_LATE:-}" ] || printf '%s' "$TIMELINE_LATE" > "$AFD/timeline.late.json"
   printf '%s' "${PRS:-$prs}" > "$AFD/pulls.json"; printf '%s' "${PRS2:-${PRS:-$prs}}" > "$AFD/pulls2.json"
-  printf '{"workflow_runs":[%s]}' "${RUN:-$run}" > "$AFD/runs.json"
+  printf '{"workflow_runs":[%s]}' "${RUN-$run}" > "$AFD/runs.json"; printf '{"workflow_runs":[%s]}' "${RUNS_ALL:-}" > "$AFD/runs.all.json"
   AF_DIR="$AFD" PATH="$AB:$SB:$PATH" REPO=o/r BASE=b SHA=s HEAD_REPO=f/r HEAD_REF="${AF_REF:-x}" DEFAULT="${AF_DEFAULT:-main}" \
     SINCE="${SINCE:-2026-01-01T00:00:05Z}" CHANGED="${2:-$(printf '%s' "$1" | jq length)}" bash "$F/af.sh" > "$AFD/out" 2>&1 || return 3
   grep -qx "approve repos/o/r/actions/runs/7/approve" "$AFD/approved" 2>/dev/null && return 0
@@ -911,7 +919,8 @@ called(){ grep -qxF "$1" "$AFD/calls"; }
   && called "api repos/o/r/compare/b...s" && called "api repos/o/r/git/trees/s?recursive=1" \
   && called "api --paginate repos/o/r/pulls?state=all&per_page=100&head=f%3Ax" \
   && called "api --paginate repos/o/r/issues/1/timeline?per_page=100" \
-  && called "api repos/o/r/actions/runs?head_sha=s&status=action_required&event=pull_request"; } \
+  && called "api repos/o/r/actions/runs?head_sha=s&per_page=100" && ! grep -q "exclude_pull_requests" "$AFD/calls" \
+  && [ "$(grep -c . "$AFD/approved")" = 1 ]; } \
   && ok "approve-fork-ci approves a pull request of data only, through exactly the API calls it means" \
   || no "approve-fork-ci on data ($(cat "$AFD/calls" "$AFD/out" 2>/dev/null))"
 missed=""; approves(){ local name="$1"; shift; afrun "$@" || missed="$missed $name"; }
@@ -925,7 +934,13 @@ called "api --paginate repos/o/r/issues/2/timeline?per_page=100" || missed="$mis
 TIMELINE="$(BASE_AT 2025-12-31T23:55:00Z)" RUN="$(RUN_OF f/r x 2026-01-01T00:00:00Z)" approves run-300s-after-base-change '[{"filename":"d/a.md"}]'
 # GitHub may stamp the run a second before the pull request's update: 30 s before SINCE still counts
 RUN="$(RUN_OF f/r x 2025-12-31T23:59:35Z)" approves run-30s-before-event '[{"filename":"d/a.md"}]'
-[ -z "$missed" ] && ok "approve-fork-ci also approves beside an earlier closed pull request, after a base change long before the run, a run stamped up to 30 s before the event, on a default branch other than main, and for a branch name it must encode" \
+# the commit's run listing has left out a fork's waiting run for minutes while the unfiltered one held it
+W="$(RUN_OF f/r x 2026-01-01T00:00:09Z)"
+RUN="$OTHER_RUN" RUNS_ALL="$W" approves only-in-unfiltered-listing '[{"filename":"d/a.md"}]'
+called "api repos/o/r/actions/runs?per_page=100&exclude_pull_requests=true" || missed="$missed unfiltered-listing-read"
+RUNS_ALL="$OTHER_RUN,$W" AF_FAIL=head_sha= approves commit-listing-fails '[{"filename":"d/a.md"}]'
+RUN="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request action_required null)" approves status-action-required '[{"filename":"d/a.md"}]'
+[ -z "$missed" ] && ok "approve-fork-ci also approves a waiting run only the unfiltered listing holds or when the commit's listing fails, beside an earlier closed pull request, after a base change long before the run, a run stamped up to 30 s before the event, on a default branch other than main, and for a branch name it must encode" \
   || no "approve-fork-ci did not approve:$missed"
 AF_FAIL=/approve afrun '[{"filename":"d/a.md"}]'; rc=$?
 { [ $rc = 2 ] && grep -q "^::warning::could not approve run 7" "$AFD/out"; } \
@@ -966,7 +981,13 @@ RUN="$(RUN_OF g/r x 2026-01-01T00:00:09Z)" refuse other-fork '[{"filename":"d/a.
 RUN="$(RUN_OF f/r x 2025-12-31T23:59:34Z)" refuse run-before-event '[{"filename":"d/a.md"}]'
 RUN="$(RUN_OF f/r x not-a-time)" refuse run-time-unreadable '[{"filename":"d/a.md"}]'
 SINCE=garbage refuse event-time-unreadable '[{"filename":"d/a.md"}]'
-[ -z "$refused" ] && ok "approve-fork-ci leaves code, .github, top-level config, renames, links, a bad count, failed reads, other pull requests, a changed base, other forks and branches, and an older run to a person, with a notice" \
+# the unfiltered listing holds every commit's runs: only this commit's ci run that waits for approval counts
+RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z t)" refuse unfiltered-other-commit '[{"filename":"d/a.md"}]'
+RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request_target)" refuse unfiltered-other-event '[{"filename":"d/a.md"}]'
+RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request completed '"success"')" refuse unfiltered-finished '[{"filename":"d/a.md"}]'
+RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request in_progress null)" refuse unfiltered-running '[{"filename":"d/a.md"}]'
+RUNS_ALL="$W" AF_FAIL=actions/runs refuse both-listings-fail '[{"filename":"d/a.md"}]'
+[ -z "$refused" ] && ok "approve-fork-ci leaves code, .github, top-level config, renames, links, a bad count, failed reads, other pull requests, a changed base, other forks, branches, commits and events, a run that does not wait, failed run listings, and an older run to a person, with a notice" \
   || no "approve-fork-ci approved or crashed on:$refused"
 else no "the approve-fork-ci tests need jq"; fi
 
