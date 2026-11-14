@@ -107,6 +107,9 @@ def preflight(ctx: Ctx) -> list[str]:
             bad.append("KM_MAINTAINERS does not name M")
     except ApiError:
         bad.append("the repository variable KM_MAINTAINERS is not set")
+    if cfg.merge_app and not ctx.environment_on_main("automerge"):
+        bad.append("KM_E2E_MERGE_APP is set, but the environment automerge is missing or not restricted to main "
+                   "(with KM_AUTOMERGE_APP=1, GitHub would create it open to every branch)")
     have = {lb["name"] for lb in ctx.repo_api("M", "labels?per_page=100")}
     if missing := [lb for lb in LABELS if lb not in have]:
         bad.append(f"labels missing: {missing}")

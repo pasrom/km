@@ -506,6 +506,43 @@ def e17(ctx: Ctx, rec: Record) -> None:
     rec.check("the push by GITHUB_TOKEN starts no ci and no main-guard run", not others, "none", others)
 
 
+# --- E20: bump-mounted-pins with the App ----------------------------------------------------------
+def e20(ctx: Ctx, rec: Record) -> None:
+    """The mount is pinned one commit behind its head (the reset). bump-mounted-pins, dispatched on main
+    with the App's secrets in the environment mounted-pins, opens a PR moving exactly that pin to the
+    head, and the ci it dispatches on the branch passes (a PR opened with GITHUB_TOKEN starts none)."""
+    if not ctx.cfg.mount or not ctx.environment_on_main("mounted-pins"):
+        rec.result = "skip"
+        rec.notes.append("no mount (KM_E2E_MOUNT_REPO), or no environment mounted-pins restricted to main for its App")
+        return
+    mhead = ctx.api("M", f"repos/{ctx.cfg.org}/{ctx.cfg.mount}/commits/main")
+    main = ctx.repo_api("M", "git/ref/heads/main")["object"]["sha"]
+
+    def pin(ref: str) -> str:              # the commit of the gitlink
+        return ctx.repo_api("M", f"contents/mounted/notes?ref={ref}").get("sha") or "-"
+    was, behind = pin(main), mhead["parents"][0]["sha"]
+    rec.must("main pins the mount one commit behind its head", was == behind, behind[:7], was[:7])
+    t = now()
+    ctx.repo_api("M", "actions/workflows/bump-mounted-pins.yml/dispatches", method="POST", data={"ref": "main"})
+    run = ctx.wait_run(main, "bump-mounted-pins", "workflow_dispatch", after=t, timeout=600)
+    rec.links["bump-mounted-pins run"] = run["html_url"]
+    rec.must("the run passes", run["conclusion"] == "success", "success", run["conclusion"])
+    prs = ctx.poll("the bump PR", lambda: ctx.repo_api("M", f"pulls?state=open&head={ctx.cfg.org}:chore/bump-mounted-pins"), 120, 10)
+    pr = prs[0]
+    rec.links["bump PR"] = pr["html_url"]
+    head = pr["head"]["sha"]
+    files = [f["filename"] for f in ctx.repo_api("M", f"pulls/{pr['number']}/files")]
+    rec.check("one PR, opened by github-actions[bot], against main",
+              len(prs) == 1 and pr["user"]["login"] == "github-actions[bot]" and pr["base"]["ref"] == "main",
+              "1, github-actions[bot], main", f"{len(prs)}, {pr['user']['login']}, {pr['base']['ref']}")
+    moved = pin(head)
+    rec.check("it moves exactly the mount's pin, to the mount's head", files == ["mounted/notes"] and moved == mhead["sha"],
+              f"mounted/notes at {mhead['sha'][:7]}", f"{files} at {moved[:7]}")
+    ci = ctx.wait_run(head, "ci", "workflow_dispatch", timeout=600)
+    rec.links[f"ci run ({head[:7]})"] = ci["html_url"]
+    rec.check("the ci run the workflow dispatched on the branch passes", ci["conclusion"] == "success", "success", ci["conclusion"])
+
+
 # id, function, title. AFTER_FIRST runs right after E01, PARALLEL with scenarios.PARALLEL, TAIL before E24
 AFTER_FIRST = ("E27", e27, "km doctor reports the fork behind, km sync fast-forwards it (host and clone)")
 PARALLEL = [
@@ -527,4 +564,6 @@ PARALLEL = [
     ("E28", e28, "a fork branch cut from an older main: which ci.yml its pull_request run uses"),
     ("E25", e25, "a verbatim block: km approve --by ai refuses, a typed approval is red"),
 ]
-TAIL = [("E17", e17, "staleness demotes the lapsed pages, pushes past main-guard, rebuilds the bundle, reports the link")]
+# E20 before E17 (after it every PR's ci is red), and after the parallel ones: its bot PR would join E23's queue
+TAIL = [("E20", e20, "bump-mounted-pins with the App opens a PR moving the mount's pin to its head; its dispatched ci passes"),
+        ("E17", e17, "staleness demotes the lapsed pages, pushes past main-guard, rebuilds the bundle, reports the link")]
