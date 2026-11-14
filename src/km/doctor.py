@@ -498,35 +498,58 @@ def check_github(origin: str, offline: bool) -> str | None:
     return full
 
 
-def check_mounted_pins(root: Path, repo: str) -> None:
+# an environment's deployment rules as names: a branch rule by its name, any other (a tag rule) with its type
+BRANCH_RULES = '[.branch_policies[] | if .type == "branch" then .name else "\\(.type) \\(.name)" end] | join(" ")'
+
+
+def check_environments(root: Path, repo: str) -> None:
     """A brain with mounts and the bump-mounted-pins workflow needs the environment that holds the
-    workflow's app key, restricted to main (the workflow's header says how to set it up). One call;
-    a note, since only a maintainer can fix it."""
-    if not ((root / ".gitmodules").is_file() and (root / ".github/workflows/bump-mounted-pins.yml").is_file()):
+    workflow's app key, restricted to the default branch (the workflow's header says how to set it
+    up); the automerge workflow's optional App key, where that environment exists, the same. A note,
+    since only a maintainer can fix it."""
+    todo = [(name, if_missing) for name, if_missing, wanted in (
+        ("mounted-pins", ("the mounted pins do not move",
+                          "a maintainer sets it up as the top of .github/workflows/bump-mounted-pins.yml describes"),
+         (root / ".gitmodules").is_file() and (root / ".github/workflows/bump-mounted-pins.yml").is_file()),
+        ("automerge", None, (root / ".github/workflows/automerge.yml").is_file())) if wanted]
+    if not todo or (res := ask(f"for the default branch of {repo}", "api", "--hostname", "github.com",
+                               f"repos/{repo}", "--jq", ".default_branch", status="note")) is None:
         return
-    env = f"repos/{repo}/environments/mounted-pins"
-    what = f"for the environment mounted-pins of {repo}"
+    code, default = res
+    if code != 0 or not default:
+        report("note", f"gh could not read the default branch of {repo}: its environments are not checked")
+        return
+    for name, if_missing in todo:
+        check_environment(repo, name, if_missing, default)
+
+
+def check_environment(repo: str, name: str, if_missing: tuple[str, str] | None, default: str) -> None:
+    """The environment NAME of REPO restricted to its DEFAULT branch alone (a branch rule, not a tag
+    rule of that name); a missing one gets a note with IF_MISSING (what that means, the fix), or none
+    where it is None (an optional one)."""
+    env = f"repos/{repo}/environments/{name}"
+    what = f"for the environment {name} of {repo}"
     if (res := ask(what, "api", "--hostname", "github.com", env, "--jq", '.deployment_branch_policy | if . == null '
                    'then "open" elif .custom_branch_policies then "custom" else "protected" end', status="note")) is None:
         return
     code, policy = res
-    fix = "Settings, Environments, mounted-pins: deployment branches, selected branches, `main` only"
     if code != 0:
-        report("note", f"{repo} has no environment mounted-pins (or gh cannot see it): the mounted pins do not move",
-               "a maintainer sets it up as the top of .github/workflows/bump-mounted-pins.yml describes")
+        if if_missing:
+            report("note", f"{repo} has no environment {name} (or gh cannot see it): {if_missing[0]}", if_missing[1])
         return
     names = ""
     if policy == "custom":                   # a second call only for a list of chosen branches
         if (res := ask(what, "api", "--hostname", "github.com", f"{env}/deployment-branch-policies", "--jq",
-                       "[.branch_policies[].name] | join(\" \")", status="note")) is None:
+                       BRANCH_RULES, status="note")) is None:
             return
         names = res[1]
-    if names == "main":
-        report("ok", f"{repo} has the environment mounted-pins, restricted to main")
+    if names == default:
+        report("ok", f"{repo} has the environment {name}, restricted to the default branch {default}")
     else:
         what = {"open": "every branch", "protected": "every protected branch"}.get(policy, names or "no branch")
-        report("note", f"the environment mounted-pins of {repo} is open to {what}, not to main alone: "
-                       f"a workflow pushed on such a branch can read the app key", fix)
+        report("note", f"the environment {name} of {repo} is open to {what}, not to the default branch {default} alone: "
+                       f"a workflow pushed on such a branch can read the app key",
+               f"Settings, Environments, {name}: deployment branches, selected branches, `{default}` only")
 
 
 def main() -> int:
@@ -547,7 +570,7 @@ def main() -> int:
         check_hook(root)
         check_line_endings(root)
         if repo := check_github(origin, args.offline):
-            check_mounted_pins(root, repo)
+            check_environments(root, repo)
         check_git_login(root, origin)
         check_km_version(root)
         check_plugins(root)
