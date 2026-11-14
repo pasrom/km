@@ -98,7 +98,7 @@ SHIPPED = {
     "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388"},
     "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7"},
     "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e"},
-    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a"},
+    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a", "de0b3cc467824c05", "9ee47ce4374f2938"},
 }
 # approve-fork-ci versions that approved data endings only: the later ones approve any file but control
 # files, safe only beside km's ci and a km from 1.11.0 on, so upgrade does not widen one of these otherwise
@@ -454,7 +454,8 @@ def main() -> int:
                 if tpl == "team/automerge.yml":
                     done.append(f"{rel} does nothing until the repository variable KM_AUTOMERGE is 1: then it merges a km:ready "
                                 f"pull request whose docs are all at level ai by itself (its header has the conditions), "
-                                f"once ci.yml pins km 1.20.0 or later")
+                                f"once ci.yml pins km 1.20.0 or later; to merge with a GitHub App, so its merges start ci and main-guard on "
+                                f"main, see its header (KM_AUTOMERGE_APP)")
             elif tpl in SHIPPED and (copy := p.read_text(encoding="utf-8")) != new and (h := shipped_hash(copy)) != shipped_hash(new):
                 if tpl == "team/approve-fork-ci.yml" and h in ALLOWLIST_AFC and not km_ci:
                     done.append(f"left {rel}: this km's version approves a fork's ci run for any file but control files "

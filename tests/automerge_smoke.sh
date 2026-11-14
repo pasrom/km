@@ -19,7 +19,7 @@ for a in "$@"; do case "$a" in repos/*) p="$a";; esac; [ "$prev" = --jq ] && jqx
 f="$(printf '%s' "${p#repos/o/r}" | tr '/?=&' '____')"; f="${f#_}"; f="${f:-repo}"
 # a write (-X METHOD) is logged to writes with its input, and fails where <file>.fail is
 case " $* " in *" -X GET "*) ;; *" -X "*) m="$(sed 's/.* -X \([A-Z]*\) .*/\1/' <<<" $* ")"
-  echo "$m $f $(jq -c . 2>/dev/null)" >> "$FAKE/writes"; [ -f "$FAKE/$f.fail" ] && { echo "gh: Head branch was modified (HTTP 409)" >&2; exit 1; }
+  echo "$m $f $(jq -c . 2>/dev/null) token=${GH_TOKEN:-}" >> "$FAKE/writes"; [ -f "$FAKE/$f.fail" ] && { echo "gh: Head branch was modified (HTTP 409)" >&2; exit 1; }
   echo '{}'; exit 0;; esac
 # a contents read with --jq (its metadata, not the raw text) is served from <file>__json
 case "$p" in repos/o/r/contents/*) [ -n "$jqx" ] && f="${f}__json";; esac
@@ -216,11 +216,16 @@ out="$(cd "$T" && PATH="$T/bin:$PATH" kmpy -c 'import sys, km.automerge as a; a.
 # --self: the workflow's own pending check is left out, another name's is not
 setup 26; run --self other-name; grep -q "the check automerge/act is pending" <<<"$out" && ok "--self leaves out only the named workflow's own checks" || no "--self ($out)"
 # --- the workflow's act job: its own script, against the same stand-in ---
-act(){ kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["act"]["steps"][0]["run"])' \
-    "$REPO/src/km/templates/team/automerge.yml" > "$T/act.sh"
+# step JOB [ID]: the script of JOB's step ID (the first step without one)
+step(){ kmpy -c 'import sys, yaml; steps = yaml.safe_load(open(sys.argv[1]))["jobs"][sys.argv[2]]["steps"]
+print(next(s for s in steps if s.get("id") == sys.argv[3])["run"] if len(sys.argv) > 3 else steps[0]["run"])' \
+  "$REPO/src/km/templates/team/automerge.yml" "$@"; }
+# the merge step's script; MERGE_TOKEN and APP (the App's token, KM_AUTOMERGE_APP) from the environment,
+# GH_TOKEN as GitHub's: the stand-in logs the token of each write
+act(){ step act merge > "$T/act.sh"
   if [ -f "$F/comments.json" ]; then cp "$F/comments.json" "$F/issues_9_comments_per_page_100"
   else echo '[]' > "$F/issues_9_comments_per_page_100"; fi; rm -f "$F/writes"
-  out="$(cd "$T" && PATH="$T/bin:$PATH" GITHUB_OUTPUT=/dev/null REPO=o/r PR=9 DEFAULT=main HEAD="$HEAD" TIP="$BASE" \
+  out="$(cd "$T" && PATH="$T/bin:$PATH" GH_TOKEN=gh-token GITHUB_OUTPUT=/dev/null REPO=o/r PR=9 DEFAULT=main HEAD="$HEAD" TIP="$BASE" \
     MERGE="$1" COMMENT="$(printf '<!-- km:automerge -->\nwhy' | base64)" bash "$T/act.sh" 2>&1)"; rc=$?; }
 writes(){ cat "$F/writes" 2>/dev/null; }
 setup 30; act 1
@@ -266,9 +271,43 @@ writes | grep -q '^POST issues_9_comments .*why' && ok "act posts the decline ev
 setup 67; touch "$F/pulls_9_merge.fail"; cp "$F/pulls_9" "$F/pulls_9.2"; sed -i.bak 's/"merged":false/"merged":true/' "$F/pulls_9.2"; act 1
 { writes | grep -q "^PUT" && ! writes | grep -q "comments"; } && ok "act posts nothing when another run merged it as GitHub refused this one" || no "act refused but merged ($(writes))"
 
+# --- the App's token: the merge uses it when the act job minted one, GITHUB_TOKEN otherwise ---
+setup 90; act 1
+{ [ "$rc" = 0 ] && writes | grep -q "^PUT pulls_9_merge .* token=gh-token$" && ! grep -q "::" <<<"$out"; } \
+  && ok "act without the App merges with GITHUB_TOKEN, as before" || no "act no App ($out; $(writes))"
+setup 91; MERGE_TOKEN=app-token APP=1 act 1
+{ [ "$rc" = 0 ] && writes | grep -q "^PUT pulls_9_merge .*\"sha\":\"$HEAD\".* token=app-token$" && writes | grep -q "^POST issues_9_comments .* token=gh-token$"; } \
+  && ok "act merges with the App's token and comments with GITHUB_TOKEN (its comment stays the bot's)" || no "act App ($out; $(writes))"
+setup 92; MERGE_TOKEN="" APP=1 act 1
+{ [ "$rc" = 1 ] && writes | grep -q "^PUT pulls_9_merge .* token=gh-token$" && writes | grep -q "^POST issues_9_comments .*Merged by" \
+  && grep -q "::error::KM_AUTOMERGE_APP is 1 but no App token was minted" <<<"$out"; } \
+  && ok "act with KM_AUTOMERGE_APP=1 and no token merges with GITHUB_TOKEN, then fails the run" || no "act App unminted (exit $rc: $out; $(writes))"
+setup 93; MERGE_TOKEN="" APP=1 act ""
+{ [ "$rc" = 0 ] && ! writes | grep -q "^PUT"; } && ok "act on a declined verdict fails nothing for want of a token" || no "act App declined (exit $rc; $(writes))"
+# the workflow itself: only act names the environment and the secrets; the token is minted for this
+# repository alone with contents write only (a merge needs no more), by the action and pin bump-mounted-pins uses
+kmpy - "$REPO/src/km/templates/team" <<'PY' && ok "the App's token: only act holds it, scoped to this repository, contents write only, the pin bump-mounted-pins uses" || no "the App's token step"
+import json, sys, yaml
+d = yaml.safe_load(open(f"{sys.argv[1]}/automerge.yml"))
+bump = yaml.safe_load(open(f"{sys.argv[1]}/bump-mounted-pins.yml"))
+jobs = d["jobs"]
+pin = next(s["uses"] for j in bump["jobs"].values() for s in j["steps"] if "create-github-app-token" in s.get("uses", ""))
+assert "secrets." not in json.dumps({k: v for k, v in jobs.items() if k != "act"}), "a job other than act reads a secret"
+assert all("environment" not in v for k, v in jobs.items() if k != "act"), "a job other than act names an environment"
+mint = [s for s in jobs["act"]["steps"] if "create-github-app-token" in s.get("uses", "")]
+assert len(mint) == 1 and mint[0]["uses"] == pin, mint
+w = mint[0]["with"]
+assert {k: v for k, v in w.items() if k.startswith("permission-")} == {"permission-contents": "write"}, w
+assert w["owner"] == "${{ github.repository_owner }}" and w["repositories"] == "${{ github.event.repository.name }}", w
+assert "skip-token-revoke" not in w, "the token must be revoked when the job ends"
+assert mint[0]["continue-on-error"] is True and f"${{{{ {mint[0]['if']} && 'automerge' || '' }}}}" == jobs["act"]["environment"], \
+    "the token step runs on another condition than the environment's"
+merge = next(s for s in jobs["act"]["steps"] if s.get("id") == "merge")
+assert merge["env"]["GH_TOKEN"] == "${{ github.token }}" and merge["env"]["MERGE_TOKEN"] == "${{ steps.token.outputs.token }}", merge["env"]
+assert merge["run"].count("MERGE_TOKEN:-$GH_TOKEN") == 1, "the App's token is used for anything but the merge"
+assert jobs["act"]["permissions"] == {"contents": "write", "pull-requests": "write"}, jobs["act"]["permissions"]
+PY
 # --- the resolve job's script: exactly one open km:ready pull request with this run's head ---
-step(){ kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"][sys.argv[2]]["steps"][0]["run"])' \
-  "$REPO/src/km/templates/team/automerge.yml" "$1"; }
 step resolve > "$T/resolve.sh"; step decide > "$T/pin.sh"
 resolve(){ rm -f "$T/gho"; out="$(cd "$T" && PATH="$T/bin:$PATH" GITHUB_OUTPUT="$T/gho" REPO=o/r EVENT="$1" NUMBER="${2:-}" \
   SHA="$HEAD" HEAD_REPO=fork/r HEAD_REF=br bash "$T/resolve.sh" 2>&1)"; rc=$?; got="$(cat "$T/gho" 2>/dev/null)"; }
@@ -315,6 +354,7 @@ cat > "$T/gate.py" <<'EOF'
 import json, re, sys, yaml
 jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
 job, ctx = sys.argv[2], json.loads(sys.argv[3])
+field = sys.argv[4] if len(sys.argv) > 4 else "if"   # environment: its ${{ }} expression, a string
 def get(path):
     cur = [ctx]
     for part in path.split("."):
@@ -330,11 +370,13 @@ class S(str):   # GitHub's == compares strings case-insensitively
 def contains(a, b):
     return any(S(x) == b for x in a) if isinstance(a, list) else str(b).lower() in str(a).lower()
 # evaluates km's own template text (its if:, rewritten into Python), never input from elsewhere
-py = re.sub(r"\b(?:vars|github|needs|inputs)(?:\.(?:[\w-]+|\*))+", lambda m: f"get({m.group(0)!r})", jobs[job]["if"])
-print("run" if eval(py.replace("&&", " and ").replace("||", " or "), {"get": get, "contains": contains}) else "skip")
+expr = jobs[job][field].removeprefix("${{").removesuffix("}}")
+py = re.sub(r"\b(?:vars|github|needs|inputs)(?:\.(?:[\w-]+|\*))+", lambda m: f"get({m.group(0)!r})", expr)
+got = eval(py.replace("&&", " and ").replace("||", " or "), {"get": get, "contains": contains})
+print(("run" if got else "skip") if field == "if" else repr(str(got)))
 EOF
-gate(){ local want="$1" what="$2"; got="$(kmpy "$T/gate.py" "$REPO/src/km/templates/team/automerge.yml" "$3" "$4" 2>&1)"
-  [ "$got" = "$want" ] && ok "if: $what" || no "if: $what (got $got)"; }
+gate(){ local want="$1" what="$2" field="${5:-if}"; got="$(kmpy "$T/gate.py" "$REPO/src/km/templates/team/automerge.yml" "$3" "$4" "$field" 2>&1)"
+  [ "$got" = "$want" ] && ok "$field: $what" || no "$field: $what (got $got)"; }
 EV='"event_name":"pull_request_target","event":{"action":"labeled","label":{"name":"km:ready"},"pull_request":{"labels":[{"name":"km:ready"}]}}'
 gate run "a km:ready label with KM_AUTOMERGE=1 runs resolve" resolve "{\"vars\":{\"KM_AUTOMERGE\":\"1\"},\"github\":{$EV}}"
 gate skip "without KM_AUTOMERGE nothing runs" resolve "{\"vars\":{},\"github\":{$EV}}"
@@ -351,5 +393,8 @@ gate skip "decide: no pull request, no run" decide '{"needs":{"resolve":{"output
 gate run "decide: a pull request" decide '{"needs":{"resolve":{"outputs":{"pr":"9"}}}}'
 gate skip "act: not labelled, no run" act '{"needs":{"decide":{"outputs":{"labelled":""}}}}'
 gate run "act: labelled" act '{"needs":{"decide":{"outputs":{"labelled":"1"}}}}'
+gate "'automerge'" "a merge with KM_AUTOMERGE_APP=1 uses automerge" act '{"vars":{"KM_AUTOMERGE_APP":"1"},"needs":{"decide":{"outputs":{"merge":"1"}}}}' environment
+gate "''" "without KM_AUTOMERGE_APP none (GitHub would create it open to every branch)" act '{"vars":{},"needs":{"decide":{"outputs":{"merge":"1"}}}}' environment
+gate "''" "a decline uses none (it needs no key)" act '{"vars":{"KM_AUTOMERGE_APP":"1"},"needs":{"decide":{"outputs":{"merge":""}}}}' environment
 out="$(cd "$T" && PATH="$T/bin:$PATH" km automerge o/r nine 2>&1)"; rc=$?; [ "$rc" = 2 ] && ok "a NUMBER that is not one is a usage error" || no "usage error (exit $rc)"
 summary automerge_smoke

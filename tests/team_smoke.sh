@@ -690,6 +690,9 @@ cmp -s "$T/$AM" "$AMT" && ok "init --team writes the automerge workflow" || no "
 rm "$O/$AM"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$AM" "$AMT" && out_has "added $AM" && out_has "does nothing until the repository variable KM_AUTOMERGE is 1"; } \
   && ok "upgrade adds automerge to a team brain that lacks it, saying it is off until KM_AUTOMERGE=1" || no "upgrade adds automerge ($out)"
+cp "$REPO/tests/fixtures/automerge-1.20.0.yml" "$O/$AM"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$AM" "$AMT" && out_has "updated $AM to this km's version"; } \
+  && ok "upgrade replaces the automerge km 1.20.0 shipped (merging with an App's token once KM_AUTOMERGE_APP=1)" || no "upgrade replaces the 1.20.0 automerge ($out)"
 # --- approve-fork-ci: approves a fork's waiting ci run when the pull request changes only data ---
 cmp -s "$T/$AF" "$AFT" && ok "init --team writes the approve-fork-ci workflow" || no "init --team approve-fork-ci"
 rm "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
