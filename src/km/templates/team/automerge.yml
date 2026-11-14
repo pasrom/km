@@ -1,0 +1,255 @@
+# Shipped by km (`km init --team` or `km upgrade`); km upgrade replaces it while it is unchanged; once
+# changed it is owned by this repo.
+name: automerge
+
+# Contributors have no write access, and the maintainer merges. A pull request that needs nobody's
+# judgement can land without the maintainer: this workflow merges it by itself (rebase merge, at
+# exactly the head it judged) when `km automerge` says every condition holds (km's
+# src/km/automerge.py has the full list): open, not a draft, its base the default branch and never
+# changed; labelled km:ready, and the label counts on km ready's levels path (no control file changed,
+# every changed doc at level ai at its head and at the default branch's tip), whoever set it, and
+# every other changed file is a media file (images, SVG included, PDF, CSV, TSV; an SVG counts as media,
+# it is never rendered by CI or the bot; a script beside a page, a hook or a Makefile is for a person
+# to merge, though km ready counts the label); the last `Last reviewed:`
+# line of its body is the full head sha; the default branch's ci.yml runs the sign-off check, and on
+# exactly the head commit every check run of ci passed, its job validate among them, and every other
+# check passed or was skipped (a fork's ci run that waits for approval is no check), the ci run is the
+# pull request's (not a dispatched one), and the head carries the default branch's ci.yml (the same
+# blob: a branch from before a change to ci.yml is brought up to date first); no reviewer requests
+# changes; nothing moved while it was read. A
+# km:ready label that counts only because another person set it, on a doc at level human or a
+# control file, stays the maintainer's merge. One comment on the pull request says why it was not
+# merged, updated in place, each reason quoted in a code block.
+#
+# Setup: set the repository variable KM_AUTOMERGE to 1 (Settings, Secrets and variables, Actions,
+# Variables). Unset or anything else, the workflow does nothing. It needs km 1.20.0 or later pinned in
+# ci.yml (the version the pin's comment names, else the one src/km/__init__.py names at that commit);
+# with an older or unknown one it merges nothing and says so in a notice.
+#
+# It runs after the ci workflow completes for a pull request, when km:ready is applied, when a draft
+# is marked ready for review, and by hand (Actions, automerge, Run workflow, with the number). It never
+# checks out or runs the pull request's code: workflow_run and pull_request_target run this file from
+# the default branch, and km reads the pull request from the API as data. Three jobs: resolve finds
+# the pull request, decide installs km at the commit the default branch's ci.yml pins and holds a
+# read-only token, act alone can write and runs no km: it reads the pull request and the default
+# branch again and merges only while head, base, draft state and label are what decide judged.
+#
+# Known limits: a km:ready label applied by a workflow with GITHUB_TOKEN starts no run (that token's
+# events start no workflow); the next ci completion or a run by hand judges it. A merge made with
+# GITHUB_TOKEN starts no workflow, so no push run of ci (the served
+# bundle) or main-guard follows it; the next push to main by a person builds the bundle with it. ci
+# does not run again when main moves, so a pull request may be merged after another one landed
+# since its ci run, as a person merging it would. A third act for the same pull request while one
+# runs and another waits replaces the waiting one, which then shows as cancelled. A failed ci check
+# run in another check suite on the same commit (another pull request from the branch, a run of an
+# earlier event) keeps blocking until a new push. A ci.yml changed on the default branch and changed
+# back to the head's text is not told apart from one never changed.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  pull_request_target:
+    types: [labeled, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: the pull request number
+        required: true
+
+permissions: {}
+
+jobs:
+  resolve:
+    if: >-
+      vars.KM_AUTOMERGE == '1'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+              && github.event.workflow_run.conclusion == 'success')
+          || (github.event_name == 'pull_request_target'
+              && (github.event.action == 'ready_for_review' || github.event.label.name == 'km:ready')
+              && contains(github.event.pull_request.labels.*.name, 'km:ready')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read   # list the open pull requests
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+    steps:
+      - name: the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          # only a km:ready pull request is judged (km installs and reads for a minute): the job's filter
+          # for an event on the pull request, below for a ci run; dispatched by hand, always
+          if [ "$EVENT" != workflow_run ]; then
+            [[ "$NUMBER" =~ ^[0-9]+$ ]] || { echo "::notice::no pull request number: nothing to do"; exit 0; }
+            echo "pr=$NUMBER" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # a fork's run names no pull request: the one open pull request whose head is this run's
+          # commit, repository and branch (the branch name is the fork's: passed to jq as data)
+          prs="$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" | jq -sc --arg sha "$SHA" \
+            --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" 'add // [] | [.[] | select(.head.sha == $sha
+              and .head.repo.full_name == $repo and .head.ref == $ref) | {number, ready: any(.labels[]?; .name == "km:ready")}]')" \
+            || { echo "::notice::could not list the open pull requests: nothing merged"; exit 0; }
+          if [ "$(jq length <<<"$prs")" != 1 ]; then
+            echo "::notice::not exactly one open pull request has this run's head: nothing merged"; exit 0
+          fi
+          n="$(jq -r '.[0].number' <<<"$prs")"
+          jq -e '.[0].ready' <<<"$prs" >/dev/null || { echo "::notice::#$n is not labelled km:ready: nothing to do"; exit 0; }
+          echo "pr=$n" >> "$GITHUB_OUTPUT"
+
+  decide:
+    needs: resolve
+    if: needs.resolve.outputs.pr != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15     # km automerge waits up to 5 minutes for pending checks
+    permissions:
+      contents: read        # ci.yml, the docs and the schema km reads
+      pull-requests: read   # the pull request, its files and reviews
+      issues: read          # its label events and timeline
+      checks: read          # the check runs of its head commit
+      statuses: read        # and the commit statuses
+      actions: read         # the workflow runs those check runs belong to
+    outputs:
+      merge: ${{ steps.decide.outputs.merge }}
+      labelled: ${{ steps.decide.outputs.labelled }}
+      head: ${{ steps.decide.outputs.head }}
+      tip: ${{ steps.decide.outputs.tip }}
+      comment: ${{ steps.decide.outputs.comment }}
+    steps:
+      - name: the km the default branch's ci.yml pins
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # one commit of the default branch: km automerge refuses when the branch has moved on from it
+          if ! tip="$(gh api "repos/$REPO/git/ref/heads/$DEFAULT" --jq .object.sha)" \
+              || ! ci="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/.github/workflows/ci.yml?ref=$tip")"; then
+            echo "::notice::could not read ci.yml on $DEFAULT: nothing merged"; exit 0
+          fi
+          pins="$(grep -oE 'pasrom/km@[0-9a-f]{40}' <<<"$ci" | sort -u || true)"
+          if [ "$(grep -c . <<<"$pins" || true)" != 1 ]; then
+            echo "::notice::ci.yml on $DEFAULT does not pin exactly one km commit: nothing merged"; exit 0
+          fi
+          sha="${pins#pasrom/km@}" need=1.20.0   # the first km with km automerge as this workflow runs it
+          # its version: the pin's comment (`# vX.Y.Z`), else what src/km/__init__.py names at that commit
+          version="$(grep -m1 -oE "pasrom/km@${sha}[[:space:]]*#[[:space:]]*v?[0-9]+\.[0-9]+\.[0-9]+" <<<"$ci" \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          if [ -z "$version" ]; then
+            version="$(gh api -H 'Accept: application/vnd.github.raw' "repos/pasrom/km/contents/src/km/__init__.py?ref=$sha" \
+              | sed -nE "s/^__version__[[:space:]]*=[[:space:]]*[\"']([0-9]+\.[0-9]+\.[0-9]+)[\"'].*/\1/p" | head -1)" || version=""
+          fi
+          if [ -z "$version" ] || [ "$(printf '%s\n%s\n' "$need" "$version" | sort -V | head -1)" != "$need" ]; then
+            echo "::notice::ci.yml on $DEFAULT pins km ${version:-of an unknown version} (${sha:0:7}); automerge needs km $need or later: nothing merged"
+            exit 0
+          fi
+          printf 'sha=%s\ntip=%s\n' "$sha" "$tip" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pin.outputs.sha != ''
+        with:
+          repository: pasrom/km
+          ref: ${{ steps.pin.outputs.sha }}
+          path: .km-action
+          persist-credentials: false
+      - uses: ./.km-action          # km's own action at that commit: installs the km CLI, as in ci
+        if: steps.pin.outputs.sha != ''
+      - name: km automerge
+        id: decide
+        if: steps.pin.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.resolve.outputs.pr }}
+          WORKFLOW: ${{ github.workflow }}
+          TIP: ${{ steps.pin.outputs.tip }}
+        run: |
+          set -uo pipefail
+          rc=0; km automerge "$REPO" "$PR" --self "$WORKFLOW" --tip "$TIP" --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/verdict" || rc=$?
+          cat "$RUNNER_TEMP/verdict"
+          { echo "#$PR"; echo '```'; cat "$RUNNER_TEMP/verdict"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # 0 merge, 1 not; anything else (a km without the command) merges nothing and fails no check
+          [ "$rc" -le 1 ] || echo "::notice::km automerge exited $rc (does the pinned km have it?): nothing merged"
+
+  act:
+    needs: [resolve, decide]
+    if: needs.decide.outputs.labelled == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write       # merge
+      pull-requests: write  # merge; post or update the one comment
+    # one act per pull request at a time; decide is not in the group, so a ci completion and a label
+    # at once (the common pair) never replace a waiting job (GitHub cancels a waiting one in a group)
+    concurrency:
+      group: automerge-${{ needs.resolve.outputs.pr }}
+      cancel-in-progress: false
+    steps:
+      - name: merge at the judged head, or say why not
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.resolve.outputs.pr }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+          MERGE: ${{ needs.decide.outputs.merge }}
+          HEAD: ${{ needs.decide.outputs.head }}
+          TIP: ${{ needs.decide.outputs.tip }}
+          COMMENT: ${{ needs.decide.outputs.comment }}
+        run: |
+          set -euo pipefail
+          marker='<!-- km:automerge -->'
+          # post BODY: update this workflow's comment (anyone can write the marker: only the bot's counts),
+          # or add one; an unchanged comment is left as it is (review-request-guide's post, without `update`)
+          post(){ local own m=POST u="issues/$PR/comments"
+            own="$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100" | jq -cs --arg m "$marker" \
+              'add // [] | map(select(.user.login == "github-actions[bot]" and (.body | startswith($m)))) | first // {}')" \
+              || { echo "::warning::could not read the comments of #$PR"; return 0; }
+            if [ "$(jq -r '.body // empty' <<<"$own")" = "$1" ]; then echo "the comment is up to date"; return 0; fi
+            if id="$(jq -r '.id // empty' <<<"$own")" && [ -n "$id" ]; then m=PATCH; u="issues/comments/$id"; fi
+            jq -n --arg body "$1" '{body: $body}' | gh api -X "$m" "repos/$REPO/$u" --input - >/dev/null \
+              && echo "$m $u: done" || echo "::warning::could not comment on #$PR ($m $u)"; }
+          # merged: whether the pull request is merged now (another run, as ci completed when the label
+          # was applied, may have merged it a moment ago: its comment stands, nothing is posted)
+          merged(){ gh api "repos/$REPO/pulls/$PR" --jq .merged | grep -qx true; }
+          # read again right before the merge: decide judged HEAD with the default branch at TIP
+          pr="$(gh api "repos/$REPO/pulls/$PR")" || pr='{}'
+          if jq -e '.merged == true' <<<"$pr" >/dev/null; then echo "#$PR is merged already"; exit 0; fi
+          if [ "$MERGE" != 1 ]; then
+            post "$(base64 -d <<<"$COMMENT")"; exit 0
+          fi
+          [ "$pr" != '{}' ] || { echo "::notice::could not read #$PR again: nothing merged"; exit 0; }
+          tip="$(gh api "repos/$REPO/git/ref/heads/$DEFAULT" --jq .object.sha)" \
+            || { echo "::notice::could not read $DEFAULT again: nothing merged"; exit 0; }
+          # the reviewers' latest approving, change-requesting or dismissing reviews: none requests changes
+          # (km automerge's requested_changes: keep the two in step)
+          asked="$(gh api --paginate "repos/$REPO/pulls/$PR/reviews?per_page=100" | jq -sr 'add // []
+            | map(select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))) | group_by(.user.login)
+            | map(last | select(.state == "CHANGES_REQUESTED")) | length')" \
+            || { echo "::notice::could not read the reviews of #$PR again: nothing merged"; exit 0; }
+          if [ "$tip" != "$TIP" ] || [ "$asked" != 0 ] || ! jq -e --arg h "$HEAD" --arg b "$DEFAULT" '.state == "open"
+              and .draft == false and .head.sha == $h and .base.ref == $b and any(.labels[]?; .name == "km:ready")' <<<"$pr" >/dev/null; then
+            echo "::notice::the head, the base, the reviews or the label changed after the check: nothing merged"
+            post "$marker"$'\n'"Not merged by the automerge workflow: the head, the default branch, the reviews or the label changed after it was checked. It checks again when ci completes on a new push, when \`km:ready\` is applied again, or when it is run by hand."
+            exit 0
+          fi
+          # sha: GitHub merges only while the head is still HEAD
+          if got="$(jq -n --arg sha "$HEAD" '{merge_method: "rebase", sha: $sha}' \
+              | gh api -X PUT "repos/$REPO/pulls/$PR/merge" --input - 2>&1)"; then
+            echo "merged #$PR at $HEAD"
+            post "$marker"$'\n'"Merged by the automerge workflow (rebase) at $HEAD: every changed doc is at level ai and no control file changed, \`Last reviewed\` names the head and ci passed."
+          elif merged; then
+            echo "#$PR was merged by another run meanwhile"
+          else
+            echo "::notice::GitHub did not merge #$PR"
+            post "$marker"$'\n'"Not merged by the automerge workflow: GitHub refused the merge at ${HEAD:0:7}:"$'\n\n```\n'"$(jq -Rsc . <<<"$got")"$'\n```'
+          fi

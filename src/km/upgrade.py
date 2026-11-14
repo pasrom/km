@@ -17,11 +17,12 @@
   - a team brain gets the Dependabot config, and the obsolete `team_brain:` line goes.
 - A team brain gets the main-guard workflow, the approve-fork-ci workflow (only where ci.yml is km's,
   but for its pins and branch name, since it approves fork runs of that workflow), the bump-mounted-pins
-  workflow and its script, the review-request-guide workflow, and the pre-commit hooks that refuse a commit on main and a push to main,
+  workflow and its script, the review-request-guide workflow, the automerge workflow (only where ci.yml is
+  km's, since it merges on a green ci; off until the repository variable KM_AUTOMERGE is 1), and the pre-commit hooks that refuse a commit on main and a push to main,
   whichever it lacks, km's km-gen-index hook in its km entry once the target release has it, and its
   km ci workflow gets the `workflow_dispatch` trigger, so a workflow that opens a pull request with
   GITHUB_TOKEN can run the check on it. The bump-mounted-pins workflow and script, approve-fork-ci,
-  review-request-guide and main-guard are copies of km code: one that is still a version km shipped (its action pins aside) is replaced
+  review-request-guide, automerge and main-guard are copies of km code: one that is still a version km shipped (its action pins aside) is replaced
   by this km's, one the brain changed is left with a note.
 - Each accepted doc approved before km recorded what an approval covers (`approved_by` set, no
   `approved_digest`) gets the digest of its current content, once: when the brain moves from a km
@@ -88,7 +89,7 @@ OLD_COPIES = {
     ".pre-commit-config.yaml": ("pre-commit-config.template.yaml", {"8ef7f1ea977e2308", "d6819c5f6e97baa1"}),
 }
 # The km files a team brain carries as copies (the bump-mounted-pins job holding the app token must
-# not install km; the fixes of approve-fork-ci, review-request-guide and main-guard must reach every brain) ->
+# not install km; the fixes of approve-fork-ci, review-request-guide, automerge and main-guard must reach every brain) ->
 # shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
 # is still one of them is replaced by the current template, an edited one is left with a note.
 SHIPPED = {
@@ -97,6 +98,7 @@ SHIPPED = {
     "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388"},
     "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7"},
     "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e"},
+    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a"},
 }
 # approve-fork-ci versions that approved data endings only: the later ones approve any file but control
 # files, safe only beside km's ci and a km from 1.11.0 on, so upgrade does not widen one of these otherwise
@@ -422,6 +424,14 @@ def main() -> int:
                 else:
                     done.append(f"{rel} is the brain's own, and {why}: check that it approves data only, or remove it")
                 continue
+            if tpl == "team/automerge.yml" and not km_ci:   # a green ci must mean km's sign-off check; ci.yml may change later
+                if not p.exists():
+                    done.append(f"did not add {rel}: it merges a pull request whose ci passed, and ci.yml is not km's unchanged "
+                                f"one; once it is, copy it from km's src/km/templates/{tpl}")
+                    continue
+                if ci_text:
+                    done.append(f"{rel} merges a pull request whose ci passed, but ci.yml is not km's unchanged one: check "
+                                f"that ci.yml runs km validate --signoff-since and nothing from the checkout, or remove {rel}")
             if tpl == "team/approve-fork-ci.yml" and not km_ci:     # checked on every upgrade: ci.yml may change later
                 if not p.exists():
                     ci_is = "ci.yml is not km's unchanged one" if ci_text else "there is no ci.yml"
@@ -441,6 +451,10 @@ def main() -> int:
                                 "restricted to main, or GitHub creates it open to every branch (setup in the workflow's header)")
                 if tpl == "team/review-request-guide.yml":
                     done.append(f"{rel} does nothing until the repository variable KM_MAINTAINERS lists the maintainers' GitHub logins")
+                if tpl == "team/automerge.yml":
+                    done.append(f"{rel} does nothing until the repository variable KM_AUTOMERGE is 1: then it merges a km:ready "
+                                f"pull request whose docs are all at level ai by itself (its header has the conditions), "
+                                f"once ci.yml pins km 1.20.0 or later")
             elif tpl in SHIPPED and (copy := p.read_text(encoding="utf-8")) != new and (h := shipped_hash(copy)) != shipped_hash(new):
                 if tpl == "team/approve-fork-ci.yml" and h in ALLOWLIST_AFC and not km_ci:
                     done.append(f"left {rel}: this km's version approves a fork's ci run for any file but control files "

@@ -684,6 +684,12 @@ sed 's/fetch-depth: 0 .*/persist-credentials: false/' "$F/stale.want" > "$O/$SW"
 sed -e '/uses: actions\/checkout@/{n;N;d;}' -e 's|uses: pasrom/km@.*|run: pip install km|' "$F/stale.want" > "$O/$SW"; cp "$O/$SW" "$F/stale.own"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$SW" "$F/stale.own" && ! out_has "fetch-depth"; } && ok "a staleness workflow that does not pin km is left as it is" || no "staleness without km pin ($out)"
 cp "$F/stale.want" "$O/$SW"
+# --- automerge: shipped off (KM_AUTOMERGE), added by upgrade only beside km's ci ---
+AM=.github/workflows/automerge.yml; AMT="$REPO/src/km/templates/team/automerge.yml"
+cmp -s "$T/$AM" "$AMT" && ok "init --team writes the automerge workflow" || no "init --team automerge"
+rm "$O/$AM"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$AM" "$AMT" && out_has "added $AM" && out_has "does nothing until the repository variable KM_AUTOMERGE is 1"; } \
+  && ok "upgrade adds automerge to a team brain that lacks it, saying it is off until KM_AUTOMERGE=1" || no "upgrade adds automerge ($out)"
 # --- approve-fork-ci: approves a fork's waiting ci run when the pull request changes only data ---
 cmp -s "$T/$AF" "$AFT" && ok "init --team writes the approve-fork-ci workflow" || no "init --team approve-fork-ci"
 rm "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
@@ -708,6 +714,11 @@ printf 'meta: {profile: n}\n' > "$N/schema.local.yaml"; printf 'jobs:\n  t:\n   
 out="$(km upgrade --root "$N" 2>&1)"
 { [ ! -e "$N/$AF" ] && [ -f "$N/.github/workflows/main-guard.yml" ] && out_has "did not add $AF"; } \
   && ok "upgrade gives no approve-fork-ci to a team brain whose ci.yml is its own, with a note" || no "approve-fork-ci with an own ci.yml ($out)"
+{ [ ! -e "$N/$AM" ] && out_has "did not add $AM: it merges a pull request whose ci passed"; } \
+  && ok "upgrade gives no automerge to a team brain whose ci.yml is its own, with a note" || no "automerge with an own ci.yml ($out)"
+cp "$AMT" "$N/$AM"; out="$(km upgrade --root "$N" 2>&1)"; rm "$N/$AM"
+out_has "$AM merges a pull request whose ci passed, but ci.yml is not km's unchanged one" \
+  && ok "upgrade warns about an automerge beside a ci.yml that is not km's" || no "automerge beside an own ci.yml ($out)"
 sed "$MOVE" "$T/.github/workflows/ci.yml" > "$N/.github/workflows/ci.yml"; out="$(km upgrade --root "$N" 2>&1)"
 cmp -s "$N/$AF" "$AFT" && ok "a km ci.yml whose action pins moved still gets approve-fork-ci" || no "approve-fork-ci with moved pins ($out)"
 rm "$N/$AF"; grep -v "workflow_dispatch:" "$T/.github/workflows/ci.yml" > "$N/.github/workflows/ci.yml"; out="$(km upgrade --root "$N" 2>&1)"

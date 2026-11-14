@@ -15,7 +15,7 @@ Knowledge management via the `/km` skill ([km](https://github.com/pasrom/km); in
 
 - **Promote a finished note:** `km promote <slug> <source> --folder <dir> [--type T] [--stub-source]`
 - **Contribute without write access:** `/km contribute @<name>` (throwaway clone + fork PR; CI starts by itself when the PR touches no control file, see `.github/workflows/approve-fork-ci.yml`)
-- **Before asking the maintainer:** run `/km pr`; a doc at level `human` needs a sign-off from a team member who knows its subject. Ask the maintainer only to merge, once the PR is `km:ready` (`.github/workflows/review-request-guide.yml` comments when asked earlier)
+- **Before asking the maintainer:** run `/km pr`; a doc at level `human` needs a sign-off from a team member who knows its subject. Where the repository variable `KM_AUTOMERGE` is 1, a `km:ready` PR whose changed docs are all at level `ai`, with nothing beside them but media files (images including SVG, PDF, CSV) and no control file, is merged by `.github/workflows/automerge.yml` once ci passes; it comments when something stops it. Otherwise ask the maintainer only to merge, once the PR is `km:ready` (`.github/workflows/review-request-guide.yml` comments when asked earlier)
 - **Query:** "what do we know about X", `/km what is X`
 - **Update / supersede:** "update the X document", `/km update ...`
 
