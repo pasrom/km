@@ -101,25 +101,41 @@ jobs:
           # another base too. Approve only while all of them target the default branch and exactly one is
           # open, and only a run made after the last base change of any of them (a run made for the old
           # base would wait under this sha); one_pr sets `changed` to that time, 0 when none (an event
-          # time it cannot read counts as the far future). Checked again right before each approval
+          # time it cannot read counts as the far future), and returns 1 when that does not hold, 2 when
+          # a read failed, 3 when no open one is listed. Checked again right before each approval
           head="$(jq -rn --arg h "${HEAD_REPO%%/*}:$HEAD_REF" '$h | @uri')"   # the branch name is the fork's: encoded
           one_pr() {
             local prs n
-            prs="$(gh api --paginate "repos/$REPO/pulls?state=all&per_page=100&head=$head" | jq -sc 'add // []')" || return 1
-            jq -e --arg base "$DEFAULT" 'all(.base.ref == $base) and (map(select(.state == "open")) | length == 1)' \
+            prs="$(gh api --paginate "repos/$REPO/pulls?state=all&per_page=100&head=$head" | jq -sc 'add // []')" || return 2
+            jq -e --arg base "$DEFAULT" 'all(.base.ref == $base) and (map(select(.state == "open")) | length <= 1)' \
               <<<"$prs" >/dev/null || return 1
+            jq -e 'any(.[]; .state == "open")' <<<"$prs" >/dev/null || return 3   # none open: the listing may lag
             changed=0
             for n in $(jq -r '.[].number' <<<"$prs"); do
               changed="$(gh api --paginate "repos/$REPO/issues/$n/timeline?per_page=100" \
                 | jq -s --argjson was "$changed" 'add // [] | [$was, (.[] | select(.event | IN("base_ref_changed",
                     "automatic_base_change_succeeded", "automatic_base_change_failed"))
-                  | try (.created_at | fromdateiso8601) catch 1e15)] | max')" || return 1
+                  | try (.created_at | fromdateiso8601) catch 1e15)] | max')" || return 2
             done
           }
-          if ! one_pr; then
-            echo "::notice::not exactly one open pull request from this branch, or one against another base; a person approves"
+          # the listing of a branch's pull requests can lag right after one is opened (none open listed),
+          # and a read can fail once: then read again, up to three times 10 s apart, before leaving it to a
+          # person with a notice, $1 when they do not hold and one of its own when the last read failed
+          one_pr_or_exit() {
+            local try why
+            for try in 1 2 3; do
+              why=0; one_pr && return 0 || why=$?
+              [ "$why" = 1 ] && break
+              [ "$try" = 3 ] || sleep 10
+            done
+            case "$why" in
+              2) echo "::notice::could not read the pull requests from this branch or their timelines; not approved, a person approves";;
+              3) echo "::notice::no open pull request from this branch is listed; not approved, a person approves";;
+              *) echo "::notice::$1; a person approves";;
+            esac
             exit 0
-          fi
+          }
+          one_pr_or_exit "not exactly one open pull request from this branch, or one against another base"
           # the CI run of this commit may not exist yet (it has come two minutes late): wait up to three
           # minutes for it, then approve each waiting run of this fork's branch made for this event and
           # after the last base change; an older one, such as a run made while a pull request from the
@@ -142,32 +158,46 @@ jobs:
           fi
           # The API's head_sha, event and status filters have left a fork's waiting run out of their
           # listing for minutes, while it showed in the unfiltered one: read this commit's runs and, when
-          # none of them matches, the newest runs of the repository, and select here. A run waiting for
-          # approval reads action_required as its status or as its conclusion
+          # none of them matches, the newest runs of the repository, newest first, page by page until a
+          # page reaches back before the cutoff (at most 5 pages), and select here. Each listing is read
+          # once per try. A run waiting for approval reads action_required as its status or as its conclusion
           waiting() {   # the fork names its branch: pass it to jq as data, never inside the expression
-            { gh api "repos/$REPO/actions/runs?$1" || echo '{}'; } \
-              | jq -r --arg sha "$SHA" --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --argjson cut "$cut" \
-                '.workflow_runs[]? | select(.head_sha == $sha and .event == "pull_request"
-                  and (.status == "action_required" or .conclusion == "action_required")
-                  and .path == ".github/workflows/ci.yml"
-                  and .head_repository.full_name == $repo and .head_branch == $ref)
-                | {id, at: (try (.created_at | fromdateiso8601) catch 0)} | select(.at >= $cut) | "\(.id):\(.at)"' \
+            jq -r --arg sha "$SHA" --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --argjson cut "$cut" \
+              '.workflow_runs[]? | select(.head_sha == $sha and .event == "pull_request"
+                and (.status == "action_required" or .conclusion == "action_required")
+                and .path == ".github/workflows/ci.yml"
+                and .head_repository.full_name == $repo and .head_branch == $ref)
+              | {id, at: (try (.created_at | fromdateiso8601) catch 0)} | select(.at >= $cut) | "\(.id):\(.at)"' \
               || true
           }
+          read_ok=""   # set once a listing was read without an error
+          list_runs() { got="$(gh api "repos/$REPO/actions/runs?$1")" && read_ok=1 && runs="$(waiting <<<"$got")"; }
           for try in $(seq 1 18); do
-            runs="$(waiting "head_sha=$SHA&per_page=100")"
-            [ -n "$runs" ] || runs="$(waiting "per_page=100&exclude_pull_requests=true")"
+            runs=""
+            list_runs "head_sha=$SHA&per_page=100" || true
+            page=1
+            while [ -z "$runs" ] && [ "$page" -le 5 ] && list_runs "per_page=100&exclude_pull_requests=true&page=$page"; do
+              jq -e --argjson cut "$cut" '(.workflow_runs | length) == 100
+                and all(.workflow_runs[]; (try (.created_at | fromdateiso8601) catch 0) >= $cut)' <<<"$got" >/dev/null || break
+              page=$((page + 1))
+            done
             [ -n "$runs" ] || [ "$try" = 18 ] && break
             sleep 10
           done
           if [ -z "$runs" ]; then
-            echo "::notice::no run of $SHA made for this event and after the last base change waits for approval"
+            if [ -z "$read_ok" ]; then
+              echo "::notice::could not list the workflow runs for three minutes; not approved, a person approves"
+            else
+              echo "::notice::no run of $SHA made for this event and after the last base change waits for approval, after waiting three minutes; a person approves one that appears later"
+            fi
             exit 0
           fi
+          moved="another pull request from this branch appeared, or a base changed"
           for run in $runs; do
             id="${run%%:*}"
-            if ! { one_pr && jq -ne --argjson at "${run#*:}" --argjson cut "$(cutoff)" '$at >= $cut' >/dev/null; }; then
-              echo "::notice::another pull request from this branch appeared, or a base changed; a person approves"
+            one_pr_or_exit "$moved"
+            if ! jq -ne --argjson at "${run#*:}" --argjson cut "$(cutoff)" '$at >= $cut' >/dev/null; then
+              echo "::notice::$moved; a person approves"
               exit 0
             fi
             if gh api -X POST "repos/$REPO/actions/runs/$id/approve" >/dev/null; then
