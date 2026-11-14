@@ -697,6 +697,9 @@ cp "$REPO/tests/fixtures/approve-fork-ci-1.13.0.yml" "$O/$AF"; out="$(km upgrade
 cp "$REPO/tests/fixtures/approve-fork-ci-1.13.1.yml" "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$AF" "$AFT" && out_has "updated $AF to this km's version"; } \
   && ok "upgrade replaces the approve-fork-ci km 1.13.1 to 1.17.0 shipped" || no "upgrade replaces the 1.13.1 approve-fork-ci ($out)"
+cp "$REPO/tests/fixtures/approve-fork-ci-1.18.0.yml" "$O/$AF"; out="$(km upgrade --root "$O" 2>&1)"
+{ cmp -s "$O/$AF" "$AFT" && out_has "updated $AF to this km's version"; } \
+  && ok "upgrade replaces the approve-fork-ci km 1.18.0 shipped" || no "upgrade replaces the 1.18.0 approve-fork-ci ($out)"
 echo "# the brain's own guard" >> "$O/$AF"; cp "$O/$AF" "$F/af.before"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$AF" "$F/af.before" && out_has "left $AF: the brain changed it"; } \
   && ok "upgrade leaves a brain's own approve-fork-ci byte for byte, with a note" || no "upgrade overwrote approve-fork-ci ($out)"
@@ -926,6 +929,10 @@ cat > "$AB/gh" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >> "$AF_DIR/calls"
 [ -n "${AF_FAIL:-}" ] && case "$*" in *"$AF_FAIL"*) exit 1 ;; esac
+# AF_FLAKY PATTERN with AF_FLAKY_CALLS "N ...": the Nth call that matches PATTERN fails (counted from 1)
+if [ -n "${AF_FLAKY:-}" ]; then case "$*" in *"$AF_FLAKY"*)
+  echo x >> "$AF_DIR/flaky.count"; k="$(grep -c . "$AF_DIR/flaky.count")"
+  case " $AF_FLAKY_CALLS " in *" $k "*) exit 1 ;; esac ;; esac; fi
 [ "$2" = -X ] && { echo "approve $4" >> "$AF_DIR/approved"; exit 0; }
 case "$*" in
   */compare/*) cat "$AF_DIR/compare.json" ;;
@@ -935,7 +942,7 @@ case "$*" in
     if [ -f "$AF_DIR/pulls2.seen" ] && [ -f "$AF_DIR/timeline.late.json" ]; then cat "$AF_DIR/timeline.late.json"
     elif [ -f "$AF_DIR/timeline.$n.json" ]; then cat "$AF_DIR/timeline.$n.json"; else cat "$AF_DIR/timeline.json"; fi ;;
   *actions/runs\?head_sha=*) cat "$AF_DIR/runs.json" ;;
-  *actions/runs\?*) cat "$AF_DIR/runs.all.json" ;;
+  *actions/runs\?*) pg="$*"; pg="${pg##*&page=}"; if [ -f "$AF_DIR/runs.all.$pg.json" ]; then cat "$AF_DIR/runs.all.$pg.json"; else cat "$AF_DIR/runs.all.json"; fi ;;
 esac
 SH
 chmod +x "$AB/gh"
@@ -945,8 +952,9 @@ kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["appr
 # red). TREE, PRS, PRS2 (the pull requests from the second lookup on, the one right before approving),
 # TIMELINE (of every pull request), TIMELINE2 (of pull request 2 only), TIMELINE_LATE (of every pull
 # request from the second lookup on), SINCE (the event's time), RUN (the commit's run listing), RUNS_ALL
-# (the unfiltered run listing, empty by default), AF_REF (the fork's branch),
-# AF_DEFAULT and AF_FAIL (a call that fails) override the stand-in; the calls it made are in $AFD/calls
+# (the unfiltered run listing's every page, empty by default), RUNS_P2 (its page 2), AF_REF (the fork's branch),
+# AF_DEFAULT, AF_FAIL (a call that fails) and AF_FLAKY with AF_FLAKY_CALLS (some calls that fail) override the
+# stand-in; the calls it made are in $AFD/calls
 AFD="$F/af"; mkdir -p "$AFD"
 # RUN_OF FORK BRANCH CREATED [SHA EVENT STATUS CONCLUSION-JSON]: run 7 of ci.yml, by default one that waits
 RUN_OF(){ printf '{"id":7,"path":".github/workflows/ci.yml","head_repository":{"full_name":"%s"},"head_branch":"%s","created_at":"%s","head_sha":"%s","event":"%s","status":"%s","conclusion":%s}' \
@@ -962,6 +970,7 @@ afrun(){ local prs tree='{"truncated":false,"tree":[]}' run
   [ -z "${TIMELINE_LATE:-}" ] || printf '%s' "$TIMELINE_LATE" > "$AFD/timeline.late.json"
   printf '%s' "${PRS:-$prs}" > "$AFD/pulls.json"; printf '%s' "${PRS2:-${PRS:-$prs}}" > "$AFD/pulls2.json"
   printf '{"workflow_runs":[%s]}' "${RUN-$run}" > "$AFD/runs.json"; printf '{"workflow_runs":[%s]}' "${RUNS_ALL:-}" > "$AFD/runs.all.json"
+  [ -z "${RUNS_P2:-}" ] || printf '{"workflow_runs":[%s]}' "$RUNS_P2" > "$AFD/runs.all.2.json"
   AF_DIR="$AFD" PATH="$AB:$SB:$PATH" REPO=o/r BASE=b SHA=s HEAD_REPO=f/r HEAD_REF="${AF_REF:-x}" DEFAULT="${AF_DEFAULT:-main}" \
     SINCE="${SINCE:-2026-01-01T00:00:05Z}" CHANGED="${2:-$(printf '%s' "$1" | jq length)}" bash "$F/af.sh" > "$AFD/out" 2>&1 || return 3
   grep -qx "approve repos/o/r/actions/runs/7/approve" "$AFD/approved" 2>/dev/null && return 0
@@ -993,9 +1002,20 @@ W="$(RUN_OF f/r x 2026-01-01T00:00:09Z)"
 approves script-in-doc-folder '[{"filename":"d/a.md"},{"filename":"d/a_media/make_figure.py"},{"filename":"d/a_media/f.svg"},{"filename":"d/.gitkeep"}]'
 approves rename-in-doc-folder '[{"filename":"d/b.md","previous_filename":"d/a.py"}]'
 RUN="$OTHER_RUN" RUNS_ALL="$W" approves only-in-unfiltered-listing '[{"filename":"d/a.md"}]'
-called "api repos/o/r/actions/runs?per_page=100&exclude_pull_requests=true" || missed="$missed unfiltered-listing-read"
+called "api repos/o/r/actions/runs?per_page=100&exclude_pull_requests=true&page=1" || missed="$missed unfiltered-listing-read"
 RUNS_ALL="$OTHER_RUN,$W" AF_FAIL=head_sha= approves commit-listing-fails '[{"filename":"d/a.md"}]'
 RUN="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request action_required null)" approves status-action-required '[{"filename":"d/a.md"}]'
+# the pull requests from the branch read again while they do not hold: a listing that lags right after the
+# pull request was opened, or a read that fails once, before the wait or right before the approval
+PRS='[]' PRS2="[$(PR 1 open main)]" approves pulls-listing-lags '[{"filename":"d/a.md"}]'
+AF_FLAKY=pulls AF_FLAKY_CALLS=1 approves pulls-read-fails-once '[{"filename":"d/a.md"}]'
+AF_FLAKY=pulls AF_FLAKY_CALLS=2 approves recheck-pulls-read-fails-once '[{"filename":"d/a.md"}]'
+AF_FLAKY=timeline AF_FLAKY_CALLS=2 approves recheck-timeline-read-fails-once '[{"filename":"d/a.md"}]'
+# the unfiltered listing, newest first, is read page by page until a page reaches back before the cutoff
+FULL="$(jq -nc '[range(100) | {id: (100 + .), path: ".github/workflows/x.yml", head_sha: "o", event: "push",
+  status: "completed", conclusion: "success", created_at: "2026-01-01T00:00:20Z"}] | map(tojson) | join(",")' | jq -r .)"
+RUN="$OTHER_RUN" RUNS_ALL="$FULL" RUNS_P2="$W" approves on-page-2 '[{"filename":"d/a.md"}]'
+called "api repos/o/r/actions/runs?per_page=100&exclude_pull_requests=true&page=2" || missed="$missed page-2-read"
 [ -z "$missed" ] && ok "approve-fork-ci also approves a script in a doc folder, a waiting run only the unfiltered listing holds or when the commit's listing fails, beside an earlier closed pull request, after a base change long before the run, a run stamped up to 30 s before the event, on a default branch other than main, and for a branch name it must encode" \
   || no "approve-fork-ci did not approve:$missed"
 AF_FAIL=/approve afrun '[{"filename":"d/a.md"}]'; rc=$?
@@ -1047,6 +1067,33 @@ RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request_target)" ref
 RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request completed '"success"')" refuse unfiltered-finished '[{"filename":"d/a.md"}]'
 RUN="" RUNS_ALL="$(RUN_OF f/r x 2026-01-01T00:00:09Z s pull_request in_progress null)" refuse unfiltered-running '[{"filename":"d/a.md"}]'
 RUNS_ALL="$W" AF_FAIL=actions/runs refuse both-listings-fail '[{"filename":"d/a.md"}]'
+grep -q "^::notice::could not list the workflow runs" "$AFD/out" || refused="$refused both-listings-fail-notice"
+# no waiting run after the wait: a notice that says so; each listing read once per try, page 1 only when
+# it is not full, at most 5 pages when every page is full and newer than the cutoff
+RUN="$OTHER_RUN" refuse no-waiting-run '[{"filename":"d/a.md"}]'
+{ grep -q "^::notice::no run of s made for this event and after the last base change waits for approval, after waiting three minutes" "$AFD/out" \
+  && [ "$(grep -c "runs?head_sha=s&per_page=100$" "$AFD/calls")" = 18 ] && [ "$(grep -c "&page=1$" "$AFD/calls")" = 18 ] \
+  && ! grep -q "&page=2$" "$AFD/calls"; } || refused="$refused no-waiting-run-reads($(sort "$AFD/calls" | uniq -c | tr '\n' ' '))"
+RUN="$OTHER_RUN" RUNS_ALL="$FULL" refuse full-pages '[{"filename":"d/a.md"}]'
+{ [ "$(grep -c "&page=5$" "$AFD/calls")" = 18 ] && ! grep -q "&page=6$" "$AFD/calls"; } || refused="$refused page-cap"
+OLD="$(printf '%s' "$FULL" | sed 's/2026-01-01T00:00:20Z/2025-12-31T23:00:00Z/')"
+RUN="$OTHER_RUN" RUNS_ALL="$OLD" RUNS_P2="$W" refuse page-before-cutoff '[{"filename":"d/a.md"}]'
+grep -q "&page=2$" "$AFD/calls" && refused="$refused read-past-the-cutoff"
+# a read of the pull requests that keeps failing has its own notice, before the wait and right before approving
+AF_FAIL=pulls refuse pulls-fail-notice '[{"filename":"d/a.md"}]'
+grep -q "^::notice::could not read the pull requests from this branch" "$AFD/out" || refused="$refused pulls-fail-notice"
+AF_FLAKY=pulls AF_FLAKY_CALLS="2 3 4" refuse recheck-pulls-keep-failing '[{"filename":"d/a.md"}]'
+{ grep -q "^::notice::could not read the pull requests from this branch" "$AFD/out" && ! grep -q "another pull request" "$AFD/out" \
+  && [ "$(grep -c "pulls?" "$AFD/calls")" = 4 ]; } || refused="$refused recheck-read-fail-notice"
+PRS2="[$(PR 1 open main),$(PR 2 open main)]" refuse second-pr-while-waiting '[{"filename":"d/a.md"}]'
+{ grep -q "^::notice::another pull request from this branch appeared" "$AFD/out" && [ "$(grep -c "pulls?" "$AFD/calls")" = 2 ]; } \
+  || refused="$refused second-pr-not-read-again"   # a definite answer is not read again, a lag or a failed read is
+PRS="[$(PR 1 open main),$(PR 2 open main)]" refuse second-pr-at-once '[{"filename":"d/a.md"}]'
+[ "$(grep -c "pulls?" "$AFD/calls")" = 1 ] || refused="$refused second-pr-read-once"
+PRS='[]' refuse none-open-listed '[{"filename":"d/a.md"}]'
+{ grep -q "^::notice::no open pull request from this branch is listed" "$AFD/out" && [ "$(grep -c "pulls?" "$AFD/calls")" = 3 ]; } || refused="$refused none-open-read-three-times"
+PRS2="[$(PR 1 closed main)]" refuse closed-while-waiting '[{"filename":"d/a.md"}]'
+{ grep -q "^::notice::no open pull request from this branch is listed" "$AFD/out" && ! grep -q "another pull request" "$AFD/out"; } || refused="$refused closed-while-waiting-notice"
 # the workflow's control rule is km ready's without the brain's schema;
 # the characters that fold to ASCII are listed from Python's own tables
 control=""; eval "$(sed -n "/^control='/,/'\$/p" "$F/af.sh")"
