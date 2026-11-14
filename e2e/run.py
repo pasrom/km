@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import catalogue as C2                     # noqa: E402
+import merge_bot as MB                     # noqa: E402
 import scenarios as S                      # noqa: E402
 import seed                                # noqa: E402
 from check_names import NAME               # noqa: E402
@@ -35,7 +36,7 @@ MARKER = "KM_E2E_SANDBOX"
 SLUG = re.compile(rf"{NAME}/{NAME}")
 LABELS = ("km:ready", "km:needs-human", "km:blocked")
 PARALLEL = [*S.PARALLEL, *C2.PARALLEL]
-SCENARIOS = [S.FIRST, C2.AFTER_FIRST, *PARALLEL, *C2.TAIL, S.LAST]   # in the order a full run starts them
+SCENARIOS = [S.FIRST, C2.AFTER_FIRST, *PARALLEL, *MB.ALL, *C2.TAIL, S.LAST]   # in the order a full run starts them
 
 
 def say(msg: str) -> None:
@@ -176,6 +177,7 @@ def reset(ctx: Ctx) -> dict:
     seeded main to both, tag it e2e-baseline/<run id>. Actions are switched on by the caller."""
     cfg = ctx.cfg
     actions(ctx, False)
+    MB.switch(ctx, False)                 # the merge bot is on only for its own phase
     for kind in ("pulls", "issues"):
         for item in ctx.repo_api("M", f"{kind}?state=open&per_page=100"):
             if kind == "issues" and "pull_request" in item:
@@ -229,6 +231,23 @@ def run_one(ctx: Ctx, sid: str, fn, title: str) -> Record:
                 child.notes.append(f"not run: {rec.id} stopped before it")
     say(f"{sid}: {rec.result} ({rec.seconds:.0f} s)" + "".join(f"; {c.id}: {c.result}" for c in rec.children))
     return rec
+
+
+def run_parallel(ctx: Ctx, todo: list, workers: int) -> list[Record]:
+    """The scenarios TODO, WORKERS at a time; on a signal, no queued one starts and the running ones end."""
+    recs: list[Record] = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futs = []
+        try:
+            for s in todo:
+                futs.append(pool.submit(run_one, ctx, *s))
+                time.sleep(3)              # spread PR creation (secondary rate limits)
+            recs += [f.result() for f in futs]
+        except BaseException:
+            pool.shutdown(wait=True, cancel_futures=True)
+            recs += [f.result() for f in futs if f.done() and not f.cancelled() and not f.exception()]
+            raise
+    return recs
 
 
 def cleanup_steps(locked: bool, meta: dict, start: str) -> list[tuple[str, Callable[[Ctx], object], str]]:
@@ -338,18 +357,8 @@ def run(ctx: Ctx, a: argparse.Namespace) -> int:
             except ApiError as e:
                 say(f"warning: the fork could not be synced with main (HTTP {e.status}); km doctor in the fork would say behind")
                 recs[0].notes.append(f"fork sync failed: HTTP {e.status}")
-        todo = [s for s in PARALLEL if pick(s[0])]
-        with ThreadPoolExecutor(max_workers=max(1, a.workers)) as pool:
-            futs = []
-            try:
-                for s in todo:
-                    futs.append(pool.submit(run_one, ctx, *s))
-                    time.sleep(3)          # spread PR creation (secondary rate limits)
-                recs += [f.result() for f in futs]
-            except BaseException:          # a signal: start no queued scenario, let the running ones end
-                pool.shutdown(wait=True, cancel_futures=True)
-                recs += [f.result() for f in futs if f.done() and not f.cancelled() and not f.exception()]
-                raise
+        recs += run_parallel(ctx, [s for s in PARALLEL if pick(s[0])], a.workers)
+        recs += MB.phase(ctx, lambda todo: run_parallel(ctx, todo, a.workers), pick)   # KM_AUTOMERGE on for these only; AM-ok moves main
         for s in (*C2.TAIL, S.LAST):       # these change main: one after another, E24 last
             if pick(s[0]):
                 recs.append(run_one(ctx, *s))

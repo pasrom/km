@@ -87,10 +87,10 @@ def add_signed_page(ctx: Ctx, rec: Record, d: Path, stem: str, title: str, body:
 
 
 def push_and_open(ctx: Ctx, rec: Record, d: Path, br: str, title: str, body: str, role: str = "C",
-                  draft: bool = False) -> tuple[dict, str]:
+                  draft: bool = False, base: str = "main") -> tuple[dict, str]:
     ctx.push(role, d, ctx.cfg.fork if role == "C" else ctx.cfg.slug, f"HEAD:refs/heads/{br}")
     head = ctx.head(role, d)
-    pr = ctx.open_pr(role, br, title, body, draft=draft)
+    pr = ctx.open_pr(role, br, title, body, draft=draft, base=base)
     rec.links[f"PR #{pr['number']}"] = pr["html_url"]
     return pr, head
 
@@ -393,9 +393,10 @@ def e05_ctl(ctx: Ctx, rec: Record) -> None:
 
 
 # --- E08: the review-request guide comment -----------------------------------------------------
-def guide_comments(ctx: Ctx, n: int) -> list[dict]:
+def guide_comments(ctx: Ctx, n: int, marker: str = MARKER) -> list[dict]:
+    """The comments of a workflow (github-actions[bot]) that start with MARKER (the guide's by default)."""
     cs = ctx.repo_api("M", f"issues/{n}/comments?per_page=100")
-    return [c for c in cs if c["user"]["login"] == "github-actions[bot]" and c["body"].startswith(MARKER)]
+    return [c for c in cs if c["user"]["login"] == "github-actions[bot]" and c["body"].startswith(marker)]
 
 
 def wait_guide(ctx: Ctx, n: int, head: str, since: str, pattern: str) -> tuple[list[dict], dict]:
