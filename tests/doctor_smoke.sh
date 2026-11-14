@@ -251,6 +251,9 @@ case "$*" in
   "api --hostname github.com graphql -f query="*) [ "$GH_FORK" = me ] && echo me/r-1 ;;
   "api --hostname github.com repos/O/R/environments/mounted-pins --jq .deployment_branch_policy"*) [ -n "$GH_ENV" ] && echo "$GH_ENV" || exit 1 ;;
   "api --hostname github.com repos/O/R/environments/mounted-pins/deployment-branch-policies --jq"*) echo "$GH_BRANCHES" ;;
+  "api --hostname github.com repos/O/R --jq .default_branch") [ "$GH_DEFAULT" = fail ] && { echo '{"message":"x"}'; exit 1; }; echo "${GH_DEFAULT:-main}" ;;
+  "api --hostname github.com repos/O/R/environments/automerge --jq .deployment_branch_policy"*) [ -n "$GH_AMENV" ] && echo "$GH_AMENV" || exit 1 ;;
+  "api --hostname github.com repos/O/R/environments/automerge/deployment-branch-policies --jq"*) echo "${GH_AMBRANCHES:-main}" ;;
   *) exit 2 ;;
 esac
 SH
@@ -270,7 +273,7 @@ for s, w, f in d.results: print(s, w, "|", f)' 2>&1)"; }
   # time limits (the login, the environment), about 2 s; a call km did not cut off would take 30 s
   slow(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.remotes, km.doctor as d
 km.remotes.TIMEOUT = 1
-d.check_github("https://github.com/o/r.git", False); d.check_mounted_pins(pathlib.Path(sys.argv[1]), "O/R")
+d.check_github("https://github.com/o/r.git", False); d.check_environments(pathlib.Path(sys.argv[1]), "O/R")
 for s, w, f in d.results: print(s, w, "|", f)' "$E" 2>&1)"; }
   start=$SECONDS; GH_SLOW=all slow
   { out_has "FAIL gh gave no answer within 1 s for the login | check the network" && ! out_has "not signed in" && [ $((SECONDS-start)) -lt 10 ]; } \
@@ -283,14 +286,31 @@ for s, w, f in d.results: print(s, w, "|", f)' "$E" 2>&1)"; }
   { out_has "note gh gave no answer within 1 s for the environment mounted-pins of O/R" && ! out_has "open to no branch"; } \
     && ok "a timeout on the environment's branch list is no answer, not an environment open to no branch" || no "branch policies timeout ($out)"
   envcheck(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.doctor as d
-d.check_mounted_pins(pathlib.Path(sys.argv[1]), "O/R")
+d.check_environments(pathlib.Path(sys.argv[1]), "O/R")
 for s, w, f in d.results: print(s, w, "|", f)' "$1" 2>&1)"; }
   GH_ENV= envcheck "$E"; out_has "note O/R has no environment mounted-pins" && ok "a brain with mounts and the pins workflow but no environment gets a note" || no "missing environment ($out)"
   GH_ENV=open envcheck "$E"; out_has "note the environment mounted-pins of O/R is open to every branch" && ok "an environment open to every branch gets a note" || no "open environment ($out)"
-  GH_ENV=protected envcheck "$E"; out_has "open to every protected branch, not to main alone" && ok "an environment open to protected branches gets a note" || no "protected environment ($out)"
-  GH_ENV=custom GH_BRANCHES="main release" envcheck "$E"; out_has "open to main release, not to main alone" && ok "an environment open to main and another branch gets a note" || no "custom environment ($out)"
-  GH_ENV=custom GH_BRANCHES=main envcheck "$E"; out_has "ok O/R has the environment mounted-pins, restricted to main" && ok "an environment restricted to main is ok" || no "restricted environment ($out)"
+  GH_ENV=protected envcheck "$E"; out_has "open to every protected branch, not to the default branch main alone" && ok "an environment open to protected branches gets a note" || no "protected environment ($out)"
+  GH_ENV=custom GH_BRANCHES="main release" envcheck "$E"; out_has "open to main release, not to the default branch main alone" && ok "an environment open to main and another branch gets a note" || no "custom environment ($out)"
+  GH_ENV=custom GH_BRANCHES=main envcheck "$E"; out_has "ok O/R has the environment mounted-pins, restricted to the default branch main" && ok "an environment restricted to main is ok" || no "restricted environment ($out)"
   rm "$E/.gitmodules"; GH_ENV= envcheck "$E"; ! out_has "mounted-pins" && ok "without mounts the environment is not asked for" || no "no mounts, no check ($out)"
+  rules="$(kmpy -c 'import km.doctor as d; print(d.BRANCH_RULES)')"   # gh applies --jq as jq does
+  got="$(echo '{"branch_policies":[{"name":"main","type":"tag"},{"name":"main","type":"branch"}]}' | jq -r "$rules" 2>&1)"
+  [ "$got" = "tag main main" ] && ok "the rules read: a tag rule keeps its type, a branch rule is its name" || no "branch rules jq (needs jq: $got)"
+  # the automerge App's environment: optional, so only one that exists is checked
+  A="$T/ambrain"; mkdir -p "$A/.github/workflows" && touch "$A/.github/workflows/automerge.yml"
+  GH_AMENV= envcheck "$A"; [ -z "$out" ] && ok "automerge without its environment (no App) gets no note" || no "automerge no environment ($out)"
+  GH_AMENV=open envcheck "$A"; out_has "note the environment automerge of O/R is open to every branch, not to the default branch main alone" \
+    && ok "an automerge environment open to every branch gets a note (its key can merge)" || no "automerge open environment ($out)"
+  GH_AMENV=custom envcheck "$A"; out_has "ok O/R has the environment automerge, restricted to the default branch main" && ok "an automerge environment restricted to main is ok" || no "automerge restricted ($out)"
+  GH_AMENV=custom GH_AMBRANCHES="tag main" envcheck "$A"; out_has "is open to tag main, not to the default branch main alone" \
+    && ok "a tag rule named main is no restriction to the branch main" || no "automerge tag rule ($out)"
+  GH_AMENV=custom GH_DEFAULT=trunk GH_AMBRANCHES=trunk envcheck "$A"; out_has "ok O/R has the environment automerge, restricted to the default branch trunk" \
+    && ok "an environment restricted to a default branch other than main is ok" || no "automerge trunk ($out)"
+  GH_AMENV=custom GH_DEFAULT=fail envcheck "$A"; { out_has "could not read the default branch of O/R" && ! out_has "x"; } \
+    && ok "an unreadable default branch skips the environment checks with a note, never judging against gh's error" || no "automerge default unread ($out)"
+  GH_AMENV=custom GH_DEFAULT=trunk envcheck "$A"; { out_has "open to main, not to the default branch trunk alone" && out_has '`trunk` only'; } \
+    && ok "restricted to main where the default branch is trunk gets a note naming trunk" || no "automerge main vs trunk ($out)"
   C="$T/cred"; git init -q "$C"
   login(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.doctor as d
 d.check_git_login(pathlib.Path(sys.argv[1]), sys.argv[2])
