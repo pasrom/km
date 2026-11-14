@@ -26,6 +26,27 @@ name: automerge
 # ci.yml (the version the pin's comment names, else the one src/km/__init__.py names at that commit);
 # with an older or unknown one it merges nothing and says so in a notice.
 #
+# Optional, a GitHub App to merge with: a merge made with GITHUB_TOKEN starts no workflow, one made
+# with an App's token does, so ci (the served bundle) and main-guard then run on the default branch
+# after each merge. Without it everything works as described here, with that limit.
+# 1. A GitHub App with the repository permission Contents: read and write (a merge needs no more),
+#    installed on this brain only. Generate a private key. (The bump-mounted-pins App reads the
+#    mounted repositories: keep the write key apart from it.)
+# 2. Settings, Environments, New environment `automerge`; Deployment branches: selected branches,
+#    the default branch only. Create it before step 4: GitHub creates an environment a workflow
+#    names on its first run, open to every branch. An existing one: check its branches first.
+# 3. In that environment, the secrets CI_APP_CLIENT_ID (the app's client ID) and
+#    CI_APP_PRIVATE_KEY (the private key).
+# 4. The repository variable KM_AUTOMERGE_APP set to 1. Unset, no job names the environment.
+# Only the act job, and only when it merges, uses the environment and mints a token: for this
+# repository alone, Contents write only, revoked when the job ends. It merges with it;
+# its comments stay GITHUB_TOKEN's. Secrets missing or no token minted: it merges with
+# GITHUB_TOKEN, then fails the run, since the push runs do not follow. If the App may bypass the
+# rules of the default branch, the merge bypasses them too: leave it off the bypass list. The push
+# runs this starts end the loop: ci on a push starts no automerge run (it judges a pull request's
+# ci only), and main-guard checks that every merged commit belongs to the merged pull request, as
+# for a person's merge.
+#
 # It runs after the ci workflow completes for a pull request, when km:ready is applied, when a draft
 # is marked ready for review, and by hand (Actions, automerge, Run workflow, with the number). It never
 # checks out or runs the pull request's code: workflow_run and pull_request_target run this file from
@@ -35,9 +56,9 @@ name: automerge
 # branch again and merges only while head, base, draft state and label are what decide judged.
 #
 # Known limits: a km:ready label applied by a workflow with GITHUB_TOKEN starts no run (that token's
-# events start no workflow); the next ci completion or a run by hand judges it. A merge made with
-# GITHUB_TOKEN starts no workflow, so no push run of ci (the served
-# bundle) or main-guard follows it; the next push to main by a person builds the bundle with it. ci
+# events start no workflow); the next ci completion or a run by hand judges it. Without the App, a
+# merge starts no workflow, so no push run of ci (the served bundle) or main-guard follows it; the
+# next push to main by a person builds the bundle with it. ci
 # does not run again when main moves, so a pull request may be merged after another one landed
 # since its ci run, as a person merging it would. A third act for the same pull request while one
 # runs and another waits replaces the waiting one, which then shows as cancelled. A failed ci check
@@ -194,10 +215,26 @@ jobs:
     concurrency:
       group: automerge-${{ needs.resolve.outputs.pr }}
       cancel-in-progress: false
+    # the App (see the top): only with KM_AUTOMERGE_APP=1 and only to merge; an empty name is none
+    environment: ${{ vars.KM_AUTOMERGE_APP == '1' && needs.decide.outputs.merge == '1' && 'automerge' || '' }}
     steps:
+      - name: the App's token, for this repository's contents
+        id: token
+        if: vars.KM_AUTOMERGE_APP == '1' && needs.decide.outputs.merge == '1'
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
       - name: merge at the judged head, or say why not
+        id: merge
         env:
           GH_TOKEN: ${{ github.token }}
+          MERGE_TOKEN: ${{ steps.token.outputs.token }}
+          APP: ${{ vars.KM_AUTOMERGE_APP }}
           REPO: ${{ github.repository }}
           PR: ${{ needs.resolve.outputs.pr }}
           DEFAULT: ${{ github.event.repository.default_branch }}
@@ -242,11 +279,19 @@ jobs:
             post "$marker"$'\n'"Not merged by the automerge workflow: the head, the default branch, the reviews or the label changed after it was checked. It checks again when ci completes on a new push, when \`km:ready\` is applied again, or when it is run by hand."
             exit 0
           fi
+          # the App's token when there is one: its merge starts the push runs on the default branch.
+          # KM_AUTOMERGE_APP=1 without one (secrets missing, the key refused): GITHUB_TOKEN merges, and
+          # the job then fails, since the push runs the App is set up for do not follow
+          unminted=""; [ -z "${MERGE_TOKEN:-}" ] && [ "${APP:-}" = 1 ] && unminted=1
           # sha: GitHub merges only while the head is still HEAD
           if got="$(jq -n --arg sha "$HEAD" '{merge_method: "rebase", sha: $sha}' \
-              | gh api -X PUT "repos/$REPO/pulls/$PR/merge" --input - 2>&1)"; then
+              | GH_TOKEN="${MERGE_TOKEN:-$GH_TOKEN}" gh api -X PUT "repos/$REPO/pulls/$PR/merge" --input - 2>&1)"; then
             echo "merged #$PR at $HEAD"
             post "$marker"$'\n'"Merged by the automerge workflow (rebase) at $HEAD: every changed doc is at level ai and no control file changed, \`Last reviewed\` names the head and ci passed."
+            if [ -n "$unminted" ]; then
+              echo "::error::KM_AUTOMERGE_APP is 1 but no App token was minted: merged with GITHUB_TOKEN, so no push run follows. Restrict the environment automerge to the default branch first (GitHub creates a missing one open to every branch), then add its secrets CI_APP_CLIENT_ID and CI_APP_PRIVATE_KEY (see the top of this workflow)"
+              exit 1
+            fi
           elif merged; then
             echo "#$PR was merged by another run meanwhile"
           else
