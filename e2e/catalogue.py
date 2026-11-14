@@ -216,7 +216,13 @@ def e11(ctx: Ctx, rec: Record) -> None:
 
 
 # --- E12: a copied approval is no sign-off ---------------------------------------------------------
+COPIED = "with an approval no commit of this pull request gave it"
+
+
 def e12(ctx: Ctx, rec: Record) -> None:
+    """A copy of a person-approved page at a new path keeps no approval, at any level: one lowered to level
+    ai and a verbatim one of the customer manual are both red; sent back and approved again (by an AI at
+    level ai, by another person than the original's at level human) they are green."""
     d, br = contrib_branch(ctx, rec)
     copy_ai, copy_human = "process/e2e-label-guide-copy.md", "projects/p9001/e2e-manual-copy.md"
     write(d, copy_ai, (d / "process/label-guide.md").read_text(encoding="utf-8"))
@@ -225,12 +231,12 @@ def e12(ctx: Ctx, rec: Record) -> None:
     gen_index(ctx, rec, d)
     commit(ctx, "C", d, "docs: copy two person-approved pages")
     push_and_open(ctx, rec, d, br, "docs: copy two person-approved pages", "Invented e2e test data.")
-    log = expect_ci(ctx, rec, data_round(ctx, rec, d, br), "red: a copy lowered to level ai keeps no person's approval",
-                    VALIDATE, (finding("signoff", copy_ai, "is new and accepted at level ai with a person's approval no "
-                                       "commit of this pull request gave it (copied with the doc?)"),))
-    named = [ln.split("\t")[-1].strip() for ln in log.splitlines() if copy_human in ln]
-    rec.notes.append(f"observed: a verbatim copy of the customer manual at level human, digest matching: "
-                     f"{'findings ' + ' | '.join(named) if named else 'no finding (its copied approval passes)'}")
+    expect_ci(ctx, rec, data_round(ctx, rec, d, br), "red: neither copy keeps the original's approval", VALIDATE, (
+        finding("signoff", copy_ai, f"is new and accepted at level ai {COPIED}"),
+        finding("signoff", copy_human, f"is new and accepted at level human {COPIED}")))
+    resign(ctx, rec, d, copy_ai, AI, "process")
+    resign(ctx, rec, d, copy_human, "CCC", "projects")   # not BBB: the seed approved the original today as BBB
+    expect_ci(ctx, rec, data_round(ctx, rec, d, br, push=True), "after km demote and a sign-off of its own each: green")
 
 
 # --- E13: settings cannot hide a doc from the sign-off check ----------------------------------------
@@ -511,7 +517,7 @@ PARALLEL = [
     ("E09", e09, "the guide comment ignores a forged marker comment; a hostile file name stays quoted"),
     ("E10", e10, "removing approval: human: red, still red after an AI sign-off, green after a person's"),
     ("E11", e11, "customer page made internal: red, still red after an AI sign-off, green after a person's"),
-    ("E12", e12, "a copied person's approval at level ai is red; a verbatim copy at level human observed"),
+    ("E12", e12, "a copied approval is red at any level, green once each copy is signed off in the branch"),
     ("E13", e13, "skip_prefixes hiding a changed doc and a dropped status rule: not auto-approved, red"),
     ("E16", e16, "an edited accepted page: refused locally, red with approval-stale, green after demote and approve"),
     ("E19", e19, "a page owned by someone off the roster: red with owner-roster"),

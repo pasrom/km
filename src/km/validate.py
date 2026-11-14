@@ -18,6 +18,20 @@ doc a person must sign off may stay in review once an AI pre-review is recorded 
 anything else is a `signoff` error. A doc whose status and approved content (the digest fields and
 body) match the merge base is skipped, so a ripple edit to `related:` or `tags:` never asks for a new
 sign-off, and a doc approved before km recorded a digest passes until a PR changes its content.
+A doc at a path the merge base lacks, served with an approval it did not get in the branch (not served at
+some commit of it, added in review or sent back with `km demote`, and approved otherwise since), fails at
+any level: the digest binds the text, not the path, so a copy keeps
+the original's approval, and so does a doc (new, or at an existing path whose approval the branch changed: a
+copy written over it) whose approval another doc in the brain still holds at HEAD. A copy from outside the
+brain written over an existing path reads like an approval renewed in place and passes. A doc added and
+approved in one commit is no sign-off in the branch either: add it in review, approve in a separate commit.
+A move and a stub at the old path in one commit is no move git pairs: the doc counts as new (move first,
+stub in a commit of its own).
+A move git pairs as a rename keeps its approval only with the approved_digest the old path had at the merge
+base; with another one, or none there, it counts as new, and so does a move whose renames, followed commit
+by commit, do not lead back to a path with its approved_digest. Like every
+sign-off check this reads metadata, not authentication: it catches a copy made by accident or by an agent,
+not an approval forged by hand.
 A doc whose approval level (km.common.approval_level) the branch lowers from human to ai, by its own
 fields or by a change of approval_default (then every doc it lowers, changed or not), needs a person's
 sign-off in the branch (lowered_problem); raising the level asks for nothing. A doc the branch changes
@@ -69,7 +83,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_DEFAULT, APPROVAL_LEVELS, EXEMPT, approval_default_of, approval_level, body_of, is_ai_approver, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part
+from km.common import APPROVAL_DEFAULT, APPROVAL_FIELDS, APPROVAL_LEVELS, EXEMPT, approval_default_of, approval_level, body_of, is_ai_approver, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -600,29 +614,124 @@ def _blank(value) -> bool:
     return value is None or (isinstance(value, str) and not value.strip()) or value in ([], {})
 
 
+@functools.cache
+def _digests(rev: str) -> dict[str, tuple[str, ...]]:
+    """approved_digest value -> the paths that carry it in `rev`, from one git grep."""
+    found = git("grep", "-z", "-e", "^approved_digest:", rev, "--", "*.md", cwd=ROOT)
+    out: dict[str, tuple[str, ...]] = {}
+    for line in (found.stdout.splitlines() if not found.returncode else []):
+        head, _, text = line.partition("\0")       # "<rev>:<path>", then the line
+        value = text.partition(":")[2].strip().strip("'\"")
+        if value:
+            out[value] = (*out.get(value, ()), head[len(rev) + 1:])
+    return out
+
+
+def _holds(rev: str, path: str, fm: dict) -> bool:
+    """Whether `path` is served in `rev` with the approval `fm` carries."""
+    then = fm_at(rev, path)
+    return bool(then) and then.get("status") == SERVED_STATUS and all(str(then.get(k)) == str(fm.get(k)) for k in APPROVAL_FIELDS)
+
+
+def same_approval(rev: str, fm: dict, rel: str) -> str | None:
+    """A doc other than `rel` served in `rev` whose approval (approved_by, approved_at, approved_digest) is
+    the one `fm` carries, and in HEAD too (one the branch moved away or changed passed its approval on), or
+    None: a doc carrying it is a copy, even when sent back and approved again on the original's day by its
+    approver."""
+    for path in _digests(rev).get(str(fm.get("approved_digest") or ""), ()):
+        if path != rel and _holds(rev, path, fm) and (rev == "HEAD" or _holds("HEAD", path, fm)):
+            return path
+    return None
+
+
+@functools.cache
+def fm_at(rev: str, rel: str) -> dict | None:
+    """The frontmatter of `rel` as committed in `rev`, or None (no such file, none, or not a mapping)."""
+    d = doc_at(rev, rel)
+    return d[0] if d and isinstance(d[0], dict) else None
+
+
+@functools.cache
+def _range_log(mb: str) -> tuple[tuple[str, tuple[tuple[str, ...], ...]], ...]:
+    """The commits since the merge base `mb`, newest first, each with its name-status entries (a status and
+    its path, or for a rename or copy the old and new path), from one git log with rename detection."""
+    log = git("log", "-z", "--no-merges", "-M", "--relative", "--name-status", "--format=%x01%H", f"{mb}..HEAD", cwd=ROOT)
+    out = []
+    for chunk in (log.stdout.split("\x01")[1:] if not log.returncode else []):
+        sha, _, rest = chunk.partition("\0")
+        toks, entries = rest.lstrip("\n").split("\0"), []
+        while len(toks) > 1:
+            n = 3 if toks[0].lstrip("\n")[:1] in "RC" else 2
+            entries.append((toks[0].lstrip("\n"), *toks[1:n]))
+            toks = toks[n:]
+        out.append((sha, tuple(entries)))
+    return tuple(out)
+
+
+@functools.cache
+def _history(mb: str, rel: str) -> tuple[tuple[tuple[str, str], ...], str | None]:
+    """((commit, path there) for each commit since the merge base `mb` that changes the doc `rel`, newest
+    first, back to the commit that adds it; the doc's path at `mb` when the chain of renames reaches it, else
+    None). It follows a rename commit by commit (the old path deleted in that commit), not a copy: `git log
+    --follow` takes a copy of another doc for the doc's own history, so a copy made after the original was
+    signed off again would inherit that sign-off."""
+    out, path = [], rel
+    for sha, entries in _range_log(mb):
+        here, added = None, False
+        for st, *paths in entries:
+            if paths[-1] == path and st != "D":
+                here, added = (paths[0], False) if st[:1] == "R" else (path, st[:1] in "AC")
+        if here is None:
+            continue
+        out.append((sha, path))
+        if added:
+            return tuple(out), None
+        path = here
+    return tuple(out), path
+
+
+@functools.cache
+def _status_commits(mb: str) -> frozenset[str]:
+    """The commits since the merge base `mb` that change a status line, in one git log: only there can a doc
+    change between served and not served."""
+    log = git("log", "--no-merges", "--relative", "-G^status:", "--format=%H", f"{mb}..HEAD", cwd=ROOT)
+    return frozenset(log.stdout.split()) if not log.returncode else frozenset()
+
+
+def _statuses(mb: str, rel: str):
+    """The doc's frontmatter at each commit of its history that changes a status line, newest first, read
+    lazily (unreadable ones left out)."""
+    touched = _status_commits(mb)
+    for sha, path in _history(mb, rel)[0]:
+        if sha in touched and (then := fm_at(sha, path)) is not None:
+            yield then
+
+
 def sent_back(mb: str, rel: str, now: dict) -> bool:
     """Whether the branch (merge base `mb` to HEAD, following renames) sent the doc `rel` back to review
     and approved it again: at the last commit that has it not served (`km demote` in a commit of its own,
-    as the sign-off message asks), and the next commit that changes its status line has it served with the
+    as the sign-off message asks), and the next commit that changes its status has it served with the
     approval its frontmatter `now` carries, approved_digest included, which `km approve` writes. A doc
     served at every commit, or served again without a digest (a reverted demote), kept the merge base's
     approval: a kept approved_by and approved_at read the same as ones written again on the same day, so
-    only this tells them apart. One git log over the commits that change a status line, newest first, then
-    one git show per commit until the answer is known."""
-    log = git("log", "-z", "--no-merges", "--follow", "--relative", "--diff-filter=d", "-G^status:",
-              "--format=%H", "--name-only", f"{mb}..HEAD", "--", rel, cwd=ROOT)
-    toks = log.stdout.split("\0") if not log.returncode else []
-    newer = None                                    # the frontmatter at the next newer such commit
-    for sha, path in zip(toks[::2], toks[1::2]):    # "sha", "\npath": the path at that commit
-        d = doc_at(sha, path[1:]) if path.startswith("\n") else None
-        then = d[0] if d and isinstance(d[0], dict) else None
-        if then is None:
-            continue                                # unreadable there: says nothing either way
+    only this tells them apart."""
+    newer = None                                    # the frontmatter where it was served again
+    for then in _statuses(mb, rel):
         if then.get("status") != SERVED_STATUS:
             return newer is not None and "approved_digest" in newer and all(
-                newer.get(k) == now.get(k) for k in ("approved_by", "approved_at", "approved_digest"))
+                newer.get(k) == now.get(k) for k in APPROVAL_FIELDS)
         newer = then
     return False
+
+
+def approved_in_branch(mb: str, rel: str, now: dict) -> bool:
+    """Whether the new doc `rel` got the approval its frontmatter `now` carries in the branch: it was not
+    served at some commit (added in review, or sent back with `km demote`), and its approval differs from
+    the one it had there, so a status flipped by hand around a copied approval is none; an approval made
+    then and approved again in place after an edit counts. Hand-written approval fields are out of reach
+    here, as for every sign-off check (metadata, not authentication)."""
+    then = next((v for v in _statuses(mb, rel) if v.get("status") != SERVED_STATUS), None)
+    return then is not None and any(then.get(k) != now.get(k) for k in APPROVAL_FIELDS)
 
 
 def schema_at(rev: str) -> dict:
@@ -677,8 +786,7 @@ def hidden_docs(paths, then: dict) -> list[str]:
     return [p for p in paths if was_doc(p, then) and not is_doc(p)]
 
 
-def lowered_problem(rel: str, fm: dict, body: str, old: dict | None, mb: str, default_then: str,
-                    new: bool = False) -> str | None:
+def lowered_problem(rel: str, fm: dict, body: str, old: dict | None, mb: str, default_then: str) -> str | None:
     """Why the doc `rel`, whose approval level the branch lowered from human to ai (`old`: its frontmatter
     at the merge base `mb`, where the brain's default was `default_then`), may not be merged yet, or None.
     The level drops when `approval: human` goes, `audience` becomes internal, `type` leaves verbatim-block
@@ -687,15 +795,9 @@ def lowered_problem(rel: str, fm: dict, body: str, old: dict | None, mb: str, de
     Any other doc a person signs off in this branch: served, with a person's approved_by bound to this
     text, for a text the merge base's approval did not bind (a digest other than the merge base's), or
     again after `km demote` (sent_back). An approver or date edited by hand under the old digest is no
-    sign-off, and an approval from before km recorded digests counts only after `km demote`. A `new` doc
-    served at level ai with a person's approval must have got it in the branch too (sent_back), else it
-    may be a copy of another doc's. Levels see the field aliases applied. Raising the level asks for nothing."""
+    sign-off, and an approval from before km recorded digests counts only after `km demote`. Levels see
+    the field aliases applied. Raising the level asks for nothing."""
     now_ai = approval_level(with_aliases(fm)) == "ai"
-    if new and now_ai and fm.get("status") == SERVED_STATUS \
-            and fm.get("approved_by") and not is_ai_approver(fm["approved_by"]) and not sent_back(mb, rel, fm):
-        return (f"is new and {SERVED_STATUS} at level ai with a person's approval no commit of this pull request "
-                f"gave it (copied with the doc?): commit it in review, then `km approve {rel} --by <initials>` "
-                f"in a commit of its own")
     if not now_ai or not isinstance(old, dict) or approval_level(with_aliases(old), default_then) != "human":
         return None
     lowered = "the approval level was lowered from human to ai in this pull request"
@@ -722,13 +824,37 @@ def status_touched(mb: str) -> frozenset[str]:
     return frozenset(p.strip("\n") for p in log.stdout.split("\0") if p.strip("\n")) if not log.returncode else frozenset()
 
 
-def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str] | None, mb: str) -> str | None:
+def kept_approval(mb: str, fm: dict, old_path: str) -> bool:
+    """Whether `fm` carries the approved_digest the doc at `old_path` had at the merge base `mb`."""
+    old = fm_at(mb, old_path)
+    return old is not None and "approved_digest" in old and str(old["approved_digest"]) == str(fm.get("approved_digest"))
+
+
+def copy_kind(rel: str, fm: dict, mb: str, old_path: str | None) -> str | None:
+    """How the changed doc `rel` (`old_path`: its path at the merge base `mb`, None where git pairs none)
+    is new, as the start of a message, or None: a path the merge base lacks, unless its renames, followed
+    commit by commit, reach a path whose approved_digest it keeps (a move git pairs over the whole range only
+    when the text stays half the same); or a move without the approved_digest the old path had."""
+    if old_path is None:                            # a move only where the old path no longer holds it: else a copy
+        origin = _history(mb, rel)[1]
+        moved = origin and kept_approval(mb, fm, origin) and not same_approval("HEAD", fm, rel) == origin
+        return None if moved else "is new and"
+    if old_path != rel and not kept_approval(mb, fm, old_path):
+        return f"was moved here from {old_path} with another approved_digest than it had there, and is"
+    return None
+
+
+def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str] | None, mb: str,
+                    old_path: str | None) -> str | None:
     """Why the changed doc `rel` may not be merged yet (`then`: its frontmatter and body at the merge base
-    `mb`), or None."""
+    `mb`, at `old_path`, None where the merge base has none), or None. A new doc (copy_kind) served with a
+    digest must have been approved in the branch (approved_in_branch), at any level, with an approval no doc
+    served at the merge base carries: the digest binds the text, not the path, so a copy of an approved doc
+    carries an approval given for the original."""
     st = fm.get("status")
     if st in RETIRED_STATUS:
         return None
-    old, now = (then[0] if then else None), approved_digest(fm, body)
+    old, now = (then[0] if then and isinstance(then[0], dict) else None), approved_digest(fm, body)
     if old is not None and old.get("status") == st and approved_digest(old, then[1]) == now:
         return None                                  # only bookkeeping fields changed: no new sign-off due
     if st == SERVED_STATUS:
@@ -738,6 +864,18 @@ def signoff_problem(rel: str, fm: dict, body: str, then: tuple[dict | None, str]
             return f"is {st} without approved_by, which setting the status by hand never signs off: {fix}"
         if "approved_digest" not in fm:              # an approval written by hand: nothing ties it to this text
             return f"is {st} without approved_digest, so no approval is bound to this text: {fix}"
+        new = copy_kind(rel, fm, mb, old_path)
+        # another doc's approval: on a new doc, and on one whose approval the branch changed (a copy written
+        # over an existing path)
+        twin = (same_approval(mb, fm, rel) or same_approval("HEAD", fm, rel)) \
+            if new or (old_path == rel and not kept_approval(mb, fm, rel)) else None
+        if twin or (new and not approved_in_branch(mb, rel, fm)):
+            cause = (f"it carries exactly the approval {twin} has, so it was copied; a sign-off of its own differs "
+                     f"in approver or day" if twin else "added already approved in one commit, or copied with the doc?")
+            return (f"{new or 'carries the approval of another doc, and is'} {st} at level "
+                    f"{approval_level(with_aliases(fm))} with an approval no commit of this pull request gave it "
+                    f"({cause}), and needs a sign-off of its own: `km demote {rel}` in a commit of its own, then "
+                    f"`km approve {rel} --by <approver>` (a person's initials at level human) in a separate commit")
         if (old is not None and old.get("status") == st and "approved_digest" not in old
                 and all(old.get(k) == fm.get(k) for k in ("approved_by", "approved_at"))
                 and not sent_back(mb, rel, fm)):
@@ -884,8 +1022,8 @@ def main() -> int:
         digest = approved_digest(fm, body) if "approved_digest" in fm and fm.get("status") == SERVED_STATUS else None
         if rel in changed:
             _then = changed[rel] and doc_at(mb, changed[rel])
-            if _why := (lowered_problem(rel, fm, body, _then and _then[0], mb, default_then, new=changed[rel] is None)
-                        or signoff_problem(rel, fm, body, _then, mb)):
+            if _why := (lowered_problem(rel, fm, body, _then and _then[0], mb, default_then)
+                        or signoff_problem(rel, fm, body, _then, mb, changed[rel])):
                 errors.append(("signoff", rel, _why))
         elif default_dropped and (_why := lowered_problem(rel, fm, body, fm, mb, default_then)):   # as at the merge base
             errors.append(("signoff", rel, _why))
