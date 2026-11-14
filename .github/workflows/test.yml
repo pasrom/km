@@ -32,6 +32,7 @@ jobs:
         run: KM_TEST_UV=forbid bash tests/sync_smoke.sh
       - run: bash tests/list_smoke.sh
       - run: bash tests/ready_smoke.sh
+      - run: bash tests/automerge_smoke.sh
       - run: bash tests/signoff_smoke.sh
       - run: bash tests/skill_smoke.sh
       - run: bash tests/hook_smoke.sh
