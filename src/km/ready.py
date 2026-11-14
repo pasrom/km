@@ -86,6 +86,16 @@ CONTROL_NAMES = {"claude.md", "claude.local.md", "agents.md", "agents.override.m
                  "conventions.md", "codeowners"}   # CODEOWNERS: GitHub reads it in docs/ and .github/ too
 INERT = {".gitkeep", ".ds_store"}    # dot files in a doc folder that nothing reads
 CONTROL_PATHS = ("scripts", "dist")
+# What the automerge workflow lets through beside the docs: files nothing runs, by their ending. A
+# script next to a page (a generator in _media/), a hook or a Makefile is for a person to merge.
+# An SVG counts as media too: nothing in CI or the bot renders or runs it.
+MEDIA = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".bmp", ".tif", ".tiff", ".ico", ".pdf", ".csv", ".tsv"}
+
+
+def media(path: str) -> bool:
+    """A media file the automerge workflow lets through, or a dot file nothing reads (INERT)."""
+    low = fold(path)
+    return posixpath.splitext(low)[1] in MEDIA or low.rsplit("/", 1)[-1] in INERT
 
 
 def gh_text(*args: str) -> tuple[str | None, bool]:
@@ -202,7 +212,11 @@ def label_events(repo: str, number: str) -> list | None:
                  ' | {event, login: .actor.login, type: .actor.type, app: (.performed_via_github_app != null)} | tojson')
 
 
-def verdict(repo: str, number: str, head: str | None) -> tuple[bool, str]:
+def verdict(repo: str, number: str, head: str | None, ai_only: bool = False, base: str | None = None) -> tuple[bool, str]:
+    """(whether the label counts, why). AI_ONLY (the automerge workflow's question, narrower than the
+    queue's): whoever set it, it counts only on the levels path, no control file and every changed doc
+    at level ai, and every other changed file is a media file (MEDIA); BASE, a commit judged in place of
+    the pull request's base (the default branch's tip the workflow runs at)."""
     pr = lines("api", f"repos/{repo}/pulls/{number}", "--jq",   # the fields used, no more to parse
                "{user: {login: .user.login}, head: {sha: .head.sha}, base: {sha: .base.sha}, changed_files} | tojson")
     if not pr or not isinstance(pr[0], dict):
@@ -211,7 +225,7 @@ def verdict(repo: str, number: str, head: str | None) -> tuple[bool, str]:
     author = str((pr.get("user") or {}).get("login") or "")
     events = label_events(repo, number)
     last = events[-1] if events else None
-    if not isinstance(last, dict) or last.get("event") != "labeled":
+    if not events or not isinstance(last, dict) or last.get("event") != "labeled":
         return False, f"no {LABEL} label event could be read"
     actor = str(last.get("login") or "")
     who, author = actor.lower(), author.lower()
@@ -219,10 +233,11 @@ def verdict(repo: str, number: str, head: str | None) -> tuple[bool, str]:
         return False, "the label's actor or the pull request's author is unknown"
     # a bot or an app acts for whoever runs it, maybe the author: judged like the author's own label
     automated = last.get("type") == "Bot" or last.get("app") or who.endswith("[bot]")
-    if who != author and not automated:
+    if who != author and not automated and not ai_only:
         return True, f"{LABEL} applied by {printable(actor)}, not the author"
-    counts, why = by_level(repo, number, head, pr, events)
-    return counts, f"set by {'a bot or app' if automated else 'its author'}, and {why}"
+    counts, why = by_level(repo, number, head, pr, events, media_only=ai_only, base_at=base)
+    by = "a bot or app" if automated else "its author" if who == author else printable(actor)
+    return counts, f"set by {by}, and {why}"
 
 
 def tree_links(repo: str, sha: str) -> dict | None:
@@ -236,10 +251,13 @@ def tree_links(repo: str, sha: str) -> dict | None:
     return {str(p): str(m) for p, m in got[0]["links"]}
 
 
-def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -> tuple[bool, str]:
+def by_level(repo: str, number: str, head: str | None, pr: dict, events: list, media_only: bool = False,
+             base_at: str | None = None) -> tuple[bool, str]:
     """Whether a label its author, a bot or an app set counts: no control file changed, every changed
-    doc at level ai."""
-    sha, base = (pr.get("head") or {}).get("sha"), (pr.get("base") or {}).get("sha")
+    doc at level ai (MEDIA_ONLY: and every other file a media file), judged against BASE_AT or the
+    pull request's base."""
+    sha, pr_base = (pr.get("head") or {}).get("sha"), (pr.get("base") or {}).get("sha")
+    base = base_at or pr_base
     if head and sha != head:
         return False, "the head moved"
     if not (isinstance(sha, str) and SHA.fullmatch(sha) and isinstance(base, str) and SHA.fullmatch(base)):
@@ -266,6 +284,8 @@ def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -
         if not (doc_now or doc_then):
             if is_index(path) or is_index(old):     # an index km does not judge (under skip_prefixes)
                 return False, f"it changes {printable(path)}, an index outside the docs"
+            if media_only and (bad := next((p for p in (path, old) if not media(p)), None)):
+                return False, f"it changes {printable(bad)}, neither a doc nor a media file: a person merges"
             continue                                # a file next to the pages: an image, a script, data
         if doc_now != doc_then:
             return False, f"it moves {printable(old)} to {printable(path)}, " \
@@ -288,8 +308,9 @@ def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -
         # pull request merges into, which may hold a link the merge base does not
         modes = [pool.submit(tree_links, repo, c) for c in (sha, mb, base)] if isinstance(mb, str) and SHA.fullmatch(mb) else []
         read = list(pool.map(texts, docs))
-    links = [m.result() for m in modes]
-    if not links or None in links:
+    got = [m.result() for m in modes]
+    links = [t for t in got if t is not None]
+    if not got or len(links) != len(got):
         return False, "the trees of its commits could not be read in full"
     if bad := sorted(paths & {p for t in links for p in t}):
         return False, f"it changes {printable(bad[0])}, a symlink or submodule"
@@ -309,7 +330,7 @@ def by_level(repo: str, number: str, head: str | None, pr: dict, events: list) -
     if not n:
         return False, "it changes no doc"
     again = lines("api", f"repos/{repo}/pulls/{number}", "--jq", "[.head.sha, .base.sha] | tojson")
-    if again != [[sha, base]]:
+    if again != [[sha, pr_base]]:
         return False, "the head or base moved while it was read"
     if label_events(repo, number) != events:
         return False, f"the {LABEL} label changed while it was read"
