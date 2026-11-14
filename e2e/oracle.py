@@ -55,10 +55,9 @@ def candidate_reasons(pr: dict, default: str, body: str, ready: tuple[int, str],
                       ci_waiting: bool = False) -> list[str]:
     """Why a km:ready PR is not a merge candidate (empty: it is one), per queue.md: base, the last `Last
     reviewed:` line equal to the full head sha, the label counts (READY: `km ready`'s exit 0 or 1 and its
-    line), checks pass (CHECKS: `gh pr checks --json name,workflow,bucket`). One condition more than
-    queue.md: a passing check of the ci workflow must be there, since `gh pr checks` lists no check for a
-    ci run that waits for approval and then passes (observed). CI_WAITING (a ci run of the head waits for
-    approval) only names the cause."""
+    line), checks pass with a passing check of the ci workflow among them (CHECKS: `gh pr checks --json
+    name,workflow,bucket`), since `gh pr checks` lists no check for a ci run that waits for approval and
+    then passes. CI_WAITING (a ci run of the head waits for approval) only names the cause."""
     if ready[0] not in (0, 1):
         raise NotChecked(f"km ready exited {ready[0]}: {ready[1]}")
     why = []

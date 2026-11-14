@@ -371,8 +371,8 @@ def e23(ctx: Ctx, rec: Record) -> None:
               and pending.get("reasons") == ["no passing ci check (its run waits for a person's approval)"],
               "km:ready, one reason 'no passing ci check (its run waits ...)'", pending)
     chk = q["details"].get(cases["pending"][0], {}).get("checks", [])
-    rec.notes.append(f"observed (km finding when ci is missing): `gh pr checks` on the PR whose ci waits for approval "
-                     f"lists {[(c['workflow'], c['bucket']) for c in chk]}")
+    rec.notes.append(f"observed (why queue.md wants a passing ci row, not only gh's exit 0): `gh pr checks` on the PR "
+                     f"whose ci waits for approval lists {[(c['workflow'], c['bucket']) for c in chk]}")
     # the docs groups of the seed (main has no doc change from a pull request): a self-check of the oracle
     docs = {g: sorted(p for ps in by.values() for p in ps) for g, by in q["docs"].items()}
     want = {"overdue": ["product/charging-note.md", "product/lamp-overview.md"],
