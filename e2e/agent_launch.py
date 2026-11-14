@@ -145,11 +145,17 @@ for a in "$@"; do
   esac
   if [ "$1" = api ]; then
     # the endpoint as GitHub gets it: one leading slash, the query and the fragment do not count
+    case "$a" in //*) refuse "$a";; esac  # gh keeps a second slash, which would hide the endpoint from the checks
     p=${a#/}; p=${p%%\?*}; p=${p%%#*}
     if [ "$p" = graphql ]; then
       { [ "$n" = 2 ] && [ "$a" = graphql ]; } || refuse "$a (GraphQL only as 'gh api graphql')"
     fi
-    case "$p" in repos/*|user|user/*|gists*|orgs/*) case "$a" in *..*|*%*|*/|*[[:space:]]*) refuse "$a";; esac;; esac
+    # no dot segment, escape, trailing slash or space in an endpoint; the one `...` allowed is km ready's
+    # `repos/<o>/<r>/compare/<sha>...<sha>` (two full commit shas, a query at most, no fragment)
+    case "$p" in repos/*|user|user/*|gists*|orgs/*)
+      case "$a" in *%*|*/|*[[:space:]]*) refuse "$a";;
+        *..*) printf %s "${a#/}" | grep -qxE 'repos/[^/]*[^/.][^/]*/[^/]*[^/.][^/]*/compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}(\?[^#]*)?' || refuse "$a";;
+      esac;; esac
   fi
   [ "$1 ${2:-}" = "api graphql" ] && { graphql_ok "$a" || refuse "a GraphQL request other than a read, a thread reply or a resolve"; }
   case "$a" in

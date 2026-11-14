@@ -173,6 +173,17 @@ for args in "api user -iXPATCH -ifbio=x" "pr create -dR{other}/{x} -t x" "api gi
 done
 total=$((total + 1)); Rf api 'repos/{other}/{x}/issues#a b' -f title=t && refused=$((refused + 1))
 [ "$refused" = "$total" ] && ok "the role's gh refuses, with its own message: shown tokens, GraphQL other than 'gh api graphql' reads and the two thread writes, input from files, bundled short flags, attached -R, gists, repo subcommands, generate, deploy keys, fragments, dot segments, writes to user or the repository itself ($total cases)" || no "wrapper refusals: $refused of $total"
+# km ready's compare call: two full shas joined by `...`, allowed for the writing and the read-only role;
+# no other dot segment rides on it
+H1=$(printf 'a%.0s' {1..40}); H2=$(printf 'b%.0s' {1..40})
+c=0; for r in "$W" "$Q"; do env -i PATH=/usr/bin:/bin "$r/bin/gh" api "/repos/{O}/{b}/compare/$H1...$H2?per_page=1" --jq "{files: [.files[].filename], total: .total_commits} | tojson" >/dev/null 2>&1 || c=1; done
+[ "$c" = 0 ] && ok "km ready's compare call (two full shas, a query) passes for both roles" || no "compare call refused"
+cmp=0
+for e in "repos/{o}/{b}/compare/$H1...$H2/../../{x}/{y}/issues" "repos/{o}/{b}/compare/${H1:1}...$H2" "repos/{o}/{b}/compare/$H1...$H2#f" \
+         "repos/{o}/{b}/../{x}/compare/$H1...$H2" "repos/{o}/{b}/compare/$H1..$H2" "repos/{o}/{b}/compare/$H1...$H2?x#.." "//repos/{x}/{y}/issues" "//repos/{o}/{b}/compare/$H1...$H2/../../{x}/{y}"; do
+  Rf api "$e" -f title=t && cmp=$((cmp + 1))
+done
+[ "$cmp" = 8 ] && ok "no other dot segment, fragment or doubled slash passes beside the compare call ($cmp cases)" || no "compare look-alikes: $cmp of 8 refused"
 grep -q "^unset GH_REPO GH_HOST" "$W/bin/gh" && ok "the wrapper clears GH_REPO and GH_HOST (no other repository by environment)" || no "GH_REPO not cleared"
 env -i PATH=/usr/bin:/bin "$Q/bin/gh" api -H "Accept: application/vnd.github.raw" --paginate "repos/{o}/{b}/x" --jq ".[]" >/dev/null 2>&1 \
   && ok "the read-only role runs gh api with the raw Accept header, --paginate and --jq" || no "read-only api flags"
