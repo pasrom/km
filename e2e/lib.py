@@ -71,6 +71,7 @@ class Config:
     baseline: str
     candidate: str
     km_url: str
+    merge_app: str = ""                   # the slug of the App automerge merges with, if the sandbox has one
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -82,7 +83,7 @@ class Config:
             must_not_reach=[s.strip() for s in need("KM_E2E_MUST_NOT_REACH").split(",") if s.strip()],
             workdir=Path(os.environ.get("KM_E2E_WORKDIR", "~/.cache/km-e2e")).expanduser(),
             baseline=need("KM_E2E_BASELINE_REF"), candidate=need("KM_E2E_CANDIDATE_REF"),
-            km_url=os.environ.get("KM_E2E_KM_URL", KM_URL))
+            km_url=os.environ.get("KM_E2E_KM_URL", KM_URL), merge_app=os.environ.get("KM_E2E_MERGE_APP", "").strip())
 
     @property
     def slug(self) -> str:
@@ -375,6 +376,19 @@ class Ctx:
             self.repo_api(role, f"issues/{n}/labels", method="POST", data={"labels": [name]})
         else:
             self.repo_api(role, f"issues/{n}/labels/{name}", method="DELETE")
+
+    def environment_on_main(self, name: str) -> bool | None:
+        """Whether the sandbox's environment NAME exists restricted to main alone; None if it is missing."""
+        try:
+            env = self.repo_api("M", f"environments/{name}")
+        except ApiError as e:
+            if e.status == 404:
+                return None
+            raise
+        if not (env.get("deployment_branch_policy") or {}).get("custom_branch_policies"):
+            return False
+        rules = self.repo_api("M", f"environments/{name}/deployment-branch-policies")["branch_policies"]
+        return [(p.get("type"), p["name"]) for p in rules] == [("branch", "main")]   # a tag rule named main is none
 
     def head(self, role: str, d: Path) -> str:
         return self.git(role, d, "rev-parse", "HEAD").strip()

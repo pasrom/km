@@ -1,7 +1,8 @@
 """The automerge scenarios (AM-*): the shipped automerge workflow merges a fork PR whose docs are all at
 level ai, with its author's own km:ready, and nothing else. They run with the repository variable
 KM_AUTOMERGE=1, which run.py sets for this phase only (after the parallel scenarios, whose PRs it would
-otherwise merge, and before E17) and removes again; the reset removes it too.
+otherwise merge, and before E17) and removes again; the reset removes it too. With KM_E2E_MERGE_APP it
+sets KM_AUTOMERGE_APP=1 beside it, and AM-ok expects that App's merge and the push runs it starts.
 
 Each negative case fails exactly one condition (two for AM-ciwait, named below) and asserts the
 bot's run completed, did not merge, and its comment names exactly that reason. The negatives run in
@@ -21,19 +22,23 @@ from scenarios import (add_signed_page, approve_run, commit, contrib_branch, for
                        label_by, page, push_and_open, touch_claude_md, write)
 
 VAR = "KM_AUTOMERGE"
+APP_VAR = "KM_AUTOMERGE_APP"
 MARKER = "<!-- km:automerge -->"
 BOT = "github-actions[bot]"
 
 
 def switch(ctx: Ctx, on: bool) -> None:
-    """Set KM_AUTOMERGE=1 on the sandbox, or remove it."""
-    try:
-        ctx.repo_api("M", f"actions/variables/{VAR}", method="DELETE")
-    except ApiError as e:
-        if e.status != 404:
-            raise
-    if on:
-        ctx.repo_api("M", "actions/variables", method="POST", data={"name": VAR, "value": "1"})
+    """Set KM_AUTOMERGE=1 on the sandbox (and KM_AUTOMERGE_APP=1 with an App configured), or remove both."""
+    for var in (VAR, APP_VAR):
+        try:
+            ctx.repo_api("M", f"actions/variables/{var}", method="DELETE")
+        except ApiError as e:
+            if e.status != 404:
+                raise
+    if not on:
+        return
+    for var in [VAR] + ([APP_VAR] if ctx.cfg.merge_app else []):
+        ctx.repo_api("M", "actions/variables", method="POST", data={"name": var, "value": "1"})
 
 
 def bot_comment(ctx: Ctx, n: int) -> dict | None:
@@ -107,8 +112,10 @@ def am_ok(ctx: Ctx, rec: Record) -> None:
     t = now()
     label_by(ctx, rec, "C", n)
     pr, c = outcome(ctx, rec, n, head, t)
-    rec.must("the bot merged the PR", pr["merged"] and (pr.get("merged_by") or {}).get("login") == BOT,
-             f"merged by {BOT}", f"merged {pr['merged']} by {(pr.get('merged_by') or {}).get('login')}")
+    app = ctx.cfg.merge_app
+    merger = f"{app}[bot]" if app else BOT    # with an App, a merge by GITHUB_TOKEN is the fallback: a failure
+    rec.must("the bot merged the PR", pr["merged"] and (pr.get("merged_by") or {}).get("login") == merger,
+             f"merged by {merger}", f"merged {pr['merged']} by {(pr.get('merged_by') or {}).get('login')}")
     rec.check("its comment says merged at the head it judged", c is not None and f"Merged by the automerge workflow (rebase) at {head}" in c["body"],
               f"'Merged ... at {head[:7]}'", c and c["body"][:200])
     main = ctx.repo_api("M", "git/ref/heads/main")["object"]["sha"]
@@ -120,6 +127,9 @@ def am_ok(ctx: Ctx, rec: Record) -> None:
     linked = {s: [p["number"] for p in ctx.repo_api("M", f"commits/{s}/pulls") if p.get("merged_at")] for s in shas}
     rec.check("each merged commit belongs to a merged pull request (what main-guard checks)",
               shas and all(n in v for v in linked.values()), f"#{n} for each", linked)
+    if app:
+        app_push_runs(ctx, rec, main)
+        return
     time.sleep(60)                        # an absence: give a push run a minute to appear
     others = [f"{r['name']}/{r['event']}" for r in ctx.runs(main) if r["name"] in ("ci", "main-guard") and r["event"] == "push"]
     rec.notes.append(f"observed: push runs for the bot's merge {main[:7]}: {others or 'none'} "
@@ -127,6 +137,31 @@ def am_ok(ctx: Ctx, rec: Record) -> None:
     rec.check("no main-guard run reports the bot's merge as a direct push",
               not [r for r in ctx.runs(main) if r["name"] == "main-guard" and r.get("conclusion") == "failure"],
               "no failing main-guard run", others)
+
+
+def app_push_runs(ctx: Ctx, rec: Record, main: str) -> None:
+    """A merge with the App's token starts ci and main-guard on main, both green, the served bundle built;
+    the automerge run that ci's completion starts judges nothing (a push's ci is no pull request's)."""
+    runs = {}
+    for flow in ("ci", "main-guard"):        # main-guard retries a lagging PR link for about 3.5 minutes
+        run = runs[flow] = ctx.wait_run(main, flow, "push", timeout=600)
+        rec.links[f"{flow} push run ({main[:7]})"] = run["html_url"]
+        rec.check(f"the bot's merge starts a {flow} push run on main, and it passes", run["conclusion"] == "success",
+                  "success", run["conclusion"])
+        if flow == "ci":
+            arts = [a["name"] for a in ctx.repo_api("M", f"actions/runs/{run['id']}/artifacts")["artifacts"]]
+            rec.check("that ci run uploads the served bundle", "served-bundle" in arts, "artifact served-bundle", arts)
+    # the run the push ci's completion started: a workflow_run on the merge commit, created after that ci
+    # run (a run names no triggering run; only ci starts automerge on a workflow_run, and only that ci
+    # run is on this commit). Read again after half a minute, past the run cache: a second one would be a loop
+    since = runs["ci"]["created_at"]
+    am = ctx.wait_run(main, "automerge", "workflow_run", after=since, timeout=300)
+    time.sleep(30)
+    started = [r for r in ctx.runs(main, "automerge", "workflow_run") if r["created_at"] >= since]
+    rec.links[f"automerge after the push ci ({main[:7]})"] = am["html_url"]
+    rec.check("the push ci's completion starts one automerge run on the merge commit, and it merges nothing "
+              "(resolve skipped: no loop)", len(started) == 1 and am["conclusion"] == "skipped",
+              "one run, skipped", [(r["id"], r["conclusion"]) for r in started])
 
 
 # --- the negatives ------------------------------------------------------------------------------
