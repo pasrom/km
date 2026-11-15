@@ -331,6 +331,7 @@ setup 76; resolve workflow_dispatch '9;x'; [ -z "$got" ] && ok "resolve: a numbe
 K1=$(printf '1%.0s' {1..40}); K2=$(printf '2%.0s' {1..40})
 pin(){ printf '%b' "$1" > "$F/contents_.github_workflows_ci.yml_ref_$BASE"; rm -f "$T/gho"
   out="$(cd "$T" && PATH="$T/bin:$PATH" GITHUB_OUTPUT="$T/gho" REPO=o/r DEFAULT=main bash "$T/pin.sh" 2>&1)"; rc=$?; got="$(cat "$T/gho" 2>/dev/null)"; }
+assert merge["env"]["APP"] == "${{ needs.decide.outputs.app }}", "act reads the App's condition from anything but decide's output"
 setup 77; pin "      - uses: pasrom/km@$K1 # v1.20.0\n      - uses: pasrom/km@$K1 # v1.20.0\n"
 [ "$rc" = 0 ] && [ "$got" = "$(printf 'sha=%s\ntip=%s' "$K1" "$BASE")" ] && ok "pin: one km commit (twice), with the tip it was read at" || no "pin one ($out; $got)"
 setup 78; pin "      - uses: pasrom/km@$K1\n      - uses: pasrom/km@$K2\n"; [ -z "$got" ] && ok "pin: two km commits, nothing judged" || no "pin two ($got)"
@@ -354,7 +355,7 @@ cat > "$T/gate.py" <<'EOF'
 import json, re, sys, yaml
 jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
 job, ctx = sys.argv[2], json.loads(sys.argv[3])
-field = sys.argv[4] if len(sys.argv) > 4 else "if"   # environment: its ${{ }} expression, a string
+field = sys.argv[4] if len(sys.argv) > 4 else "if"   # environment, outputs.NAME: its ${{ }} expression, a string
 def get(path):
     cur = [ctx]
     for part in path.split("."):
@@ -370,8 +371,11 @@ class S(str):   # GitHub's == compares strings case-insensitively
 def contains(a, b):
     return any(S(x) == b for x in a) if isinstance(a, list) else str(b).lower() in str(a).lower()
 # evaluates km's own template text (its if:, rewritten into Python), never input from elsewhere
-expr = jobs[job][field].removeprefix("${{").removesuffix("}}")
-py = re.sub(r"\b(?:vars|github|needs|inputs)(?:\.(?:[\w-]+|\*))+", lambda m: f"get({m.group(0)!r})", expr)
+expr = jobs[job]
+for part in field.split("."):
+    expr = expr[part]
+expr = expr.strip().removeprefix("${{").removesuffix("}}")
+py = re.sub(r"\b(?:vars|github|needs|inputs|steps)(?:\.(?:[\w-]+|\*))+", lambda m: f"get({m.group(0)!r})", expr)
 got = eval(py.replace("&&", " and ").replace("||", " or "), {"get": get, "contains": contains})
 print(("run" if got else "skip") if field == "if" else repr(str(got)))
 EOF
@@ -393,8 +397,11 @@ gate skip "decide: no pull request, no run" decide '{"needs":{"resolve":{"output
 gate run "decide: a pull request" decide '{"needs":{"resolve":{"outputs":{"pr":"9"}}}}'
 gate skip "act: not labelled, no run" act '{"needs":{"decide":{"outputs":{"labelled":""}}}}'
 gate run "act: labelled" act '{"needs":{"decide":{"outputs":{"labelled":"1"}}}}'
-gate "'automerge'" "a merge with KM_AUTOMERGE_APP=1 uses automerge" act '{"vars":{"KM_AUTOMERGE_APP":"1"},"needs":{"decide":{"outputs":{"merge":"1"}}}}' environment
-gate "''" "without KM_AUTOMERGE_APP none (GitHub would create it open to every branch)" act '{"vars":{},"needs":{"decide":{"outputs":{"merge":"1"}}}}' environment
-gate "''" "a decline uses none (it needs no key)" act '{"vars":{"KM_AUTOMERGE_APP":"1"},"needs":{"decide":{"outputs":{"merge":""}}}}' environment
+# the App's condition is decide's output app, which act's environment and token step read
+gate "'1'" "a merge with KM_AUTOMERGE_APP=1 is the App's" decide '{"vars":{"KM_AUTOMERGE_APP":"1"},"steps":{"decide":{"outputs":{"merge":"1"}}}}' outputs.app
+gate "''" "without KM_AUTOMERGE_APP it is not (GitHub would create the environment open to every branch)" decide '{"vars":{},"steps":{"decide":{"outputs":{"merge":"1"}}}}' outputs.app
+gate "''" "a decline is not the App's (it needs no key)" decide '{"vars":{"KM_AUTOMERGE_APP":"1"},"steps":{"decide":{"outputs":{"merge":""}}}}' outputs.app
+gate "'automerge'" "the App's merge uses automerge" act '{"needs":{"decide":{"outputs":{"app":"1"}}}}' environment
+gate "''" "anything else uses none" act '{"needs":{"decide":{"outputs":{"app":""}}}}' environment
 out="$(cd "$T" && PATH="$T/bin:$PATH" km automerge o/r nine 2>&1)"; rc=$?; [ "$rc" = 2 ] && ok "a NUMBER that is not one is a usage error" || no "usage error (exit $rc)"
 summary automerge_smoke
