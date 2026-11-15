@@ -1073,6 +1073,8 @@ TIMELINE="$(BASE_AT "$(jq -rn 'now - 10 | todate')")" refuse fresh-retarget '[{"
 RUN="$(RUN_OF f/r y 2026-01-01T00:00:09Z)" refuse other-branch '[{"filename":"d/a.md"}]'
 RUN="$(RUN_OF g/r x 2026-01-01T00:00:09Z)" refuse other-fork '[{"filename":"d/a.md"}]'
 RUN="$(RUN_OF f/r x 2025-12-31T23:59:34Z)" refuse run-before-event '[{"filename":"d/a.md"}]'
+# an older run is no waiting run for this event: the listing passes over it and waits for one, not only the last check
+grep -q "^::notice::no run of s made for this event" "$AFD/out" || refused="$refused run-before-event-not-waited-for"
 RUN="$(RUN_OF f/r x not-a-time)" refuse run-time-unreadable '[{"filename":"d/a.md"}]'
 SINCE=garbage refuse event-time-unreadable '[{"filename":"d/a.md"}]'
 # the unfiltered listing holds every commit's runs: only this commit's ci run that waits for approval counts
