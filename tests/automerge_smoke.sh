@@ -271,6 +271,36 @@ writes | grep -q '^POST issues_9_comments .*why' && ok "act posts the decline ev
 setup 67; touch "$F/pulls_9_merge.fail"; cp "$F/pulls_9" "$F/pulls_9.2"; sed -i.bak 's/"merged":false/"merged":true/' "$F/pulls_9.2"; act 1
 { writes | grep -q "^PUT" && ! writes | grep -q "comments"; } && ok "act posts nothing when another run merged it as GitHub refused this one" || no "act refused but merged ($(writes))"
 
+# --- act runs no km, so it repeats two of km automerge's rules: each held against km's own ---
+# the latest-review rule: act's jq and requested_changes agree on every list (pages concatenated as gh
+# --paginate serves them), and act's marker is km's MARKER
+setup 69; step act merge > "$T/act.sh"
+PATH="$T/bin:$PATH" kmpy - "$T/act.sh" "$F" <<'PY2' && ok "act's review rule and comment marker are km automerge's" || no "act's review rule or marker out of step with km automerge"
+import json, re, subprocess, sys
+from km import automerge
+act, fake = open(sys.argv[1]).read(), sys.argv[2]
+marker = re.search(r"(?m)^marker='(.*)'$", act)
+rule = re.search(r"asked=\"\$\(gh api --paginate \"repos/\$REPO/pulls/\$PR/reviews\?per_page=100\" \| jq -sr '(.*?)'\)\"", act, re.S)
+assert marker and rule, "act's marker or review rule not found"
+assert marker.group(1) == automerge.MARKER, "act's marker"
+rule = rule.group(1)
+R = lambda who, st: {"user": None if who is None else {"login": who}, "state": st}
+cases = [[], [R("Bob", "COMMENTED")], [R("Bob", "CHANGES_REQUESTED")], [R("Bob", "CHANGES_REQUESTED"), R("Bob", "APPROVED")],
+         [R("Bob", "CHANGES_REQUESTED"), R("Bob", "DISMISSED")], [R("Bob", "CHANGES_REQUESTED"), R("Bob", "COMMENTED")],
+         [R("Bob", "APPROVED"), R("Bob", "CHANGES_REQUESTED")], [R("Bob", "CHANGES_REQUESTED"), R("Eve", "APPROVED")],
+         [R("Bob", "CHANGES_REQUESTED"), R("Eve", "CHANGES_REQUESTED"), R("Eve", "PENDING")],
+         [R(None, "CHANGES_REQUESTED")], [R(None, "CHANGES_REQUESTED"), R(None, "APPROVED")]]
+bad = []
+for i, c in enumerate(cases):
+    for pages in [[c]] + ([[c[:1], c[1:]]] if len(c) > 1 else []):
+        text = "".join(json.dumps(p) for p in pages)
+        open(f"{fake}/pulls_9_reviews_per_page_100", "w").write(text)
+        js = subprocess.run(["jq", "-sr", rule], input=text, capture_output=True, text=True, check=True).stdout.strip()
+        py = automerge.requested_changes("o/r", "9")
+        if py is None or js != str(len(py)):
+            bad.append((i, len(pages), js, py))
+assert not bad, bad
+PY2
 # --- the App's token: the merge uses it when the act job minted one, GITHUB_TOKEN otherwise ---
 setup 90; act 1
 { [ "$rc" = 0 ] && writes | grep -q "^PUT pulls_9_merge .* token=gh-token$" && ! grep -q "::" <<<"$out"; } \
@@ -304,6 +334,7 @@ assert mint[0]["continue-on-error"] is True and f"${{{{ {mint[0]['if']} && 'auto
     "the token step runs on another condition than the environment's"
 merge = next(s for s in jobs["act"]["steps"] if s.get("id") == "merge")
 assert merge["env"]["GH_TOKEN"] == "${{ github.token }}" and merge["env"]["MERGE_TOKEN"] == "${{ steps.token.outputs.token }}", merge["env"]
+assert merge["env"]["APP"] == "${{ needs.decide.outputs.app }}", "act reads the App's condition from anything but decide's output"
 assert merge["run"].count("MERGE_TOKEN:-$GH_TOKEN") == 1, "the App's token is used for anything but the merge"
 assert jobs["act"]["permissions"] == {"contents": "write", "pull-requests": "write"}, jobs["act"]["permissions"]
 PY
@@ -331,7 +362,6 @@ setup 76; resolve workflow_dispatch '9;x'; [ -z "$got" ] && ok "resolve: a numbe
 K1=$(printf '1%.0s' {1..40}); K2=$(printf '2%.0s' {1..40})
 pin(){ printf '%b' "$1" > "$F/contents_.github_workflows_ci.yml_ref_$BASE"; rm -f "$T/gho"
   out="$(cd "$T" && PATH="$T/bin:$PATH" GITHUB_OUTPUT="$T/gho" REPO=o/r DEFAULT=main bash "$T/pin.sh" 2>&1)"; rc=$?; got="$(cat "$T/gho" 2>/dev/null)"; }
-assert merge["env"]["APP"] == "${{ needs.decide.outputs.app }}", "act reads the App's condition from anything but decide's output"
 setup 77; pin "      - uses: pasrom/km@$K1 # v1.20.0\n      - uses: pasrom/km@$K1 # v1.20.0\n"
 [ "$rc" = 0 ] && [ "$got" = "$(printf 'sha=%s\ntip=%s' "$K1" "$BASE")" ] && ok "pin: one km commit (twice), with the tip it was read at" || no "pin one ($out; $got)"
 setup 78; pin "      - uses: pasrom/km@$K1\n      - uses: pasrom/km@$K2\n"; [ -z "$got" ] && ok "pin: two km commits, nothing judged" || no "pin two ($got)"
