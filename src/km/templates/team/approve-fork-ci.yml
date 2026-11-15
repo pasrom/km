@@ -160,14 +160,17 @@ jobs:
           # listing for minutes, while it showed in the unfiltered one: read this commit's runs and, when
           # none of them matches, the newest runs of the repository, newest first, page by page until a
           # page reaches back before the cutoff (at most 5 pages), and select here. Each listing is read
-          # once per try. A run waiting for approval reads action_required as its status or as its conclusion
+          # once per try. A run waiting for approval reads action_required as its status or as its conclusion.
+          #
+          # stamp: a time at or after the cutoff, a run's creation time (0 when it cannot be read), and both
+          stamp='def after($t): $t >= $cut; def at: try (.created_at | fromdateiso8601) catch 0; def fresh: after(at);'
           waiting() {   # the fork names its branch: pass it to jq as data, never inside the expression
             jq -r --arg sha "$SHA" --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --argjson cut "$cut" \
-              '.workflow_runs[]? | select(.head_sha == $sha and .event == "pull_request"
+              "$stamp"' .workflow_runs[]? | select(.head_sha == $sha and .event == "pull_request"
                 and (.status == "action_required" or .conclusion == "action_required")
                 and .path == ".github/workflows/ci.yml"
-                and .head_repository.full_name == $repo and .head_branch == $ref)
-              | {id, at: (try (.created_at | fromdateiso8601) catch 0)} | select(.at >= $cut) | "\(.id):\(.at)"' \
+                and .head_repository.full_name == $repo and .head_branch == $ref and fresh)
+              | "\(.id):\(at)"' \
               || true
           }
           read_ok=""   # set once a listing was read without an error
@@ -177,8 +180,7 @@ jobs:
             list_runs "head_sha=$SHA&per_page=100" || true
             page=1
             while [ -z "$runs" ] && [ "$page" -le 5 ] && list_runs "per_page=100&exclude_pull_requests=true&page=$page"; do
-              jq -e --argjson cut "$cut" '(.workflow_runs | length) == 100
-                and all(.workflow_runs[]; (try (.created_at | fromdateiso8601) catch 0) >= $cut)' <<<"$got" >/dev/null || break
+              jq -e --argjson cut "$cut" "$stamp"' (.workflow_runs | length) == 100 and all(.workflow_runs[]; fresh)' <<<"$got" >/dev/null || break
               page=$((page + 1))
             done
             [ -n "$runs" ] || [ "$try" = 18 ] && break
@@ -196,7 +198,7 @@ jobs:
           for run in $runs; do
             id="${run%%:*}"
             one_pr_or_exit "$moved"
-            if ! jq -ne --argjson at "${run#*:}" --argjson cut "$(cutoff)" '$at >= $cut' >/dev/null; then
+            if ! jq -ne --argjson at "${run#*:}" --argjson cut "$(cutoff)" "$stamp"' after($at)' >/dev/null; then
               echo "::notice::$moved; a person approves"
               exit 0
             fi
