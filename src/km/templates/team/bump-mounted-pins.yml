@@ -12,14 +12,16 @@ name: bump-mounted-pins
 # Three jobs: mounts reads .gitmodules (a brain without mounts stops there), resolve holds the read
 # token for the mounted repositories, publish alone can write here.
 #
-# Set up once, before the first mount (until then the workflow does nothing):
+# Set up once, before the first mount (until then the workflow does nothing). The automerge
+# workflow's optional App is another App, whose secrets have the same names in its own environment:
+# km's README sets both up side by side (https://github.com/pasrom/km#github-apps-for-the-team-workflows).
 # 1. A GitHub App with the repository permissions Contents: read and Actions: read, installed on
 #    the owner of this brain for the mounted repositories (or all). Generate a private key.
 # 2. Settings, Environments, New environment `mounted-pins`; Deployment branches: selected
 #    branches, `main` only. GitHub creates an environment a workflow names on its first run,
 #    without that restriction, so create it first.
-# 3. In that environment, the secrets CI_APP_CLIENT_ID (the app's client ID) and
-#    CI_APP_PRIVATE_KEY (the private key).
+# 3. In that environment, the secrets CI_APP_CLIENT_ID (this App's client ID) and
+#    CI_APP_PRIVATE_KEY (its private key).
 # 4. Settings, Actions, General: "Allow GitHub Actions to create and approve pull requests".
 # 5. In the ruleset or branch protection of main: "Require approval of the most recent reviewable
 #    push", so a commit someone pushes onto the bump branch needs a review by someone else.

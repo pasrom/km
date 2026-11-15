@@ -4,22 +4,10 @@ name: automerge
 
 # Contributors have no write access, and the maintainer merges. A pull request that needs nobody's
 # judgement can land without the maintainer: this workflow merges it by itself (rebase merge, at
-# exactly the head it judged) when `km automerge` says every condition holds (km's
-# src/km/automerge.py has the full list): open, not a draft, its base the default branch and never
-# changed; labelled km:ready, and the label counts on km ready's levels path (no control file changed,
-# every changed doc at level ai at its head and at the default branch's tip), whoever set it, and
-# every other changed file is a media file (images, SVG included, PDF, CSV, TSV; an SVG counts as media,
-# it is never rendered by CI or the bot; a script beside a page, a hook or a Makefile is for a person
-# to merge, though km ready counts the label); the last `Last reviewed:`
-# line of its body is the full head sha; the default branch's ci.yml runs the sign-off check, and on
-# exactly the head commit every check run of ci passed, its job validate among them, and every other
-# check passed or was skipped (a fork's ci run that waits for approval is no check), the ci run is the
-# pull request's (not a dispatched one), and the head carries the default branch's ci.yml (the same
-# blob: a branch from before a change to ci.yml is brought up to date first); no reviewer requests
-# changes; nothing moved while it was read. A
-# km:ready label that counts only because another person set it, on a doc at level human or a
-# control file, stays the maintainer's merge. One comment on the pull request says why it was not
-# merged, updated in place, each reason quoted in a code block.
+# exactly the head it judged) when `km automerge` says every condition holds. The conditions are
+# listed in km's README and at the top of its src/km/automerge.py (at the km commit ci.yml pins); the
+# act job below reads the pull request again right before the merge. One comment on the pull
+# request says why it was not merged, updated in place, each reason quoted in a code block.
 #
 # Setup: set the repository variable KM_AUTOMERGE to 1 (Settings, Secrets and variables, Actions,
 # Variables). Unset or anything else, the workflow does nothing. It needs km 1.20.0 or later pinned in
@@ -28,15 +16,17 @@ name: automerge
 #
 # Optional, a GitHub App to merge with: a merge made with GITHUB_TOKEN starts no workflow, one made
 # with an App's token does, so ci (the served bundle) and main-guard then run on the default branch
-# after each merge. Without it everything works as described here, with that limit.
+# after each merge. Without it everything works as described here, with that limit. km's README sets
+# it up beside bump-mounted-pins' App (https://github.com/pasrom/km#github-apps-for-the-team-workflows):
+# another App, whose secrets have the same names in another environment.
 # 1. A GitHub App with the repository permission Contents: read and write (a merge needs no more),
 #    installed on this brain only. Generate a private key. (The bump-mounted-pins App reads the
 #    mounted repositories: keep the write key apart from it.)
 # 2. Settings, Environments, New environment `automerge`; Deployment branches: selected branches,
 #    the default branch only. Create it before step 4: GitHub creates an environment a workflow
 #    names on its first run, open to every branch. An existing one: check its branches first.
-# 3. In that environment, the secrets CI_APP_CLIENT_ID (the app's client ID) and
-#    CI_APP_PRIVATE_KEY (the private key).
+# 3. In that environment, the secrets CI_APP_CLIENT_ID (this App's client ID) and
+#    CI_APP_PRIVATE_KEY (its private key).
 # 4. The repository variable KM_AUTOMERGE_APP set to 1. Unset, no job names the environment.
 # Only the act job, and only when it merges, uses the environment and mints a token: for this
 # repository alone, Contents write only, revoked when the job ends. It merges with it;
@@ -129,8 +119,6 @@ jobs:
 
   decide:
     needs: resolve
-      # the App (see the top) merges: KM_AUTOMERGE_APP=1 and a merge
-      app: ${{ vars.KM_AUTOMERGE_APP == '1' && steps.decide.outputs.merge == '1' && '1' || '' }}
     if: needs.resolve.outputs.pr != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15     # km automerge waits up to 5 minutes for pending checks
@@ -147,6 +135,8 @@ jobs:
       head: ${{ steps.decide.outputs.head }}
       tip: ${{ steps.decide.outputs.tip }}
       comment: ${{ steps.decide.outputs.comment }}
+      # the App (see the top) merges: KM_AUTOMERGE_APP=1 and a merge
+      app: ${{ vars.KM_AUTOMERGE_APP == '1' && steps.decide.outputs.merge == '1' && '1' || '' }}
     steps:
       - name: the km the default branch's ci.yml pins
         id: pin

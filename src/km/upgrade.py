@@ -453,7 +453,7 @@ def main() -> int:
                     done.append(f"{rel} does nothing until the repository variable KM_MAINTAINERS lists the maintainers' GitHub logins")
                 if tpl == "team/automerge.yml":
                     done.append(f"{rel} does nothing until the repository variable KM_AUTOMERGE is 1: then it merges a km:ready "
-                                f"pull request whose docs are all at level ai by itself (its header has the conditions), "
+                                f"pull request whose docs are all at level ai by itself (km's README has the conditions), "
                                 f"once ci.yml pins km 1.20.0 or later; to merge with a GitHub App, so its merges start ci and main-guard on "
                                 f"main, see its header (KM_AUTOMERGE_APP)")
             elif tpl in SHIPPED and (copy := p.read_text(encoding="utf-8")) != new and (h := shipped_hash(copy)) != shipped_hash(new):
