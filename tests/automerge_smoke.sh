@@ -380,6 +380,19 @@ setup 85g; printf '"""km."""\n\n__version__ = "1.20.0"\n' > "$F/$INIT"; gate_pin
 setup 86g; printf '__version__ = "1.19.0"\n' > "$F/$INIT"; gate_pin skip "a bare pin whose __init__.py says 1.19.0 is refused" "      - uses: pasrom/km@$K1\n"
 setup 87g; gate_pin skip "a bare pin whose __init__.py cannot be read is refused" "      - uses: pasrom/km@$K1\n"
 setup 88g; printf '__version__ = "1.20.0"\n' > "$F/$INIT"; gate_pin skip "the comment wins over __init__.py" "      - uses: pasrom/km@$K1 # v1.19.0\n"
+# the requirement is stated once, as need= in the pin step: the header, the README and km upgrade's note
+# name that version (a release's version bump must not move it)
+kmpy - "$REPO" <<'PY2' && ok "the header, the README and km upgrade name the version gate's km" || no "a requirement sentence names another km than the version gate"
+import re, sys
+repo = sys.argv[1]
+wf = open(f"{repo}/src/km/templates/team/automerge.yml").read()
+need = re.search(r"\bneed=(\d+\.\d+\.\d+)\b", wf).group(1)
+readme = next(ln for ln in open(f"{repo}/README.md") if ln.startswith("A team brain also gets `automerge`"))
+upgrade = re.search(r'if tpl == "team/automerge.yml":\n(.*?)\n\s*if ', open(f"{repo}/src/km/upgrade.py").read(), re.S).group(1)
+for where, text in (("header", wf.split("\non:", 1)[0]), ("README", readme), ("km upgrade", upgrade)):
+    said = re.findall(r"\bkm (\d+\.\d+\.\d+) or later", text)
+    assert said and set(said) == {need}, (where, said, need)
+PY2
 # --- the jobs' if: gates, evaluated as GitHub would on these contexts ---
 cat > "$T/gate.py" <<'EOF'
 import json, re, sys, yaml
