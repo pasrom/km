@@ -129,6 +129,8 @@ jobs:
 
   decide:
     needs: resolve
+      # the App (see the top) merges: KM_AUTOMERGE_APP=1 and a merge
+      app: ${{ vars.KM_AUTOMERGE_APP == '1' && steps.decide.outputs.merge == '1' && '1' || '' }}
     if: needs.resolve.outputs.pr != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15     # km automerge waits up to 5 minutes for pending checks
@@ -215,12 +217,12 @@ jobs:
     concurrency:
       group: automerge-${{ needs.resolve.outputs.pr }}
       cancel-in-progress: false
-    # the App (see the top): only with KM_AUTOMERGE_APP=1 and only to merge; an empty name is none
-    environment: ${{ vars.KM_AUTOMERGE_APP == '1' && needs.decide.outputs.merge == '1' && 'automerge' || '' }}
+    # decide's app: the App merges; an empty name is none
+    environment: ${{ needs.decide.outputs.app == '1' && 'automerge' || '' }}
     steps:
       - name: the App's token, for this repository's contents
         id: token
-        if: vars.KM_AUTOMERGE_APP == '1' && needs.decide.outputs.merge == '1'
+        if: needs.decide.outputs.app == '1'
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -234,7 +236,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_TOKEN: ${{ steps.token.outputs.token }}
-          APP: ${{ vars.KM_AUTOMERGE_APP }}
+          APP: ${{ needs.decide.outputs.app }}
           REPO: ${{ github.repository }}
           PR: ${{ needs.resolve.outputs.pr }}
           DEFAULT: ${{ github.event.repository.default_branch }}
