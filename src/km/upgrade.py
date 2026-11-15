@@ -93,12 +93,12 @@ OLD_COPIES = {
 # shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
 # is still one of them is replaced by the current template, an edited one is left with a note.
 SHIPPED = {
-    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e"},
+    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e", "139a62edc4339833"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
-    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388"},
+    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388", "bac7f4477dadece9"},
     "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7"},
     "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e"},
-    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a", "de0b3cc467824c05", "9ee47ce4374f2938"},
+    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a", "de0b3cc467824c05", "9ee47ce4374f2938", "c61b4233e5119f6d"},
 }
 # approve-fork-ci versions that approved data endings only: the later ones approve any file but control
 # files, safe only beside km's ci and a km from 1.11.0 on, so upgrade does not widen one of these otherwise
