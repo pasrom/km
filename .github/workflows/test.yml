@@ -37,6 +37,7 @@ jobs:
       - run: bash tests/skill_smoke.sh
       - run: bash tests/hook_smoke.sh
       - run: bash tests/mounted_pins_smoke.sh
+      - run: bash tests/action_smoke.sh
       - name: e2e_smoke.sh (the e2e driver's seed and name check; the live run needs a sandbox)
         run: bash tests/e2e_smoke.sh
       - name: e2e_agent_smoke.sh (the agent layer's profile, launcher and judge, with a stand-in claude)
@@ -96,6 +97,32 @@ jobs:
           path: ${{ runner.temp }}/b/dist/served/
           if-no-files-found: error
 
+  # The action where setup-python installs into a tool cache other than GitHub's, as on a self-hosted
+  # runner: its interpreter is linked against GitHub's tool cache path and starts only with its own lib
+  # folder on LD_LIBRARY_PATH (action/install.sh). GitHub's tool cache is moved away first, so that
+  # path finds no libpython.
+  action-tool-cache:
+    runs-on: ubuntu-latest
+    env:
+      RUNNER_TOOL_CACHE: /tmp/km-tool-cache
+      AGENT_TOOLSDIRECTORY: /tmp/km-tool-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo mv /opt/hostedtoolcache /opt/hostedtoolcache.moved
+      - uses: ./
+      - name: that interpreter does not start on its own (else this job tests nothing)
+        run: |
+          py="$(readlink -f "$RUNNER_TEMP/km-venv/bin/python")"   # the interpreter setup-python gave km
+          echo "$py"; cat "$RUNNER_TEMP/km-bin/km"; ldd "$py" | grep libpython || true
+          [[ "$py" == "$AGENT_TOOLSDIRECTORY"/* ]] && ! env -u LD_LIBRARY_PATH "$py" -c ''
+      - name: km runs, without LD_LIBRARY_PATH in the job
+        run: |
+          [ -z "${LD_LIBRARY_PATH-}" ]
+          km --version
+          git init -q "$RUNNER_TEMP/b" && cd "$RUNNER_TEMP/b" && echo "# conv" > CONVENTIONS.md && mkdir notes
+          printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-10-09\nauthor: X\nstatus: draft\ntags: [t]\n---\nx\n' > notes/t.md
+          git add -A && km validate
+
   # Windows: its default encoding is a code page (cp1252), not UTF-8, and text files are written with
   # CRLF. A file name with an umlaut must still be found, and km must write the LF the repo holds
   # (tests/encoding_smoke.sh).
@@ -139,7 +166,7 @@ jobs:
   # Brains pin these tags, and `km init` writes the tag of the km that runs it.
   release:
     if: github.event_name == 'push'
-    needs: [smoke, action, windows]
+    needs: [smoke, action, action-tool-cache, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
