@@ -254,6 +254,9 @@ case "$*" in
   "api --hostname github.com repos/O/R --jq .default_branch") [ "$GH_DEFAULT" = fail ] && { echo '{"message":"x"}'; exit 1; }; echo "${GH_DEFAULT:-main}" ;;
   "api --hostname github.com repos/O/R/environments/automerge --jq .deployment_branch_policy"*) [ -n "$GH_AMENV" ] && echo "$GH_AMENV" || exit 1 ;;
   "api --hostname github.com repos/O/R/environments/automerge/deployment-branch-policies --jq"*) echo "${GH_AMBRANCHES:-main}" ;;
+  "api --hostname github.com repos/O/R/actions/variables/KM_RUNNER --jq .value") [ "$GH_RUNNER" = denied ] && { echo '{"message":"Resource not accessible","status":"403"}'; exit 1; }
+    [ -n "$GH_RUNNER" ] && echo "$GH_RUNNER" || { echo '{"message":"Not Found","status":"404"}'; exit 1; } ;;
+  "api --hostname github.com --paginate repos/O/R/actions/organization-variables --jq"*) [ "$GH_ORGRUNNER" = fail ] && exit 1; [ -n "$GH_ORGRUNNER" ] && echo "$GH_ORGRUNNER"; : ;;
   *) exit 2 ;;
 esac
 SH
@@ -311,6 +314,30 @@ for s, w, f in d.results: print(s, w, "|", f)' "$1" 2>&1)"; }
     && ok "an unreadable default branch skips the environment checks with a note, never judging against gh's error" || no "automerge default unread ($out)"
   GH_AMENV=custom GH_DEFAULT=trunk envcheck "$A"; { out_has "open to main, not to the default branch trunk alone" && out_has '`trunk` only'; } \
     && ok "restricted to main where the default branch is trunk gets a note naming trunk" || no "automerge main vs trunk ($out)"
+  # the runner the team workflows run on: a note where KM_RUNNER is set and readable, else nothing
+  runcheck(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.doctor as d
+d.check_runner(pathlib.Path(sys.argv[1]), "O/R")
+for r in d.results: print(*r)' "$1" 2>&1)"; }
+  R="$T/runbrain"; mkdir -p "$R/.github/workflows"
+  ci(){ printf 'jobs:\n  validate:\n    runs-on: %s\n    steps:\n      - uses: pasrom/km@abc # v1\n' "$1" > "$R/.github/workflows/ci.yml"
+    printf 'jobs:\n  demote:\n    runs-on: %s\n' "${2:-$1}" > "$R/.github/workflows/staleness.yml"; }
+  V="\${{ vars.KM_RUNNER || 'ubuntu-latest' }}"; ci "$V"
+  GH_RUNNER=my-runner runcheck "$R"; out_has "note the team workflows run on the runner my-runner (the variable KM_RUNNER; bump-mounted-pins reads MOUNTED_PINS_RUNNER first): if GitHub passes" \
+    && ok "a repository's KM_RUNNER gets a note: a fork's pull request may run ci on that runner" || no "repo KM_RUNNER ($out)"
+  GH_RUNNER= GH_ORGRUNNER=org-runner runcheck "$R"; out_has "run on the runner org-runner" && ok "an organisation's KM_RUNNER gets the note too" || no "org KM_RUNNER ($out)"
+  GH_RUNNER=denied GH_ORGRUNNER=org-runner runcheck "$R"; [ -z "$out" ] && ok "a repository variable gh may not read is not stood in for by the organisation's" || no "repo KM_RUNNER 403 ($out)"
+  GH_RUNNER= GH_ORGRUNNER= runcheck "$R"; [ -z "$out" ] && ok "no KM_RUNNER: no note" || no "no KM_RUNNER ($out)"
+  GH_RUNNER= GH_ORGRUNNER=fail runcheck "$R"; [ -z "$out" ] && ok "a KM_RUNNER gh may not read: no note, no failure" || no "unreadable KM_RUNNER ($out)"
+  GH_RUNNER=my-runner runcheck "$T/ambrain"; [ -z "$out" ] && ok "a brain without the team ci workflow is not asked about KM_RUNNER" || no "KM_RUNNER without ci ($out)"
+  ci "$V" ubuntu-latest
+  GH_RUNNER=my-runner runcheck "$R"; out_has "note the variable KM_RUNNER names the runner my-runner, but the runs-on line of staleness.yml does not read it" \
+    && ok "KM_RUNNER set beside a staleness.yml that ignores it gets a note naming that file" || no "KM_RUNNER staleness ignores ($out)"
+  ci "ubuntu-latest  # not $V"
+  GH_RUNNER= GH_ORGRUNNER=org-runner runcheck "$R"; out_has "names the runner org-runner, but the runs-on line of ci.yml and staleness.yml does not read it" \
+    && ok "an organisation's KM_RUNNER beside a ci.yml that ignores it (a comment naming it does not count) gets a note" || no "KM_RUNNER with an older ci ($out)"
+  GH_RUNNER= GH_ORGRUNNER= runcheck "$R"; [ -z "$out" ] && ok "a ci.yml that ignores an unset KM_RUNNER gets no note" || no "older ci, no KM_RUNNER ($out)"
+  sed -i.bak 's/pasrom/some/' "$R/.github/workflows/ci.yml"
+  GH_RUNNER=my-runner runcheck "$R"; [ -z "$out" ] && ok "a ci.yml of the brain's own (not km's) is not told to read KM_RUNNER" || no "own ci, KM_RUNNER ($out)"
   C="$T/cred"; git init -q "$C"
   login(){ out="$(PATH="$G:$PATH" kmpy -c 'import sys, pathlib, km.doctor as d
 d.check_git_login(pathlib.Path(sys.argv[1]), sys.argv[2])
