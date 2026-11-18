@@ -79,17 +79,17 @@ jobs:
           || (github.event_name == 'pull_request_target'
               && (github.event.action == 'ready_for_review' || github.event.label.name == 'km:ready')
               && contains(github.event.pull_request.labels.*.name, 'km:ready')))
-    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    runs-on: <RUNNER>
     timeout-minutes: 5
     permissions:
       pull-requests: read   # list the open pull requests
     outputs:
       pr: ${{ steps.pr.outputs.pr }}
     steps:
-      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (schema.local.yaml's runner) may not. A missing one is
       # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
       - name: the tools this job runs, where the runner lacks them
-        if: vars.KM_RUNNER != ''
+        if: runner.environment != 'github-hosted'
         env:
           TOOLS: gh jq
         run: |
@@ -154,7 +154,7 @@ jobs:
   decide:
     needs: resolve
     if: needs.resolve.outputs.pr != ''
-    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    runs-on: <RUNNER>
     timeout-minutes: 15     # km automerge waits up to 5 minutes for pending checks
     permissions:
       contents: read        # ci.yml, the docs and the schema km reads
@@ -172,10 +172,10 @@ jobs:
       # the App (see the top) merges: KM_AUTOMERGE_APP=1 and a merge
       app: ${{ vars.KM_AUTOMERGE_APP == '1' && steps.decide.outputs.merge == '1' && '1' || '' }}
     steps:
-      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (schema.local.yaml's runner) may not. A missing one is
       # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
       - name: the tools this job runs, where the runner lacks them
-        if: vars.KM_RUNNER != ''
+        if: runner.environment != 'github-hosted'
         env:
           TOOLS: gh
         run: |
@@ -265,7 +265,7 @@ jobs:
   act:
     needs: [resolve, decide]
     if: needs.decide.outputs.labelled == '1'
-    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    runs-on: <RUNNER>
     timeout-minutes: 5
     permissions:
       contents: write       # merge
@@ -278,10 +278,10 @@ jobs:
     # decide's app: the App merges; an empty name is none
     environment: ${{ needs.decide.outputs.app == '1' && 'automerge' || '' }}
     steps:
-      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (schema.local.yaml's runner) may not. A missing one is
       # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
       - name: the tools this job runs, where the runner lacks them
-        if: vars.KM_RUNNER != '' && needs.decide.outputs.app != '1'
+        if: runner.environment != 'github-hosted' && needs.decide.outputs.app != '1'
         env:
           TOOLS: gh jq
         run: |

@@ -1,0 +1,244 @@
+# Shipped by km (`km init --team` or `km upgrade`); km upgrade replaces it while it is unchanged; once
+# changed it is owned by this repo.
+name: approve-fork-ci
+
+# A pull request from a fork by someone with read access only waits for "Approve and run" before CI
+# starts. This run approves that CI run when the pull request adds, changes, renames or deletes no
+# control file, the rule of `km ready` (above CONTROL_NAMES in km's src/km/ready.py): no path with a
+# segment that starts with a dot (.github/, .gitignore, .gitmodules, .pre-commit-config.yaml,
+# .claude/, ...; .gitkeep and .DS_Store in a folder excepted), no file at the top that is not
+# Markdown, no agent instructions or CODEOWNERS at any depth, nothing in the top folders scripts and
+# dist, on either side of a rename; and no symlink or submodule. Anything else waits for a person. A
+# script or any other file in a doc folder (a generator in _media/) passes: km's ci runs km validate
+# and km gen-index on a pull request, which read the docs and run nothing from the checkout, and km
+# runs Python with the checkout off sys.path. That needs km 1.11.0 or later: an older km ran with
+# the checkout on sys.path, where any Python file could stand in for a module it imports, so km
+# init, beside a pin to such a km, leaves this workflow out and km upgrade removes its own copy. The
+# rule is km ready's without the brain's schema (exempt_files, skip_prefixes, the gate's
+# forbidden_terms_file): those decide what km validate checks, not what runs. It assumes ci.yml is
+# km's ci workflow: one that runs code of its own from the checkout needs its own review first.
+# It never checks out the pull request's code: pull_request_target runs this file from main, and the
+# changed files are read from the API for exactly the commit whose run it approves. The token needs
+# `actions: write`, the only permission that allows approving a run, plus read access to the
+# contents and pull requests it checks. Verified in a private organisation repository: a fork's
+# pull_request_target run starts without approval, and GITHUB_TOKEN with these permissions approves
+# the waiting ci run.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: write        # approve the run
+  contents: read        # compare the commit, read its tree
+  pull-requests: read   # list the pull requests from the branch
+  issues: read          # their timelines: a pull request's timeline is served by the issues API
+
+concurrency:
+  group: approve-fork-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  approve:
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository
+      && github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
+      - name: the tools this job runs, where the runner lacks them
+        if: vars.KM_RUNNER != ''
+        env:
+          TOOLS: gh jq
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/km-tools"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          case "$(uname -s)-$(uname -m)" in Linux-x86_64) arch=amd64;; Linux-aarch64|Linux-arm64) arch=arm64;; *) arch=;; esac
+          for tool in $TOOLS; do
+            if [ "$tool" = yq ]; then   # mikefarah's yq v4: Ubuntu's yq package is another program
+              yq --version 2>/dev/null | grep -q 'mikefarah/yq.* v4\.' && continue
+            else
+              command -v "$tool" >/dev/null && continue
+            fi
+            gh=https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux
+            jq=https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux
+            yq=https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux
+            case "$tool-$arch" in
+              gh-amd64) url="${gh}_amd64.tar.gz" sum=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d;;
+              gh-arm64) url="${gh}_arm64.tar.gz" sum=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63;;
+              jq-amd64) url="$jq-amd64" sum=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f;;
+              jq-arm64) url="$jq-arm64" sum=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309;;
+              yq-amd64) url="${yq}_amd64" sum=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f;;
+              yq-arm64) url="${yq}_arm64" sum=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b;;
+              *) echo "::error::$tool is missing and km pins no build of it for $(uname -s) $(uname -m): install it on the runner"; exit 1;;
+            esac
+            curl -fsSL --retry 3 -o "$bin/$tool.get" "$url"
+            echo "$sum  $bin/$tool.get" | sha256sum -c --quiet -
+            if [ "$tool" = gh ]; then tar -xzOf "$bin/gh.get" --wildcards '*/bin/gh' > "$bin/gh"; rm "$bin/gh.get"
+            else mv "$bin/$tool.get" "$bin/$tool"; fi
+            chmod +x "$bin/$tool"; echo "installed $tool from $url"
+          done
+      - name: approve the CI run when the pull request changes nothing CI executes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+          CHANGED: ${{ github.event.pull_request.changed_files }}
+          SINCE: ${{ github.event.pull_request.updated_at }}   # this event's time: a ci run from then on is its own
+        run: |
+          set -euo pipefail
+          # the files of exactly this commit (compare is fixed to both shas, unlike the pull request's
+          # file list); compare lists at most 300 files, so a longer or uncounted list is never trusted
+          compare="$(gh api "repos/$REPO/compare/$BASE...$SHA")" \
+            || { echo "::notice::could not compare $BASE...$SHA; not approved, a person approves"; exit 0; }
+          listed="$(jq '.files | length' <<<"$compare")"
+          if [ "$listed" = 0 ] || [ "$listed" -ge 300 ] || [ "$listed" != "$CHANGED" ]; then
+            echo "::notice::the API lists $listed of ${CHANGED:-?} changed files; not approved, a person approves"
+            exit 0
+          fi
+          # the control-file rule (header), on both sides of a rename. Names are compared as km ready
+          # folds them (NFC, casefolded), as a case-insensitive file system opens them: fold maps the
+          # characters that fold to ASCII, the only ones that can make a control name
+          control='def fold: ascii_downcase | gsub("[\u00df\u1e9e]"; "ss") | gsub("\u017f"; "s") | gsub("\u212a"; "k")
+              | gsub("\ufb00"; "ff") | gsub("\ufb01"; "fi") | gsub("\ufb02"; "fl") | gsub("\ufb03"; "ffi")
+              | gsub("\ufb04"; "ffl") | gsub("[\ufb05\ufb06]"; "st") | gsub("\u037e"; ";") | gsub("\u1fef"; "`");
+            def control: (contains("/") | not) and (endswith(".md") | not)
+              or (fold | split("/") | .[-1] as $n
+                | ($n | IN("claude.md", "claude.local.md", "agents.md", "agents.override.md", "agent.md",
+                    "gemini.md", "conventions.md", "codeowners"))
+                  or (.[0] | IN("scripts", "dist")) or any(.[:-1][]; startswith("."))
+                  or ($n | startswith(".")) and ($n | IN(".gitkeep", ".ds_store") | not));'
+          others="$(jq -c "$control"' [.files[] | .filename, (.previous_filename // empty) | select(control)]' <<<"$compare")"
+          if [ "$others" != "[]" ]; then
+            echo "::notice::control files, not approved, a person approves:"
+            jq -r '.[] | @json' <<<"$others"   # quoted: a file name cannot pose as a workflow command
+            exit 0
+          fi
+          # compare shows no file mode: a symlink or a submodule with a data ending is for a person
+          tree="$(gh api "repos/$REPO/git/trees/$SHA?recursive=1")" \
+            || { echo "::notice::could not read the tree of $SHA; not approved, a person approves"; exit 0; }
+          links="$(jq -c --argjson changed "$(jq -c '[.files[].filename]' <<<"$compare")" '
+            if .truncated then ["(tree truncated)"]
+            else [.tree[] | select((.mode == "120000" or .mode == "160000") and (.path | IN($changed[]))) | .path] end' <<<"$tree")"
+          if [ "$links" != "[]" ]; then
+            echo "::notice::symlinks or submodules, not approved, a person approves:"
+            jq -r '.[] | @json' <<<"$links"
+            exit 0
+          fi
+          # a fork's run carries no pull_requests, so a waiting run cannot be tied to this pull request:
+          # every pull request ever opened from the branch shares this commit's runs, a closed one against
+          # another base too. Approve only while all of them target the default branch and exactly one is
+          # open, and only a run made after the last base change of any of them (a run made for the old
+          # base would wait under this sha); one_pr sets `changed` to that time, 0 when none (an event
+          # time it cannot read counts as the far future), and returns 1 when that does not hold, 2 when
+          # a read failed, 3 when no open one is listed. Checked again right before each approval
+          head="$(jq -rn --arg h "${HEAD_REPO%%/*}:$HEAD_REF" '$h | @uri')"   # the branch name is the fork's: encoded
+          one_pr() {
+            local prs n
+            prs="$(gh api --paginate "repos/$REPO/pulls?state=all&per_page=100&head=$head" | jq -sc 'add // []')" || return 2
+            jq -e --arg base "$DEFAULT" 'all(.base.ref == $base) and (map(select(.state == "open")) | length <= 1)' \
+              <<<"$prs" >/dev/null || return 1
+            jq -e 'any(.[]; .state == "open")' <<<"$prs" >/dev/null || return 3   # none open: the listing may lag
+            changed=0
+            for n in $(jq -r '.[].number' <<<"$prs"); do
+              changed="$(gh api --paginate "repos/$REPO/issues/$n/timeline?per_page=100" \
+                | jq -s --argjson was "$changed" 'add // [] | [$was, (.[] | select(.event | IN("base_ref_changed",
+                    "automatic_base_change_succeeded", "automatic_base_change_failed"))
+                  | try (.created_at | fromdateiso8601) catch 1e15)] | max')" || return 2
+            done
+          }
+          # the listing of a branch's pull requests can lag right after one is opened (none open listed),
+          # and a read can fail once: then read again, up to three times 10 s apart, before leaving it to a
+          # person with a notice, $1 when they do not hold and one of its own when the last read failed
+          one_pr_or_exit() {
+            local try why
+            for try in 1 2 3; do
+              why=0; one_pr && return 0 || why=$?
+              [ "$why" = 1 ] && break
+              [ "$try" = 3 ] || sleep 10
+            done
+            case "$why" in
+              2) echo "::notice::could not read the pull requests from this branch or their timelines; not approved, a person approves";;
+              3) echo "::notice::no open pull request from this branch is listed; not approved, a person approves";;
+              *) echo "::notice::$1; a person approves";;
+            esac
+            exit 0
+          }
+          one_pr_or_exit "not exactly one open pull request from this branch, or one against another base"
+          # the CI run of this commit may not exist yet (it has come two minutes late): wait up to three
+          # minutes for it, then approve each waiting run of this fork's branch made for this event and
+          # after the last base change; an older one, such as a run made while a pull request from the
+          # branch had another base, is for a person. GitHub may stamp a run a second before the pull
+          # request's update: allow 30 s before the event (a run in that window is still bound to this
+          # commit, fork, branch and ci.yml). A run for the old base may appear minutes after the event
+          # that made it, so a run counts only from 5 minutes after the last base change, longer than
+          # this job waits: no auto-approval for 5 minutes after a pull request from the branch is retargeted
+          since="$(jq -rn --arg s "$SINCE" '$s | fromdateiso8601 - 30')" \
+            || { echo "::notice::cannot read the event time $SINCE; not approved, a person approves"; exit 0; }
+          cutoff() { jq -n --argjson a "$since" --argjson b "$changed" '[$a, $b + 300] | max'; }
+          cut="$(cutoff)"
+          if ! jq -ne --argjson at "$changed" '$at <= now + 60' >/dev/null; then
+            echo "::notice::a base change is dated in the future or cannot be read; not approved, a person approves"
+            exit 0
+          fi
+          if ! jq -ne --argjson cut "$cut" '$cut <= now + 180' >/dev/null; then   # past the end of the wait below
+            echo "::notice::a pull request from this branch was retargeted less than 5 minutes ago, or the event is dated in the future; not approved, a person approves"
+            exit 0
+          fi
+          # The API's head_sha, event and status filters have left a fork's waiting run out of their
+          # listing for minutes, while it showed in the unfiltered one: read this commit's runs and, when
+          # none of them matches, the newest runs of the repository, newest first, page by page until a
+          # page reaches back before the cutoff (at most 5 pages), and select here. Each listing is read
+          # once per try. A run waiting for approval reads action_required as its status or as its conclusion.
+          #
+          # stamp: a time at or after the cutoff, a run's creation time (0 when it cannot be read), and both
+          stamp='def after($t): $t >= $cut; def at: try (.created_at | fromdateiso8601) catch 0; def fresh: after(at);'
+          waiting() {   # the fork names its branch: pass it to jq as data, never inside the expression
+            jq -r --arg sha "$SHA" --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" --argjson cut "$cut" \
+              "$stamp"' .workflow_runs[]? | select(.head_sha == $sha and .event == "pull_request"
+                and (.status == "action_required" or .conclusion == "action_required")
+                and .path == ".github/workflows/ci.yml"
+                and .head_repository.full_name == $repo and .head_branch == $ref and fresh)
+              | "\(.id):\(at)"' \
+              || true
+          }
+          read_ok=""   # set once a listing was read without an error
+          list_runs() { got="$(gh api "repos/$REPO/actions/runs?$1")" && read_ok=1 && runs="$(waiting <<<"$got")"; }
+          for try in $(seq 1 18); do
+            runs=""
+            list_runs "head_sha=$SHA&per_page=100" || true
+            page=1
+            while [ -z "$runs" ] && [ "$page" -le 5 ] && list_runs "per_page=100&exclude_pull_requests=true&page=$page"; do
+              jq -e --argjson cut "$cut" "$stamp"' (.workflow_runs | length) == 100 and all(.workflow_runs[]; fresh)' <<<"$got" >/dev/null || break
+              page=$((page + 1))
+            done
+            [ -n "$runs" ] || [ "$try" = 18 ] && break
+            sleep 10
+          done
+          if [ -z "$runs" ]; then
+            if [ -z "$read_ok" ]; then
+              echo "::notice::could not list the workflow runs for three minutes; not approved, a person approves"
+            else
+              echo "::notice::no run of $SHA made for this event and after the last base change waits for approval, after waiting three minutes; a person approves one that appears later"
+            fi
+            exit 0
+          fi
+          moved="another pull request from this branch appeared, or a base changed"
+          for run in $runs; do
+            id="${run%%:*}"
+            one_pr_or_exit "$moved"
+            if ! jq -ne --argjson at "${run#*:}" --argjson cut "$(cutoff)" "$stamp"' after($at)' >/dev/null; then
+              echo "::notice::$moved; a person approves"
+              exit 0
+            fi
+            if gh api -X POST "repos/$REPO/actions/runs/$id/approve" >/dev/null; then
+              echo "approved run $id"
+            else
+              echo "::warning::could not approve run $id; a person approves it"
+            fi
+          done

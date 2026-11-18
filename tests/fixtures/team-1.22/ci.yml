@@ -1,0 +1,45 @@
+# Written by `km init --team`; owned by this repo. Actions are pinned by commit, with the version as a
+# comment, so a moved tag cannot change what runs; Dependabot proposes updates, `km upgrade` moves km.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # A pull request a workflow opens with GITHUB_TOKEN starts no pull_request run; such a workflow
+  # dispatches this one on its branch instead, so the pull request gets its check.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0          # full history so source-pin (path.md@hash) checks can see blobs
+      - uses: pasrom/km@<KM_SHA> # <KM_VERSION>, installs the km CLI at that commit
+      # A pull request, or a dispatched run on its branch, also needs every doc it changes signed off;
+      # a dispatched run checks against the default branch, as a workflow opens its pull requests there.
+      - name: validate frontmatter + gate + index completeness
+        env:
+          BASE: ${{ github.base_ref || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || '' }}
+        run: km validate ${BASE:+--signoff-since "origin/$BASE"}
+      - name: _index Documents list up to date
+        run: km gen-index --check
+      - name: build served bundle (main only — a PR build is not "served")
+        if: github.event_name == 'push'
+        run: km serve
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'push'
+        with:
+          name: served-bundle
+          path: dist/served/
+          if-no-files-found: warn

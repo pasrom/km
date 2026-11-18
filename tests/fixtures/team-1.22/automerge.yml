@@ -1,0 +1,401 @@
+# Shipped by km (`km init --team` or `km upgrade`); km upgrade replaces it while it is unchanged; once
+# changed it is owned by this repo.
+name: automerge
+
+# Contributors have no write access, and the maintainer merges. A pull request that needs nobody's
+# judgement can land without the maintainer: this workflow merges it by itself (rebase merge, at
+# exactly the head it judged) when `km automerge` says every condition holds. The conditions are
+# listed in km's README and at the top of its src/km/automerge.py (at the km commit ci.yml pins); the
+# act job below reads the pull request again right before the merge. One comment on the pull
+# request says why it was not merged, updated in place, each reason quoted in a code block.
+#
+# Setup: set the repository variable KM_AUTOMERGE to 1 (Settings, Secrets and variables, Actions,
+# Variables). Unset or anything else, the workflow does nothing. It needs km 1.20.0 or later pinned in
+# ci.yml (the version the pin's comment names, else the one src/km/__init__.py names at that commit);
+# with an older or unknown one it merges nothing and says so in a notice.
+#
+# Optional, a GitHub App to merge with: a merge made with GITHUB_TOKEN starts no workflow, one made
+# with an App's token does, so ci (the served bundle) and main-guard then run on the default branch
+# after each merge. Without it everything works as described here, with that limit. km's README sets
+# it up beside bump-mounted-pins' App (https://github.com/pasrom/km#github-apps-for-the-team-workflows):
+# another App, whose secrets have the same names in another environment.
+# 1. A GitHub App with the repository permission Contents: read and write (a merge needs no more),
+#    installed on this brain only. Generate a private key. (The bump-mounted-pins App reads the
+#    mounted repositories: keep the write key apart from it.)
+# 2. Settings, Environments, New environment `automerge`; Deployment branches: selected branches,
+#    the default branch only. Create it before step 4: GitHub creates an environment a workflow
+#    names on its first run, open to every branch. An existing one: check its branches first.
+# 3. In that environment, the secrets CI_APP_CLIENT_ID (this App's client ID) and
+#    CI_APP_PRIVATE_KEY (its private key).
+# 4. The repository variable KM_AUTOMERGE_APP set to 1. Unset, no job names the environment.
+# Only the act job, and only when it merges, uses the environment and mints a token: for this
+# repository alone, Contents write only, revoked when the job ends. It merges with it;
+# its comments stay GITHUB_TOKEN's. Secrets missing or no token minted: it merges with
+# GITHUB_TOKEN, then fails the run, since the push runs do not follow. If the App may bypass the
+# rules of the default branch, the merge bypasses them too: leave it off the bypass list. The push
+# runs this starts end the loop: ci on a push starts no automerge run (it judges a pull request's
+# ci only), and main-guard checks that every merged commit belongs to the merged pull request, as
+# for a person's merge.
+#
+# It runs after the ci workflow completes for a pull request, when km:ready is applied, when a draft
+# is marked ready for review, and by hand (Actions, automerge, Run workflow, with the number). It never
+# checks out or runs the pull request's code: workflow_run and pull_request_target run this file from
+# the default branch, and km reads the pull request from the API as data. Three jobs: resolve finds
+# the pull request, decide installs km at the commit the default branch's ci.yml pins and holds a
+# read-only token, act alone can write and runs no km: it reads the pull request and the default
+# branch again and merges only while head, base, draft state and label are what decide judged.
+#
+# Known limits: a km:ready label applied by a workflow with GITHUB_TOKEN starts no run (that token's
+# events start no workflow); the next ci completion or a run by hand judges it. Without the App, a
+# merge starts no workflow, so no push run of ci (the served bundle) or main-guard follows it; the
+# next push to main by a person builds the bundle with it. ci
+# does not run again when main moves, so a pull request may be merged after another one landed
+# since its ci run, as a person merging it would. A third act for the same pull request while one
+# runs and another waits replaces the waiting one, which then shows as cancelled. A failed ci check
+# run in another check suite on the same commit (another pull request from the branch, a run of an
+# earlier event) keeps blocking until a new push. A ci.yml changed on the default branch and changed
+# back to the head's text is not told apart from one never changed.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  pull_request_target:
+    types: [labeled, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: the pull request number
+        required: true
+
+permissions: {}
+
+jobs:
+  resolve:
+    if: >-
+      vars.KM_AUTOMERGE == '1'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+              && github.event.workflow_run.conclusion == 'success')
+          || (github.event_name == 'pull_request_target'
+              && (github.event.action == 'ready_for_review' || github.event.label.name == 'km:ready')
+              && contains(github.event.pull_request.labels.*.name, 'km:ready')))
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read   # list the open pull requests
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+    steps:
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
+      - name: the tools this job runs, where the runner lacks them
+        if: vars.KM_RUNNER != ''
+        env:
+          TOOLS: gh jq
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/km-tools"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          case "$(uname -s)-$(uname -m)" in Linux-x86_64) arch=amd64;; Linux-aarch64|Linux-arm64) arch=arm64;; *) arch=;; esac
+          for tool in $TOOLS; do
+            if [ "$tool" = yq ]; then   # mikefarah's yq v4: Ubuntu's yq package is another program
+              yq --version 2>/dev/null | grep -q 'mikefarah/yq.* v4\.' && continue
+            else
+              command -v "$tool" >/dev/null && continue
+            fi
+            gh=https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux
+            jq=https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux
+            yq=https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux
+            case "$tool-$arch" in
+              gh-amd64) url="${gh}_amd64.tar.gz" sum=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d;;
+              gh-arm64) url="${gh}_arm64.tar.gz" sum=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63;;
+              jq-amd64) url="$jq-amd64" sum=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f;;
+              jq-arm64) url="$jq-arm64" sum=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309;;
+              yq-amd64) url="${yq}_amd64" sum=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f;;
+              yq-arm64) url="${yq}_arm64" sum=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b;;
+              *) echo "::error::$tool is missing and km pins no build of it for $(uname -s) $(uname -m): install it on the runner"; exit 1;;
+            esac
+            curl -fsSL --retry 3 -o "$bin/$tool.get" "$url"
+            echo "$sum  $bin/$tool.get" | sha256sum -c --quiet -
+            if [ "$tool" = gh ]; then tar -xzOf "$bin/gh.get" --wildcards '*/bin/gh' > "$bin/gh"; rm "$bin/gh.get"
+            else mv "$bin/$tool.get" "$bin/$tool"; fi
+            chmod +x "$bin/$tool"; echo "installed $tool from $url"
+          done
+      - name: the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          # only a km:ready pull request is judged (km installs and reads for a minute): the job's filter
+          # for an event on the pull request, below for a ci run; dispatched by hand, always
+          if [ "$EVENT" != workflow_run ]; then
+            [[ "$NUMBER" =~ ^[0-9]+$ ]] || { echo "::notice::no pull request number: nothing to do"; exit 0; }
+            echo "pr=$NUMBER" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # a fork's run names no pull request: the one open pull request whose head is this run's
+          # commit, repository and branch (the branch name is the fork's: passed to jq as data)
+          prs="$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" | jq -sc --arg sha "$SHA" \
+            --arg repo "$HEAD_REPO" --arg ref "$HEAD_REF" 'add // [] | [.[] | select(.head.sha == $sha
+              and .head.repo.full_name == $repo and .head.ref == $ref) | {number, ready: any(.labels[]?; .name == "km:ready")}]')" \
+            || { echo "::notice::could not list the open pull requests: nothing merged"; exit 0; }
+          if [ "$(jq length <<<"$prs")" != 1 ]; then
+            echo "::notice::not exactly one open pull request has this run's head: nothing merged"; exit 0
+          fi
+          n="$(jq -r '.[0].number' <<<"$prs")"
+          jq -e '.[0].ready' <<<"$prs" >/dev/null || { echo "::notice::#$n is not labelled km:ready: nothing to do"; exit 0; }
+          echo "pr=$n" >> "$GITHUB_OUTPUT"
+
+  decide:
+    needs: resolve
+    if: needs.resolve.outputs.pr != ''
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15     # km automerge waits up to 5 minutes for pending checks
+    permissions:
+      contents: read        # ci.yml, the docs and the schema km reads
+      pull-requests: read   # the pull request, its files and reviews
+      issues: read          # its label events and timeline
+      checks: read          # the check runs of its head commit
+      statuses: read        # and the commit statuses
+      actions: read         # the workflow runs those check runs belong to
+    outputs:
+      merge: ${{ steps.decide.outputs.merge }}
+      labelled: ${{ steps.decide.outputs.labelled }}
+      head: ${{ steps.decide.outputs.head }}
+      tip: ${{ steps.decide.outputs.tip }}
+      comment: ${{ steps.decide.outputs.comment }}
+      # the App (see the top) merges: KM_AUTOMERGE_APP=1 and a merge
+      app: ${{ vars.KM_AUTOMERGE_APP == '1' && steps.decide.outputs.merge == '1' && '1' || '' }}
+    steps:
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
+      - name: the tools this job runs, where the runner lacks them
+        if: vars.KM_RUNNER != ''
+        env:
+          TOOLS: gh
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/km-tools"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          case "$(uname -s)-$(uname -m)" in Linux-x86_64) arch=amd64;; Linux-aarch64|Linux-arm64) arch=arm64;; *) arch=;; esac
+          for tool in $TOOLS; do
+            if [ "$tool" = yq ]; then   # mikefarah's yq v4: Ubuntu's yq package is another program
+              yq --version 2>/dev/null | grep -q 'mikefarah/yq.* v4\.' && continue
+            else
+              command -v "$tool" >/dev/null && continue
+            fi
+            gh=https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux
+            jq=https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux
+            yq=https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux
+            case "$tool-$arch" in
+              gh-amd64) url="${gh}_amd64.tar.gz" sum=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d;;
+              gh-arm64) url="${gh}_arm64.tar.gz" sum=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63;;
+              jq-amd64) url="$jq-amd64" sum=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f;;
+              jq-arm64) url="$jq-arm64" sum=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309;;
+              yq-amd64) url="${yq}_amd64" sum=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f;;
+              yq-arm64) url="${yq}_arm64" sum=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b;;
+              *) echo "::error::$tool is missing and km pins no build of it for $(uname -s) $(uname -m): install it on the runner"; exit 1;;
+            esac
+            curl -fsSL --retry 3 -o "$bin/$tool.get" "$url"
+            echo "$sum  $bin/$tool.get" | sha256sum -c --quiet -
+            if [ "$tool" = gh ]; then tar -xzOf "$bin/gh.get" --wildcards '*/bin/gh' > "$bin/gh"; rm "$bin/gh.get"
+            else mv "$bin/$tool.get" "$bin/$tool"; fi
+            chmod +x "$bin/$tool"; echo "installed $tool from $url"
+          done
+      - name: the km the default branch's ci.yml pins
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # one commit of the default branch: km automerge refuses when the branch has moved on from it
+          if ! tip="$(gh api "repos/$REPO/git/ref/heads/$DEFAULT" --jq .object.sha)" \
+              || ! ci="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/.github/workflows/ci.yml?ref=$tip")"; then
+            echo "::notice::could not read ci.yml on $DEFAULT: nothing merged"; exit 0
+          fi
+          pins="$(grep -oE 'pasrom/km@[0-9a-f]{40}' <<<"$ci" | sort -u || true)"
+          if [ "$(grep -c . <<<"$pins" || true)" != 1 ]; then
+            echo "::notice::ci.yml on $DEFAULT does not pin exactly one km commit: nothing merged"; exit 0
+          fi
+          sha="${pins#pasrom/km@}" need=1.20.0   # the first km with km automerge as this workflow runs it
+          # its version: the pin's comment (`# vX.Y.Z`), else what src/km/__init__.py names at that commit
+          version="$(grep -m1 -oE "pasrom/km@${sha}[[:space:]]*#[[:space:]]*v?[0-9]+\.[0-9]+\.[0-9]+" <<<"$ci" \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          if [ -z "$version" ]; then
+            version="$(gh api -H 'Accept: application/vnd.github.raw' "repos/pasrom/km/contents/src/km/__init__.py?ref=$sha" \
+              | sed -nE "s/^__version__[[:space:]]*=[[:space:]]*[\"']([0-9]+\.[0-9]+\.[0-9]+)[\"'].*/\1/p" | head -1)" || version=""
+          fi
+          if [ -z "$version" ] || [ "$(printf '%s\n%s\n' "$need" "$version" | sort -V | head -1)" != "$need" ]; then
+            echo "::notice::ci.yml on $DEFAULT pins km ${version:-of an unknown version} (${sha:0:7}); automerge needs km $need or later: nothing merged"
+            exit 0
+          fi
+          printf 'sha=%s\ntip=%s\n' "$sha" "$tip" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pin.outputs.sha != ''
+        with:
+          repository: pasrom/km
+          ref: ${{ steps.pin.outputs.sha }}
+          path: .km-action
+          persist-credentials: false
+      - uses: ./.km-action          # km's own action at that commit: installs the km CLI, as in ci
+        if: steps.pin.outputs.sha != ''
+      - name: km automerge
+        id: decide
+        if: steps.pin.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.resolve.outputs.pr }}
+          WORKFLOW: ${{ github.workflow }}
+          TIP: ${{ steps.pin.outputs.tip }}
+        run: |
+          set -uo pipefail
+          rc=0; km automerge "$REPO" "$PR" --self "$WORKFLOW" --tip "$TIP" --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/verdict" || rc=$?
+          cat "$RUNNER_TEMP/verdict"
+          { echo "#$PR"; echo '```'; cat "$RUNNER_TEMP/verdict"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # 0 merge, 1 not; anything else (a km without the command) merges nothing and fails no check
+          [ "$rc" -le 1 ] || echo "::notice::km automerge exited $rc (does the pinned km have it?): nothing merged"
+
+  act:
+    needs: [resolve, decide]
+    if: needs.decide.outputs.labelled == '1'
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: write       # merge
+      pull-requests: write  # merge; post or update the one comment
+    # one act per pull request at a time; decide is not in the group, so a ci completion and a label
+    # at once (the common pair) never replace a waiting job (GitHub cancels a waiting one in a group)
+    concurrency:
+      group: automerge-${{ needs.resolve.outputs.pr }}
+      cancel-in-progress: false
+    # decide's app: the App merges; an empty name is none
+    environment: ${{ needs.decide.outputs.app == '1' && 'automerge' || '' }}
+    steps:
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
+      - name: the tools this job runs, where the runner lacks them
+        if: vars.KM_RUNNER != '' && needs.decide.outputs.app != '1'
+        env:
+          TOOLS: gh jq
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/km-tools"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          case "$(uname -s)-$(uname -m)" in Linux-x86_64) arch=amd64;; Linux-aarch64|Linux-arm64) arch=arm64;; *) arch=;; esac
+          for tool in $TOOLS; do
+            if [ "$tool" = yq ]; then   # mikefarah's yq v4: Ubuntu's yq package is another program
+              yq --version 2>/dev/null | grep -q 'mikefarah/yq.* v4\.' && continue
+            else
+              command -v "$tool" >/dev/null && continue
+            fi
+            gh=https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux
+            jq=https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux
+            yq=https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux
+            case "$tool-$arch" in
+              gh-amd64) url="${gh}_amd64.tar.gz" sum=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d;;
+              gh-arm64) url="${gh}_arm64.tar.gz" sum=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63;;
+              jq-amd64) url="$jq-amd64" sum=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f;;
+              jq-arm64) url="$jq-arm64" sum=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309;;
+              yq-amd64) url="${yq}_amd64" sum=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f;;
+              yq-arm64) url="${yq}_arm64" sum=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b;;
+              *) echo "::error::$tool is missing and km pins no build of it for $(uname -s) $(uname -m): install it on the runner"; exit 1;;
+            esac
+            curl -fsSL --retry 3 -o "$bin/$tool.get" "$url"
+            echo "$sum  $bin/$tool.get" | sha256sum -c --quiet -
+            if [ "$tool" = gh ]; then tar -xzOf "$bin/gh.get" --wildcards '*/bin/gh' > "$bin/gh"; rm "$bin/gh.get"
+            else mv "$bin/$tool.get" "$bin/$tool"; fi
+            chmod +x "$bin/$tool"; echo "installed $tool from $url"
+          done
+      # The App's token is never handed to a downloaded tool: with the App, gh and jq are the runner's own
+      - name: with the App, gh and jq come with the runner
+        if: needs.decide.outputs.app == '1'
+        run: |
+          command -v gh >/dev/null && command -v jq >/dev/null || {
+            echo "::error::KM_AUTOMERGE_APP is 1 and the runner lacks gh or jq: nothing merged. Install both in the runner's image; the App's token is not handed to a tool this job downloads"
+            exit 1; }
+      - name: the App's token, for this repository's contents
+        id: token
+        if: needs.decide.outputs.app == '1'
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: merge at the judged head, or say why not
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_TOKEN: ${{ steps.token.outputs.token }}
+          APP: ${{ needs.decide.outputs.app }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.resolve.outputs.pr }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+          MERGE: ${{ needs.decide.outputs.merge }}
+          HEAD: ${{ needs.decide.outputs.head }}
+          TIP: ${{ needs.decide.outputs.tip }}
+          COMMENT: ${{ needs.decide.outputs.comment }}
+        run: |
+          set -euo pipefail
+          marker='<!-- km:automerge -->'
+          # post BODY: update this workflow's comment (anyone can write the marker: only the bot's counts),
+          # or add one; an unchanged comment is left as it is (review-request-guide's post, without `update`)
+          post(){ local own m=POST u="issues/$PR/comments"
+            own="$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100" | jq -cs --arg m "$marker" \
+              'add // [] | map(select(.user.login == "github-actions[bot]" and (.body | startswith($m)))) | first // {}')" \
+              || { echo "::warning::could not read the comments of #$PR"; return 0; }
+            if [ "$(jq -r '.body // empty' <<<"$own")" = "$1" ]; then echo "the comment is up to date"; return 0; fi
+            if id="$(jq -r '.id // empty' <<<"$own")" && [ -n "$id" ]; then m=PATCH; u="issues/comments/$id"; fi
+            jq -n --arg body "$1" '{body: $body}' | gh api -X "$m" "repos/$REPO/$u" --input - >/dev/null \
+              && echo "$m $u: done" || echo "::warning::could not comment on #$PR ($m $u)"; }
+          # merged: whether the pull request is merged now (another run, as ci completed when the label
+          # was applied, may have merged it a moment ago: its comment stands, nothing is posted)
+          merged(){ gh api "repos/$REPO/pulls/$PR" --jq .merged | grep -qx true; }
+          # read again right before the merge: decide judged HEAD with the default branch at TIP
+          pr="$(gh api "repos/$REPO/pulls/$PR")" || pr='{}'
+          if jq -e '.merged == true' <<<"$pr" >/dev/null; then echo "#$PR is merged already"; exit 0; fi
+          if [ "$MERGE" != 1 ]; then
+            post "$(base64 -d <<<"$COMMENT")"; exit 0
+          fi
+          [ "$pr" != '{}' ] || { echo "::notice::could not read #$PR again: nothing merged"; exit 0; }
+          tip="$(gh api "repos/$REPO/git/ref/heads/$DEFAULT" --jq .object.sha)" \
+            || { echo "::notice::could not read $DEFAULT again: nothing merged"; exit 0; }
+          # the reviewers' latest approving, change-requesting or dismissing reviews: none requests changes
+          # (km automerge's requested_changes: keep the two in step)
+          asked="$(gh api --paginate "repos/$REPO/pulls/$PR/reviews?per_page=100" | jq -sr 'add // []
+            | map(select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))) | group_by(.user.login)
+            | map(last | select(.state == "CHANGES_REQUESTED")) | length')" \
+            || { echo "::notice::could not read the reviews of #$PR again: nothing merged"; exit 0; }
+          if [ "$tip" != "$TIP" ] || [ "$asked" != 0 ] || ! jq -e --arg h "$HEAD" --arg b "$DEFAULT" '.state == "open"
+              and .draft == false and .head.sha == $h and .base.ref == $b and any(.labels[]?; .name == "km:ready")' <<<"$pr" >/dev/null; then
+            echo "::notice::the head, the base, the reviews or the label changed after the check: nothing merged"
+            post "$marker"$'\n'"Not merged by the automerge workflow: the head, the default branch, the reviews or the label changed after it was checked. It checks again when ci completes on a new push, when \`km:ready\` is applied again, or when it is run by hand."
+            exit 0
+          fi
+          # the App's token when there is one: its merge starts the push runs on the default branch.
+          # KM_AUTOMERGE_APP=1 without one (secrets missing, the key refused): GITHUB_TOKEN merges, and
+          # the job then fails, since the push runs the App is set up for do not follow
+          unminted=""; [ -z "${MERGE_TOKEN:-}" ] && [ "${APP:-}" = 1 ] && unminted=1
+          # sha: GitHub merges only while the head is still HEAD
+          if got="$(jq -n --arg sha "$HEAD" '{merge_method: "rebase", sha: $sha}' \
+              | GH_TOKEN="${MERGE_TOKEN:-$GH_TOKEN}" gh api -X PUT "repos/$REPO/pulls/$PR/merge" --input - 2>&1)"; then
+            echo "merged #$PR at $HEAD"
+            post "$marker"$'\n'"Merged by the automerge workflow (rebase) at $HEAD: every changed doc is at level ai and no control file changed, \`Last reviewed\` names the head and ci passed."
+            if [ -n "$unminted" ]; then
+              echo "::error::KM_AUTOMERGE_APP is 1 but no App token was minted: merged with GITHUB_TOKEN, so no push run follows. Restrict the environment automerge to the default branch first (GitHub creates a missing one open to every branch), then add its secrets CI_APP_CLIENT_ID and CI_APP_PRIVATE_KEY (see the top of this workflow)"
+              exit 1
+            fi
+          elif merged; then
+            echo "#$PR was merged by another run meanwhile"
+          else
+            echo "::notice::GitHub did not merge #$PR"
+            post "$marker"$'\n'"Not merged by the automerge workflow: GitHub refused the merge at ${HEAD:0:7}:"$'\n\n```\n'"$(jq -Rsc . <<<"$got")"$'\n```'
+          fi

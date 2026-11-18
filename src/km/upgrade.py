@@ -48,6 +48,12 @@
   handle gets a note instead; a staleness workflow of the brain's own is left as it is.
 - A brain without a .gitattributes gets km's, so text files are LF on every platform; one whose
   own file sets no line ending gets a note.
+- A team brain's workflows run on its runner (km.runner: `runner:` in schema.local.yaml, else
+  ubuntu-latest): the shipped copies get it with this km's version, also when only the runner changed,
+  and the runs-on lines of km's ci and staleness workflows are set to it where they hold a label or km
+  1.22's `${{ vars.KM_RUNNER || 'ubuntu-latest' }}`, which a fork's pull request run never read (a note
+  then says to move that variable into the setting). Without the setting, a label other than
+  ubuntu-latest in those two is left with a note: it may be the brain's own choice.
 
 A workflow the brain wrote itself only gets its pin moved. Prints what changed; review `git diff`
 before committing.
@@ -64,10 +70,10 @@ from pathlib import Path
 
 import yaml
 
-from km import KM_REF
+from km import KM_REF, runner
 from km.init import (AFC_TOO_OLD, GEN_INDEX, TEAM, ensure_lf, gen_index_hook, pin_values, safe_path, template,
                      with_gen_index, with_team_hooks)
-from km.paths import git, repo_root, write_text
+from km.paths import git, printable, repo_root, write_text
 from km.pins import (SCHEMA_LINK, hook_rev, movable_refs, pin_target, read_pins, resolve, set_pins, set_schema_link,
                      version_key, workflow_files)
 
@@ -91,21 +97,23 @@ OLD_COPIES = {
 # The km files a team brain carries as copies (the bump-mounted-pins job holding the app token must
 # not install km; the fixes of approve-fork-ci, review-request-guide, automerge and main-guard must reach every brain) ->
 # shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
-# is still one of them is replaced by the current template, an edited one is left with a note.
+# is still one of them is replaced by the current template, an edited one is left with a note. The templates
+# are hashed with the runner placeholder, and a copy with the runner km wrote into it put back (shipped).
 SHIPPED = {
-    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e", "139a62edc4339833", "20994093d5d54451"},
+    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e", "139a62edc4339833", "20994093d5d54451", "b88def9eb10b9764"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
-    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388", "bac7f4477dadece9", "b944e6b5358d92dd"},
-    "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7", "bf78ce9ff5ddd127"},
-    "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e", "75dee4df6004f801"},
-    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a", "de0b3cc467824c05", "9ee47ce4374f2938", "c61b4233e5119f6d", "9c4ff32ba808ba4c"},
+    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388", "bac7f4477dadece9", "b944e6b5358d92dd", "3cfa0718da35ba7c"},
+    "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7", "bf78ce9ff5ddd127", "ef4d8ea39fff6662"},
+    "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e", "75dee4df6004f801", "3b2cb3023b0b3131"},
+    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a", "de0b3cc467824c05", "9ee47ce4374f2938", "c61b4233e5119f6d", "9c4ff32ba808ba4c", "ad944c61e26500de"},
 }
 # approve-fork-ci versions that approved data endings only: the later ones approve any file but control
 # files, safe only beside km's ci and a km from 1.11.0 on, so upgrade does not widen one of these otherwise
 ALLOWLIST_AFC = {"accf1785f4710b4e", "70ad9729fd426ebd"}
 # ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
-# a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
-KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f", "76dc97b57c9649e3", "0606bf55cf58761c", "a1f4566802ede1da", "2e8e021af1f8ada5"}
+# a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here
+# (of the template, with the runner placeholder); is_km_ci reads the runs-on lines.
+KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f", "76dc97b57c9649e3", "0606bf55cf58761c", "a1f4566802ede1da", "2e8e021af1f8ada5", "27f59d74938e41ae"}
 DIGEST_AFTER = (1, 10, 1)   # the last km release that does not record or check approved_digest
 INDEX_AFTER = (1, 11, 0)    # the last km release whose gen-index writes a title as YAML reads it (1.10 as 1.1)
 
@@ -208,11 +216,12 @@ def fingerprint(text: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
-def ci_hash(text: str) -> str | None:
+def ci_hash(text: str, runs_on: str | None = None, written: set[str] | frozenset[str] = frozenset()) -> str | None:
     """sha256 prefix of a ci workflow as YAML reads it, so a comment changes nothing and nothing YAML
     runs can hide as one, with what may differ between brains running the same steps masked: the
     action refs (Dependabot moves them), the push branches (the default branch's name) and the
-    workflow_dispatch trigger (upgrade adds it after this check). None when it is no workflow."""
+    workflow_dispatch trigger (upgrade adds it after this check); with `runs_on`, each job's runs-on
+    that is one of `written` reads as that. None when it is no workflow."""
     d = _parse(text)
     if not isinstance(d, dict):
         return None
@@ -226,6 +235,8 @@ def ci_hash(text: str) -> str | None:
     for job in jobs.values() if isinstance(jobs, dict) else ():
         if not isinstance(job, dict):
             continue
+        if runs_on is not None and isinstance(job.get("runs-on"), str) and job["runs-on"] in written:
+            job["runs-on"] = runs_on
         steps = job.get("steps")
         for step in [job, *(steps if isinstance(steps, list) else ())]:   # a job may call a reusable workflow itself
             if isinstance(step, dict) and isinstance(step.get("uses"), str):
@@ -234,6 +245,57 @@ def ci_hash(text: str) -> str | None:
         return hashlib.sha256(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()[:16]
     except (TypeError, ValueError, RecursionError):    # mixed key types, an alias cycle: not km's
         return None
+
+
+KM_WROTE = (runner.PLACEHOLDER, runner.DEFAULT, runner.OLD_EXPR)   # the runs-on km's templates had, oldest last
+
+
+def is_km_ci(text: str, labels=()) -> bool:
+    """Whether a ci workflow is one of km's versions, on a runner km wrote: its hash with each runs-on read
+    as one km wrote (the placeholder from this km on; before, ubuntu-latest or km 1.22's expression), where
+    it is one of those or one of `labels`, the brain's runner. A runs-on km did not write makes ci.yml the
+    brain's own: approve-fork-ci and automerge are safe only beside km's ci, and a runner a fork's run
+    reaches is the brain's to choose."""
+    written = {*KM_WROTE, *labels}
+    return any(ci_hash(text, v, written) in KM_CI for v in KM_WROTE)
+
+
+def label_fix(values) -> str:
+    """How to make the one label among a workflow's runs-on values the brain's setting, never naming one
+    the setting refuses."""
+    theirs = sorted({v for v in values if v not in (runner.DEFAULT, runner.OLD_EXPR)})
+    try:
+        return f"set `runner: {runner.check(theirs[0], yaml.safe_load)}` in schema.local.yaml" if len(theirs) == 1 else ""
+    except ValueError:
+        return ""
+
+
+def old_variable(root: Path) -> str:
+    """The variable KM_RUNNER of the brain's origin on GitHub, else of its organisation, as gh reads them;
+    "" where neither has one or gh cannot tell (not installed, no login, offline, no GitHub origin)."""
+    from km.remotes import gh, github_repo
+    url = git("remote", "get-url", "origin", cwd=root).stdout.strip()
+    if not (repo := github_repo(url)):
+        return ""
+    for where in (("-R", "/".join(repo)), ("--org", repo[0])):          # the repository's, else its organisation's
+        code, out = gh("variable", "get", "KM_RUNNER", *where)
+        if code == 0 and out.strip() and "\n" not in out.strip():
+            return printable(out.strip())
+    return ""
+
+
+def _left(rel: str, values: list[str], why: str) -> str:
+    shown = ", ".join(sorted({printable(v) for v in values}))
+    if any(not runner.km_form(v) for v in values):         # an expression: no setting turns it into km's
+        return f"left the runs-on of {rel} at {shown}: {why}; to have km's, replace it by hand with the brain's runner"
+    fix = label_fix(values) or "set `runner:` in schema.local.yaml to one label"
+    return f"left the runs-on of {rel} at {shown}: {why}; if that is the brain's runner, {fix} and run km upgrade again"
+
+
+def shipped(text: str, known: set[str]) -> bool:
+    """Whether a copy is one of the versions `known` lists: as it is, or with the runner km wrote into it
+    put back to the placeholder (km 1.22 and earlier wrote no runner)."""
+    return shipped_hash(text) in known or shipped_hash(runner.unrendered(text)) in known
 
 
 def _parse(text: str):
@@ -304,6 +366,22 @@ def with_signoff(text: str) -> str | None:
     return out if len(old) == len(new) and new == want and want != old else None
 
 
+def with_runner(text: str, label: str) -> str | None:
+    """A ci or staleness workflow the brain owns with each runs-on line set to `label` (unchanged when
+    they are), where each is km's: one label or km 1.22's expression. None otherwise, or when the result
+    does not parse to the same workflow with only the runs-on of its jobs changed."""
+    values = runner.runs_on(text)
+    if not values or not all(map(runner.km_form, values)):
+        return None
+    out, before = runner.with_runs_on(text, label), _parse(text)
+    jobs = before.get("jobs") if isinstance(before, dict) else None
+    if not isinstance(jobs, dict) or sum(isinstance(j, dict) and "runs-on" in j for j in jobs.values()) != len(values):
+        return None
+    for job in jobs.values():
+        job["runs-on"] = label
+    return out if _parse(out) == before else None
+
+
 def with_full_history(text: str) -> str | None:
     """The staleness workflow with `fetch-depth: 0` given to its one actions/checkout step (unchanged when
     every checkout step sets a fetch-depth, or there is none), or None when the edit cannot be made safely
@@ -334,6 +412,11 @@ def main() -> int:
     root = repo_root()
     if not any((root / f).is_file() for f in ("CONVENTIONS.md", "schema.local.yaml", "schema.yaml")):
         sys.exit(f"km upgrade: {root} has no CONVENTIONS.md or schema file; not a km brain")
+    try:
+        own_runner = runner.setting(root, yaml.safe_load)   # read before anything is written, as is the release below
+    except ValueError as e:
+        sys.exit(f"km upgrade: {e}")
+    label = own_runner or runner.DEFAULT
     target, commit = pin_target(a.pin)       # a commit: an unreleased km, its version read from it
     pins = read_pins(root)
     newer = sorted(f"{f} pins {p.version}" for f, ps in pins.items() for p in ps
@@ -369,7 +452,7 @@ def main() -> int:
             continue
         text = p.read_text(encoding="utf-8")
         if rel in rewrites:
-            write_text(p, template(tpl, values))
+            write_text(p, template(tpl, {**values, runner.PLACEHOLDER: label}))
             done.append(f"rewrote {rel} (it was km's own, unchanged) to install km")
         elif rel == ".pre-commit-config.yaml" and "scripts/validate.py" in text:
             done.append(f"{rel} differs from km's old hook: replace its km hook by hand with "
@@ -404,8 +487,21 @@ def main() -> int:
             write_text(local, new)
             done.append("dropped team_brain from schema.local.yaml (no longer used)")
     signoff = False                           # whether km's ci workflow runs the sign-off check after this upgrade
+    unread: list[str] = []                    # the workflows rewritten from reading the variable KM_RUNNER
     if team:
-        km_ci = ".github/workflows/ci.yml" in rewrites or ci_hash(ci_text) in KM_CI   # km's, or km's copy-in rewritten to it
+        # km's ci on the brain's runner (the setting, else ubuntu-latest or km 1.22's expression). One on another
+        # runs-on is the brain's own: with the setting, a label is km's to move to it (the setting changed);
+        # without it, a label set by hand is the brain's choice, beside which approve-fork-ci and automerge do not go.
+        km_ci = ".github/workflows/ci.yml" in rewrites or is_km_ci(ci_text, {own_runner} - {None})
+        if not km_ci and ci_text and is_km_ci(ci_text, set(runner.runs_on(ci_text))):
+            ci = ".github/workflows/ci.yml"
+            if own_runner and (got := with_runner(ci_text, own_runner)):
+                write_text(root / ci, ci_text := got)
+                km_ci = True
+                done.append(f"set the runs-on of {ci} to the brain's runner {own_runner}")
+            else:
+                done.append(_left(ci, runner.runs_on(ci_text), "a runner km did not write, so this ci.yml is the brain's "
+                                  "own and approve-fork-ci and automerge are not added or updated beside it"))
         for tpl in ("team/dependabot.yml", *SHIPPED):
             rel = TEAM[tpl]
             p = root / rel
@@ -413,12 +509,12 @@ def main() -> int:
                 why = f"km {target} {AFC_TOO_OLD}"
                 if not p.exists():
                     done.append(f"did not add {rel}: {why}; km 1.11.0 or later has it")
-                elif (h := shipped_hash(p.read_text(encoding="utf-8"))) in ALLOWLIST_AFC:
+                elif (h := shipped_hash(copy := p.read_text(encoding="utf-8"))) in ALLOWLIST_AFC:
                     done.append(f"left {rel} at its data-only version: this km's version needs km 1.11.0 or later")
                     if not km_ci and ci_text:
                         done.append(f"{rel} lets a fork's ci run start unreviewed, but ci.yml is not km's unchanged one: "
                                     f"check that ci.yml runs nothing from the checkout but km, or remove {rel}")
-                elif h in SHIPPED[tpl]:
+                elif shipped(copy, SHIPPED[tpl]):
                     p.unlink()
                     done.append(f"removed {rel}: {why}; a fork's ci run waits for a person again")
                 else:
@@ -441,7 +537,7 @@ def main() -> int:
                 if ci_text:                          # without a ci.yml it has no run to approve
                     done.append(f"{rel} lets a fork's ci run start unreviewed, but ci.yml is not km's unchanged one: "
                                 f"check that ci.yml runs nothing from the checkout but km, or remove {rel}")
-            new = template(tpl, {})
+            new = template(tpl, {runner.PLACEHOLDER: label})
             if not p.exists():
                 p.parent.mkdir(parents=True, exist_ok=True)
                 write_text(p, new)
@@ -457,11 +553,16 @@ def main() -> int:
                                 f"once ci.yml pins km 1.20.0 or later; to merge with a GitHub App, so its merges start ci and main-guard on "
                                 f"main, see its header (KM_AUTOMERGE_APP)")
             elif tpl in SHIPPED and (copy := p.read_text(encoding="utf-8")) != new and (h := shipped_hash(copy)) != shipped_hash(new):
-                if tpl == "team/approve-fork-ci.yml" and h in ALLOWLIST_AFC and not km_ci:
+                if shipped_hash(runner.unrendered(copy)) == shipped_hash(runner.unrendered(new)):   # this version, another runner
+                    write_text(p, runner.rendered(copy, label))
+                    done.append(f"set the runner of {rel} to {label}")
+                elif tpl == "team/approve-fork-ci.yml" and h in ALLOWLIST_AFC and not km_ci:
                     done.append(f"left {rel}: this km's version approves a fork's ci run for any file but control files "
                                 f"(a script in a doc folder too), and ci.yml is not km's unchanged one")
-                elif h in SHIPPED[tpl]:
+                elif shipped(copy, SHIPPED[tpl]):
                     write_text(p, carry_pins(copy, new))
+                    if runner.READS_VARIABLE.search(copy):
+                        unread.append(rel)
                     done.append(f"updated {rel} to this km's version (it was an earlier one, unchanged but for its action pins, keeping those newer than km's)")
                 else:
                     done.append(f"left {rel}: the brain changed it, so it gets no later fixes; "
@@ -492,6 +593,41 @@ def main() -> int:
             else:
                 write_text(root / rel, got)
                 done.append(f"gave the checkout step of {rel} `fetch-depth: 0`, so its run validates source pins")
+        stale = ".github/workflows/staleness.yml"
+        # km's staleness (it pins km) with km's one job: it never runs on a fork's pull request, so its steps
+        # may be the brain's (another cron); a job of the brain's own keeps every runs-on
+        km_stale = False
+        if str(Path(stale)) in pins:
+            d = _parse((root / stale).read_text(encoding="utf-8"))
+            jobs = d.get("jobs") if isinstance(d, dict) else None
+            km_stale = isinstance(jobs, dict) and set(jobs) == {"demote"}
+            if not km_stale:
+                own = ", ".join(sorted(map(str, jobs or {}))) if isinstance(jobs, dict) else ""
+                done.append(f"left the runs-on of {stale}: it is not km's staleness workflow"
+                            f"{f' (its jobs are {own}, km' + chr(39) + 's is demote alone)' if own else ''}; set its runs-on by hand")
+        for rel in [r for r, ours in ((".github/workflows/ci.yml", km_ci), (stale, km_stale)) if ours]:
+            was = runner.runs_on(text := (root / rel).read_text(encoding="utf-8"))
+            if own_runner is None and {v for v in was if v not in (runner.DEFAULT, runner.OLD_EXPR)}:
+                done.append(_left(rel, was, f"schema.local.yaml names no runner, so km writes {runner.DEFAULT} into its workflows"))
+            elif (got := with_runner(text, label)) is None:
+                done.append(f"could not set the runs-on of {rel} to the brain's runner {label}: set it by hand")
+            elif got != text:
+                write_text(root / rel, got)
+                done.append(f"set the runs-on of {rel} to the brain's runner {label}")
+                if runner.OLD_EXPR in was:
+                    unread.append(rel)
+        old = old_variable(root) if unread and not own_runner else ""
+        if unread and (own_runner or old == runner.DEFAULT):
+            done.append(f"{', '.join(unread)} read the runner from the variable KM_RUNNER, which km reads nowhere now "
+                        f"(GitHub does not pass it to a fork's pull request run), and now run on {label}: if the brain "
+                        f"sets it, delete the variable")
+        elif unread:                          # first, as the run's every job may have just left the brain's runner
+            add = (label_fix([old]) or "set `runner:` in schema.local.yaml to one label") if old else \
+                "put its label in schema.local.yaml as `runner: <label>`"
+            done.insert(0, f"ATTENTION: {', '.join(unread)} read the runner from the variable KM_RUNNER"
+                           f"{f' (here {old})' if old else ''}, which km reads nowhere now (GitHub does not pass it to a "
+                           f"fork's pull request run): they now run on {label}. If the brain sets KM_RUNNER, "
+                           f"{add}, run km upgrade again, then delete the variable")
         hook = root / ".pre-commit-config.yaml"
         if not hook.is_file():
             done.append(f"no {hook.name}: nothing refuses a commit on main or a push to main locally; `km init` writes one")

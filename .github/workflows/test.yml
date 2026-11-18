@@ -37,6 +37,7 @@ jobs:
       - run: bash tests/skill_smoke.sh
       - run: bash tests/hook_smoke.sh
       - run: bash tests/mounted_pins_smoke.sh
+      - run: bash tests/runner_smoke.sh
       - run: bash tests/action_smoke.sh
       - name: e2e_smoke.sh (the e2e driver's seed and name check; the live run needs a sandbox)
         run: bash tests/e2e_smoke.sh

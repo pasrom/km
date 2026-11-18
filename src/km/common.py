@@ -19,8 +19,8 @@ from pathlib import Path
 
 import yaml
 
-from km import paths
-from km.paths import BASE_SCHEMA, git, repo_root
+from km import paths, runner
+from km.paths import BASE_SCHEMA, OVERLAY_NAMES, git, repo_root
 
 ROOT = repo_root()
 
@@ -66,10 +66,7 @@ def _merge(base: dict, local: dict | None) -> dict:
     return out
 
 
-# The brain's overlay. A brain from before the overlay existed has only a legacy schema.yaml (km's
-# schema plus its own additions); it overlays the base the same way until `km upgrade` renames it.
-OVERLAY_NAMES = ("schema.local.yaml", "schema.yaml")   # the first that exists; none: the first
-OVERLAY = ROOT / next((n for n in OVERLAY_NAMES if (ROOT / n).is_file()), OVERLAY_NAMES[0])
+OVERLAY = paths.overlay(ROOT)
 def _specs(schema: dict) -> dict:
     """The merged schema with every field and type spec a mapping without empty keys: a field or type
     the overlay declares with no spec (`ticket:`) has an empty one, and a key left empty inside a spec
@@ -156,6 +153,10 @@ for _k in ("served_status", "customer_audience"):  # compared, hashed and put in
         PROBLEMS.append(f"schema.local.yaml: gate.{_k} must be a string")
         _gate = dict(_gate)
         del _gate[_k]
+try:                                               # written into the team workflows by km init and km upgrade
+    runner.setting(ROOT, yaml.safe_load)
+except ValueError as e:
+    PROBLEMS.append(str(e))
 SERVED_STATUS = _gate.get("served_status", "accepted")
 RETIRED_STATUS = ("superseded", "obsolete")
 CUSTOMER_AUDIENCE = _gate.get("customer_audience", "customer")
