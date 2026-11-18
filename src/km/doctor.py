@@ -25,7 +25,7 @@ from km import KM_REF
 from km.paths import (ahead_behind, command, git, git_path, left_out, printable, repo_root, rev, sets_no_eol, skip_mount,
                       submodule_config)
 from km.pins import read_pins, version_key
-from km import remotes
+from km import remotes, runner
 from km.remotes import Upstream, find_upstream, first_line, gh, github_repo, no_login, no_network, remote, shown
 
 UV_DOCS = "https://docs.astral.sh/uv/getting-started/installation/"
@@ -552,39 +552,77 @@ def check_environment(repo: str, name: str, if_missing: tuple[str, str] | None, 
                f"Settings, Environments, {name}: deployment branches, selected branches, `{default}` only")
 
 
-RUNS_ON_RUNNER = re.compile(r"(?m)^[ \t]*runs-on:[^#\n]*vars\.KM_RUNNER")
+# km.init.TEAM's workflows, by name: km.init needs PyYAML, which km doctor runs without
+TEAM_WORKFLOWS = ("ci", "staleness", "main-guard", "approve-fork-ci", "review-request-guide", "automerge", "bump-mounted-pins")
 
 
-def check_runner(root: Path, repo: str) -> None:
-    """The variable KM_RUNNER of the repository, else of its organisation, as far as gh may read them,
-    beside km's team ci.yml (one that installs km through pasrom/km@): a note naming the runner when the
-    runs-on lines of ci.yml and staleness.yml read it, or which of them do not. Unset or unreadable,
-    nothing is said; a repository variable gh may not read is not stood in for by the organisation's."""
-    files = [p for p in (root / ".github/workflows/ci.yml", root / ".github/workflows/staleness.yml") if p.is_file()]
-    texts = {p.name: p.read_text(encoding="utf-8", errors="replace") for p in files}
+def check_runner(root: Path) -> tuple[str, bool] | None:
+    """The brain's runner (km.runner) beside km's team ci.yml (one that installs km through pasrom/km@):
+    a failure for a setting km cannot use, a note for a team workflow that runs elsewhere or still reads
+    the variable KM_RUNNER, and one naming a runner other than GitHub's, which a fork's pull request
+    runs ci on. Returns the runner's label and whether a workflow still reads the variable, None where this
+    is no such brain or the setting is unusable."""
+    wf = root / ".github/workflows"
+    texts = {f"{n}.yml": (wf / f"{n}.yml").read_text(encoding="utf-8", errors="replace")
+             for n in TEAM_WORKFLOWS if (wf / f"{n}.yml").is_file()}
     if "pasrom/km@" not in texts.get("ci.yml", ""):
-        return
+        return None
+    try:
+        yaml_load = importlib.import_module("yaml").safe_load if importlib.util.find_spec("yaml") else None
+        label = runner.setting(root, yaml_load) or runner.DEFAULT    # as km upgrade reads it, where PyYAML is at hand
+    except ValueError as e:
+        report("FAIL", str(e), "set it to one runner label, or remove the line for ubuntu-latest")
+        return None
+    if reading := [n for n, t in texts.items() if runner.READS_VARIABLE.search(t)]:
+        report("note", f"the runs-on line of {' and '.join(reading)} reads the variable KM_RUNNER, which GitHub does not "
+                       f"pass to a fork's pull request run: that ci runs on {runner.DEFAULT}",
+               "put the runner's label in schema.local.yaml as `runner: <label>` and run `km upgrade`")
+    ci_on = sorted({printable(v) for v in runner.runs_on(texts["ci.yml"])} - {runner.DEFAULT, runner.OLD_EXPR, label})
+    if elsewhere := [n for n, t in texts.items() if runner.labels(t) - {label} and not (n == "ci.yml" and ci_on)]:
+        report("note", f"{' and '.join(elsewhere)} run{'s' * (len(elsewhere) == 1)} on another runner than the brain's, {label} "
+                       f"(`runner:` in schema.local.yaml, else {runner.DEFAULT})",
+               "run `km upgrade`; a file it leaves (one the brain changed, or a label of ci.yml or staleness.yml "
+               "without the setting) takes the setting or a hand edit")
+    isolated = "use ephemeral, isolated runners only, one job per fresh machine (km's README, \"Running on your own runners\")"
+    if label != runner.DEFAULT:
+        report("note", f"the team workflows run on the runner {label} (schema.local.yaml; bump-mounted-pins reads "
+                       f"MOUNTED_PINS_RUNNER first): a fork's pull request runs ci on it too", isolated)
+    if ci_on:
+        report("note", f"ci.yml runs on {', '.join(ci_on)}, not on the brain's runner {label}: a fork's pull request "
+                       f"runs ci there too", f"{isolated}; to move it to the brain's runner, set `runner:` and run `km upgrade`")
+    return label, bool(reading)
+
+
+def check_runner_variable(repo: str, label: str, reading: bool) -> None:
+    """The variable KM_RUNNER of the repository, else of its organisation, as far as gh may read them: km
+    reads it nowhere now, so a note says to move it into the setting, or to delete it once it is there and
+    no workflow `reading` it is left.
+    Unset or unreadable, nothing is said; a repository variable gh may not read is not stood in for by the
+    organisation's."""
     for args in ((f"repos/{repo}/actions/variables/KM_RUNNER", "--jq", ".value"),
                  ("--paginate", f"repos/{repo}/actions/organization-variables",
                   "--jq", '.variables[] | select(.name == "KM_RUNNER") | .value')):
         if (res := ask(f"for the variable KM_RUNNER of {repo}", "api", "--hostname", "github.com", *args,
                        status="note")) is None:
             return
-        if res[0] == 0 and (label := printable(res[1].strip())):
+        if res[0] == 0 and (old := printable(res[1].strip())):
             break
         if res[0] != 0 and "Not Found" not in res[1]:
             return                                    # not readable (a 403): the organisation's would mislead
     else:
         return
-    if ignoring := [name for name, text in texts.items() if not RUNS_ON_RUNNER.search(text)]:
-        report("note", f"the variable KM_RUNNER names the runner {label}, but the runs-on line of {' and '.join(ignoring)} "
-                       f"does not read it: that workflow stays where the line says",
-               "set their runs-on to `${{ vars.KM_RUNNER || 'ubuntu-latest' }}` (km's README, \"Running on your own runners\")")
-    else:
-        report("note", f"the team workflows run on the runner {label} (the variable KM_RUNNER; bump-mounted-pins reads "
-                       f"MOUNTED_PINS_RUNNER first): if GitHub passes the brain's variables to a fork's pull request run, "
-                       f"that ci runs on it too, otherwise on GitHub's runner",
-               "use ephemeral, isolated runners only, one job per fresh machine (km's README, \"Running on your own runners\")")
+    report("note", f"the variable KM_RUNNER names the runner {old}, but km reads it nowhere now "
+                   f"(GitHub does not pass it to a fork's pull request run); the brain's runner is {label}",
+           ("run `km upgrade`, then delete the variable" if reading else "delete the variable") if old == label else
+           f"set `runner: {_label_or(old)}` in schema.local.yaml, run `km upgrade`, then delete the variable")
+
+
+def _label_or(value: str) -> str:
+    """`value` where the runner setting takes it, else what to write instead."""
+    try:
+        return runner.check(value)
+    except ValueError:
+        return "<one label>"
 
 
 def main() -> int:
@@ -604,9 +642,11 @@ def main() -> int:
         check_submodules(root, origin, args.offline)
         check_hook(root)
         check_line_endings(root)
+        ran = check_runner(root)
         if repo := check_github(origin, args.offline):
             check_environments(root, repo)
-            check_runner(root, repo)
+            if ran:
+                check_runner_variable(repo, *ran)
         check_git_login(root, origin)
         check_km_version(root)
         check_plugins(root)
