@@ -29,7 +29,8 @@ name: bump-mounted-pins
 # brain's owner, a public one still resolves and a private one is reported and fails the run; a
 # brain whose mounts all belong to other owners is not handled (mounts finds none and stops).
 # Submodule paths must not contain spaces. The runner is ubuntu-latest unless the repository
-# variable MOUNTED_PINS_RUNNER names another label.
+# variable MOUNTED_PINS_RUNNER, else KM_RUNNER, names another label; the jobs run in a container, so
+# a self-hosted runner needs docker.
 on:
   schedule:
     # Weekday mornings, 06:25 UTC. Off the hour on purpose: scheduled runs cluster there and are
@@ -54,7 +55,8 @@ defaults:
 
 jobs:
   mounts:
-    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
     container: python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 # 3.12-slim
     outputs:
       names: ${{ steps.mounted.outputs.names }}
@@ -86,7 +88,8 @@ jobs:
   resolve:
     needs: mounts
     if: needs.mounts.outputs.names != ''
-    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
     # The app key lives in this environment, which only main may use. A workflow pushed on another
     # branch therefore cannot reach the key.
     environment: mounted-pins
@@ -213,7 +216,8 @@ jobs:
   publish:
     needs: resolve
     if: ${{ !cancelled() && needs.resolve.outputs.changed == 'true' }}
-    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.MOUNTED_PINS_RUNNER || vars.KM_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
     container: python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 # 3.12-slim
     permissions:
       contents: write         # push the bump branch

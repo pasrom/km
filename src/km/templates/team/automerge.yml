@@ -79,13 +79,47 @@ jobs:
           || (github.event_name == 'pull_request_target'
               && (github.event.action == 'ready_for_review' || github.event.label.name == 'km:ready')
               && contains(github.event.pull_request.labels.*.name, 'km:ready')))
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       pull-requests: read   # list the open pull requests
     outputs:
       pr: ${{ steps.pr.outputs.pr }}
     steps:
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
+      - name: the tools this job runs, where the runner lacks them
+        if: vars.KM_RUNNER != ''
+        env:
+          TOOLS: gh jq
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/km-tools"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          case "$(uname -s)-$(uname -m)" in Linux-x86_64) arch=amd64;; Linux-aarch64|Linux-arm64) arch=arm64;; *) arch=;; esac
+          for tool in $TOOLS; do
+            if [ "$tool" = yq ]; then   # mikefarah's yq v4: Ubuntu's yq package is another program
+              yq --version 2>/dev/null | grep -q 'mikefarah/yq.* v4\.' && continue
+            else
+              command -v "$tool" >/dev/null && continue
+            fi
+            gh=https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux
+            jq=https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux
+            yq=https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux
+            case "$tool-$arch" in
+              gh-amd64) url="${gh}_amd64.tar.gz" sum=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d;;
+              gh-arm64) url="${gh}_arm64.tar.gz" sum=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63;;
+              jq-amd64) url="$jq-amd64" sum=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f;;
+              jq-arm64) url="$jq-arm64" sum=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309;;
+              yq-amd64) url="${yq}_amd64" sum=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f;;
+              yq-arm64) url="${yq}_arm64" sum=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b;;
+              *) echo "::error::$tool is missing and km pins no build of it for $(uname -s) $(uname -m): install it on the runner"; exit 1;;
+            esac
+            curl -fsSL --retry 3 -o "$bin/$tool.get" "$url"
+            echo "$sum  $bin/$tool.get" | sha256sum -c --quiet -
+            if [ "$tool" = gh ]; then tar -xzOf "$bin/gh.get" --wildcards '*/bin/gh' > "$bin/gh"; rm "$bin/gh.get"
+            else mv "$bin/$tool.get" "$bin/$tool"; fi
+            chmod +x "$bin/$tool"; echo "installed $tool from $url"
+          done
       - name: the pull request
         id: pr
         env:
@@ -120,7 +154,7 @@ jobs:
   decide:
     needs: resolve
     if: needs.resolve.outputs.pr != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15     # km automerge waits up to 5 minutes for pending checks
     permissions:
       contents: read        # ci.yml, the docs and the schema km reads
@@ -138,6 +172,40 @@ jobs:
       # the App (see the top) merges: KM_AUTOMERGE_APP=1 and a merge
       app: ${{ vars.KM_AUTOMERGE_APP == '1' && steps.decide.outputs.merge == '1' && '1' || '' }}
     steps:
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
+      - name: the tools this job runs, where the runner lacks them
+        if: vars.KM_RUNNER != ''
+        env:
+          TOOLS: gh
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/km-tools"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          case "$(uname -s)-$(uname -m)" in Linux-x86_64) arch=amd64;; Linux-aarch64|Linux-arm64) arch=arm64;; *) arch=;; esac
+          for tool in $TOOLS; do
+            if [ "$tool" = yq ]; then   # mikefarah's yq v4: Ubuntu's yq package is another program
+              yq --version 2>/dev/null | grep -q 'mikefarah/yq.* v4\.' && continue
+            else
+              command -v "$tool" >/dev/null && continue
+            fi
+            gh=https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux
+            jq=https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux
+            yq=https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux
+            case "$tool-$arch" in
+              gh-amd64) url="${gh}_amd64.tar.gz" sum=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d;;
+              gh-arm64) url="${gh}_arm64.tar.gz" sum=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63;;
+              jq-amd64) url="$jq-amd64" sum=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f;;
+              jq-arm64) url="$jq-arm64" sum=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309;;
+              yq-amd64) url="${yq}_amd64" sum=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f;;
+              yq-arm64) url="${yq}_arm64" sum=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b;;
+              *) echo "::error::$tool is missing and km pins no build of it for $(uname -s) $(uname -m): install it on the runner"; exit 1;;
+            esac
+            curl -fsSL --retry 3 -o "$bin/$tool.get" "$url"
+            echo "$sum  $bin/$tool.get" | sha256sum -c --quiet -
+            if [ "$tool" = gh ]; then tar -xzOf "$bin/gh.get" --wildcards '*/bin/gh' > "$bin/gh"; rm "$bin/gh.get"
+            else mv "$bin/$tool.get" "$bin/$tool"; fi
+            chmod +x "$bin/$tool"; echo "installed $tool from $url"
+          done
       - name: the km the default branch's ci.yml pins
         id: pin
         env:
@@ -197,7 +265,7 @@ jobs:
   act:
     needs: [resolve, decide]
     if: needs.decide.outputs.labelled == '1'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: write       # merge
@@ -210,6 +278,47 @@ jobs:
     # decide's app: the App merges; an empty name is none
     environment: ${{ needs.decide.outputs.app == '1' && 'automerge' || '' }}
     steps:
+      # GitHub's runner image has gh, jq and yq; a self-hosted runner (KM_RUNNER) may not. A missing one is
+      # fetched, pinned by version and sha256, into this job's temp folder; the same step in every km workflow
+      - name: the tools this job runs, where the runner lacks them
+        if: vars.KM_RUNNER != '' && needs.decide.outputs.app != '1'
+        env:
+          TOOLS: gh jq
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/km-tools"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          case "$(uname -s)-$(uname -m)" in Linux-x86_64) arch=amd64;; Linux-aarch64|Linux-arm64) arch=arm64;; *) arch=;; esac
+          for tool in $TOOLS; do
+            if [ "$tool" = yq ]; then   # mikefarah's yq v4: Ubuntu's yq package is another program
+              yq --version 2>/dev/null | grep -q 'mikefarah/yq.* v4\.' && continue
+            else
+              command -v "$tool" >/dev/null && continue
+            fi
+            gh=https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux
+            jq=https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux
+            yq=https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux
+            case "$tool-$arch" in
+              gh-amd64) url="${gh}_amd64.tar.gz" sum=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d;;
+              gh-arm64) url="${gh}_arm64.tar.gz" sum=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63;;
+              jq-amd64) url="$jq-amd64" sum=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f;;
+              jq-arm64) url="$jq-arm64" sum=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309;;
+              yq-amd64) url="${yq}_amd64" sum=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f;;
+              yq-arm64) url="${yq}_arm64" sum=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b;;
+              *) echo "::error::$tool is missing and km pins no build of it for $(uname -s) $(uname -m): install it on the runner"; exit 1;;
+            esac
+            curl -fsSL --retry 3 -o "$bin/$tool.get" "$url"
+            echo "$sum  $bin/$tool.get" | sha256sum -c --quiet -
+            if [ "$tool" = gh ]; then tar -xzOf "$bin/gh.get" --wildcards '*/bin/gh' > "$bin/gh"; rm "$bin/gh.get"
+            else mv "$bin/$tool.get" "$bin/$tool"; fi
+            chmod +x "$bin/$tool"; echo "installed $tool from $url"
+          done
+      # The App's token is never handed to a downloaded tool: with the App, gh and jq are the runner's own
+      - name: with the App, gh and jq come with the runner
+        if: needs.decide.outputs.app == '1'
+        run: |
+          command -v gh >/dev/null && command -v jq >/dev/null || {
+            echo "::error::KM_AUTOMERGE_APP is 1 and the runner lacks gh or jq: nothing merged. Install both in the runner's image; the App's token is not handed to a tool this job downloads"
+            exit 1; }
       - name: the App's token, for this repository's contents
         id: token
         if: needs.decide.outputs.app == '1'
