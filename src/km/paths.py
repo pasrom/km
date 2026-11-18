@@ -11,6 +11,14 @@ from pathlib import Path
 PACKAGE = Path(__file__).resolve().parent
 BASE_SCHEMA = PACKAGE / "schema.base.yaml"
 TEMPLATES = PACKAGE / "templates"
+# The brain's schema overlay: a brain from before the overlay existed has only a legacy schema.yaml
+# (km's schema plus its own additions), read the same way until `km upgrade` renames it.
+OVERLAY_NAMES = ("schema.local.yaml", "schema.yaml")   # the first that exists; none: the first
+
+
+def overlay(root: Path) -> Path:
+    """The brain's schema overlay: the first of OVERLAY_NAMES that exists, else the first."""
+    return root / next((n for n in OVERLAY_NAMES if (root / n).is_file()), OVERLAY_NAMES[0])
 # True while km.cli imports a command: km.common then leaves a schema problem it finds for km.cli to
 # raise after the import, so `km <cmd> --help` answers whatever the schema holds (km.common.PROBLEMS).
 defer_schema_problems = False

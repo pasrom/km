@@ -7,13 +7,14 @@ its commit (see km.pins) and runs `km` from there. The release is this km's own,
       has a CONVENTIONS.md.
 
   km init DIR --team --name NAME --desc TEXT --initials XX --folder DIR=PURPOSE [--folder ...]
-              [--rule TEXT ...] [--profile SLUG]
+              [--rule TEXT ...] [--profile SLUG] [--runner LABEL]
       A team brain: also the root and folder indexes, README, .gitignore, its workflows (ci,
       staleness, main-guard, approve-fork-ci, review-request-guide, automerge (off until KM_AUTOMERGE=1),
       bump-mounted-pins with its script), a Dependabot
       config, and the pre-commit hooks that refuse a commit or push on main and regenerate the
-      indexes (km-gen-index, when the pinned km has it). Refuses to run if any file it would
-      write already exists.
+      indexes (km-gen-index, when the pinned km has it). --runner sets `runner:` in
+      schema.local.yaml, the runner every workflow job runs on (see km.runner). Refuses to run if any
+      file it would write already exists.
 
 Both render and check everything before writing anything, and refuse a release whose commit
 cannot be looked up (not released yet, or no network). Files only: git add, the first
@@ -29,7 +30,7 @@ from pathlib import Path
 
 import yaml
 
-from km import KM_REF
+from km import KM_REF, runner
 from km.paths import TEMPLATES, sets_no_eol, write_text
 from km.pins import ITEM, KM_REPO_LINE, km_entries, pin_target, resolve, version_key
 
@@ -59,7 +60,8 @@ TEAM = {
     "pre-commit-config.template.yaml": ".pre-commit-config.yaml",
 }
 PLACEHOLDERS = ("<BRAIN>", "<TEAM>", "<MAINTAINER>", "<profile>", "<date>", "<FOLDER_ROWS>",
-                "<PLACEMENT_RULES>", "<folder>", "<purpose>", "<KM_SHA>", "<KM_VERSION>")
+                "<PLACEMENT_RULES>", "<folder>", "<purpose>", "<KM_SHA>", "<KM_VERSION>", runner.PLACEHOLDER)
+RUNNER_LINE = "# runner: my-runner\n"   # the team schema template's commented setting, which --runner sets
 
 
 def pin_values(version: str, commit: str | None = None) -> dict[str, str]:
@@ -280,6 +282,8 @@ def render(a: argparse.Namespace) -> dict[str, str]:
     values = {"<MAINTAINER>": _plain("--initials", a.initials), "<date>": datetime.date.today().isoformat(),
               "<FOLDER_ROWS>": "\n".join(f"| `{n}/` | {p} |" for n, p in folders), **pin_values(a.pin, a.commit)}
     if not a.team:
+        if a.runner:
+            sys.exit("km init --runner: only a team brain has workflows to run")
         return {dst: template(tpl, values) for tpl, dst in PERSONAL.items()}
     if not (a.name and a.desc and folders):
         sys.exit("km init --team needs --name, --desc and at least one --folder")
@@ -288,8 +292,17 @@ def render(a: argparse.Namespace) -> dict[str, str]:
         "<BRAIN>": _plain("--name", a.name), "<TEAM>": _plain("--desc", a.desc),
         "<profile>": a.profile or a.name.lower(),
         "<PLACEMENT_RULES>": "\n".join(f"- {r}" for r in rules),
+        runner.PLACEHOLDER: a.runner or runner.DEFAULT,
     }
+    try:
+        a.runner and runner.check(a.runner, yaml.safe_load)
+    except ValueError as e:
+        sys.exit(f"km init --{e}")
     out = {dst: template(tpl, values) for tpl, dst in TEAM.items()}
+    if a.runner:
+        schema = out["schema.local.yaml"].replace(RUNNER_LINE, f"runner: {a.runner}\n", 1)
+        assert schema != out["schema.local.yaml"], "km's team schema template has the runner setting"
+        out["schema.local.yaml"] = schema
     if not safe_path(a.pin):                      # no approve-fork-ci, and CLAUDE.md does not promise it
         del out[AFC]
         claude = out["CLAUDE.md"].replace(AFC_PROMISE, "a maintainer approves its CI run")
@@ -317,6 +330,7 @@ def main() -> int:
     ap.add_argument("--desc", help="team brain: one line on whose brain it is, e.g. 'the QA team'")
     ap.add_argument("--rule", action="append", metavar="TEXT", help="team brain: a placement rule")
     ap.add_argument("--profile", help="team brain: meta.profile slug (default: the lowercased name)")
+    ap.add_argument("--runner", metavar="LABEL", help="team brain: the runner label its workflows run on (default: ubuntu-latest)")
     ap.add_argument("--pin", metavar="VERSION", default=KM_REF, help="the km release, or a km commit sha, to pin (default: this km, %(default)s)")
     a = ap.parse_args()
     a.pin, a.commit = pin_target(a.pin)

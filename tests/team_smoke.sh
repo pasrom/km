@@ -8,6 +8,8 @@ KM_REF="v$(km --version)"
 T="$(mktemp -d)"
 F="$(mktemp -d)"                       # scratch for init runs that must be refused
 trap 'rm -rf "$T" "$F"' EXIT
+RT="$F/rendered"; cp -R "$REPO/src/km/templates/team" "$RT"   # the team templates as a brain without a runner setting gets them
+for f in "$RT"/*.yml; do sed 's/<RUNNER>/ubuntu-latest/g' "$f" > "$f.r" && mv "$f.r" "$f"; done
 fake_km_remote "$F/remote"; export KM_REPO_URL="file://$F/remote"   # km pins releases by their commit
 KM_SHA="$(git -C "$F/remote" rev-parse "$KM_REF^{commit}")"; V09_SHA="$(git -C "$F/remote" rev-parse v0.9.0)"
 S99="$(printf '9%.0s' {1..40})"; S98="$(printf '8%.0s' {1..40})"           # commits of made-up newer releases
@@ -282,7 +284,7 @@ cp "$REPO/tests/fixtures/old-brain/ci.yml" "$REPO/tests/fixtures/old-brain/stale
 printf 'jobs:\n  own:\n    steps:\n      - uses: pasrom/km@v0.1.0\n      - run: echo mine\n' > "$O/.github/workflows/own.yml"
 cp "$REPO/tests/fixtures/old-brain/pre-commit-config.yaml" "$O/.pre-commit-config.yaml"
 out="$(km upgrade --root "$O" 2>&1)"
-AF=.github/workflows/approve-fork-ci.yml; AFT="$REPO/src/km/templates/team/approve-fork-ci.yml"
+AF=.github/workflows/approve-fork-ci.yml; AFT="$RT/approve-fork-ci.yml"
 cmp -s "$O/$AF" "$AFT" \
   && ok "upgrade of a copy-in brain adds approve-fork-ci with the ci it rewrites" || no "copy-in upgrade approve-fork-ci ($out)"
 { [ ! -e "$O/scripts" ] && [ ! -e "$O/schema.base.yaml" ]; } && ok "upgrade removes the copied km files" || no "upgrade removes the copied km files ($out)"
@@ -602,7 +604,7 @@ out="$(km upgrade --root "$D" 2>&1)"
 
 # --- the workflow that moves the mounted pins, and its script ---
 PW=.github/workflows/bump-mounted-pins.yml; PS=.github/scripts/bump-mounted-pins.py
-{ cmp -s "$T/$PW" "$REPO/src/km/templates/team/bump-mounted-pins.yml" && cmp -s "$T/$PS" "$REPO/src/km/templates/team/bump-mounted-pins.py"; } \
+{ cmp -s "$T/$PW" "$RT/bump-mounted-pins.yml" && cmp -s "$T/$PS" "$RT/bump-mounted-pins.py"; } \
   && ok "a team brain gets the mounted-pins workflow and its script" || no "team brain mounted-pins files"
 { [ -f "$O/$PW" ] && [ -f "$O/$PS" ]; } && ok "upgrade adds them to a team brain without them" || no "upgrade adds the mounted-pins files"
 [ ! -e "$P/$PW" ] && [ ! -e "$P/$PS" ] && ok "a personal brain does not get them" || no "personal brain has no mounted-pins files"
@@ -629,7 +631,7 @@ assert got == "  - uses: a/b@n # v2.1.0\n  - uses: a/c@k # v2.0.0\n", got' \
 # pins: a stand-in for one (a line ahead of the template), registered as shipped for this run
 MOVE='s/\(uses: actions\/checkout@\)[^ ]*.*/\1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v99/'
 for f in "$PW:bump-mounted-pins.yml" "$PS:bump-mounted-pins.py"; do
-  { echo "# an earlier km version"; sed "$MOVE" "$REPO/src/km/templates/team/${f#*:}"; } > "$O/${f%%:*}"
+  { echo "# an earlier km version"; sed "$MOVE" "$RT/${f#*:}"; } > "$O/${f%%:*}"
 done
 upgrade_older(){ out="$(cd "${1:-$O}" && kmpy - 2>&1 <<'PY'
 import sys, km.upgrade as u
@@ -641,7 +643,7 @@ sys.exit(u.main())
 PY
 )"; }
 upgrade_older
-{ cmp -s "$O/$PW" <(sed "$MOVE" "$REPO/src/km/templates/team/bump-mounted-pins.yml") && cmp -s "$O/$PS" "$REPO/src/km/templates/team/bump-mounted-pins.py" \
+{ cmp -s "$O/$PW" <(sed "$MOVE" "$RT/bump-mounted-pins.yml") && cmp -s "$O/$PS" "$RT/bump-mounted-pins.py" \
   && out_has "updated $PW to this km's version" && out_has "updated $PS to this km's version"; } \
   && ok "upgrade replaces a copy that is an earlier version km shipped, keeping the action pins its Dependabot moved" || no "upgrade replaces an unchanged earlier copy ($out)"
 sed "$MOVE" "$O/$PW" > "$F/moved.yml" && mv "$F/moved.yml" "$O/$PW"; cp "$O/$PW" "$F/moved.yml"; upgrade_older
@@ -685,7 +687,7 @@ sed -e '/uses: actions\/checkout@/{n;N;d;}' -e 's|uses: pasrom/km@.*|run: pip in
 { cmp -s "$O/$SW" "$F/stale.own" && ! out_has "fetch-depth"; } && ok "a staleness workflow that does not pin km is left as it is" || no "staleness without km pin ($out)"
 cp "$F/stale.want" "$O/$SW"
 # --- automerge: shipped off (KM_AUTOMERGE), added by upgrade only beside km's ci ---
-AM=.github/workflows/automerge.yml; AMT="$REPO/src/km/templates/team/automerge.yml"
+AM=.github/workflows/automerge.yml; AMT="$RT/automerge.yml"
 cmp -s "$T/$AM" "$AMT" && ok "init --team writes the automerge workflow" || no "init --team automerge"
 rm "$O/$AM"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$AM" "$AMT" && out_has "added $AM" && out_has "does nothing until the repository variable KM_AUTOMERGE is 1"; } \
@@ -925,44 +927,63 @@ unflagged true main down || bad+=" pulls-down"
   || no "main-guard first push:$bad"
 kmpy -c 'import km.upgrade as u; from km.init import template; raise SystemExit(u.ci_hash(template("team/ci.yml", {})) not in u.KM_CI)' \
   && ok "KM_CI lists the current team ci template" || no "team/ci.yml changed: add its ci_hash to KM_CI in upgrade.py"
-kmpy - <<'PY' && ok "km's earlier ci.yml copies (ubuntu-latest; runs-on changed by hand to KM_RUNNER) and the current one count as km's, with the sign-off step or without it" || no "a km ci.yml copy is not in KM_CI"
-import re, km.upgrade as u
+kmpy - "$REPO/tests/fixtures/team-1.22/ci.yml" <<'PY' && ok "km's ci.yml copies count as km's on any runner, with the sign-off step or without it: before 1.22 (ubuntu-latest), 1.22 (KM_RUNNER), runs-on edited by hand, this km's rendered" || no "a km ci.yml copy is not km's"
+import re, sys, km.upgrade as u
 from km.init import template
-new = template("team/ci.yml", {})
-hand = new.replace("    timeout-minutes: 15\n", "", 1)                        # runs-on edited by hand, no timeout
+from km.runner import rendered
+v122 = open(sys.argv[1], encoding="utf-8").read()
+hand = v122.replace("    timeout-minutes: 15\n", "", 1)                        # runs-on edited by hand, no timeout
 old = hand.replace("${{ vars.KM_RUNNER || 'ubuntu-latest' }}", "ubuntu-latest")   # before KM_RUNNER
-bad = len({new, hand, old}) != 3
-for t in (new, hand, old):
+new = template("team/ci.yml", {})
+L = {"my-runner", "other.runner_2"}                                              # the runners km wrote into this brain
+copies = [new, v122, hand, old, rendered(new, "ubuntu-latest"), *(rendered(t, r) for t in (new, old) for r in ("my-runner", "other.runner_2"))]
+bad = len(set(copies)) != len(copies)
+for t in copies:
     unsigned, n = re.subn(r"(?m)^( *)env:\n *BASE: .*\n( *)run: km validate .*\n", r"\2run: km validate\n", t)
-    bad |= n != 1 or u.ci_hash(unsigned) not in u.KM_CI or u.ci_hash(u.with_signoff(unsigned)) not in u.KM_CI or u.ci_hash(t) not in u.KM_CI
+    bad |= n != 1 or not u.is_km_ci(unsigned, L) or not u.is_km_ci(u.with_signoff(unsigned), L) or not u.is_km_ci(t, L)
+    bad |= t != v122 and "my-runner" in t and u.is_km_ci(t)                          # a label km did not write here: the brain's own
+bad |= u.is_km_ci(new.replace("km gen-index --check", "make"))                     # another step is not km's
+later = new.replace("km gen-index --check", "km gen-index --check --later")       # a later km's ci, its hash listed as the rule says
+u.KM_CI.add(u.ci_hash(later)); bad |= not u.is_km_ci(rendered(later, "my-runner"), L)
 raise SystemExit(bad)
 PY
-# Every job of every team workflow runs on the runner the brain names (KM_RUNNER; bump-mounted-pins'
-# own variable first), and a job that runs gh, jq or yq first fetches the ones the runner lacks, with
-# the same step everywhere; a pull_request_target workflow checks out km at most, never the pull request
-kmpy - "$REPO/src/km/templates/team" <<'PY' && ok "every team workflow job runs on KM_RUNNER or ubuntu-latest and fetches the gh, jq and yq it runs where they are missing; no pull_request_target job checks out the pull request" || no "team workflow runners"
+# Every job of every team workflow runs on the brain's runner (bump-mounted-pins' own variable first),
+# written as a literal, so a fork's pull request run gets it too; the step that fetches gh, jq and yq
+# where the runner lacks them runs exactly where the runner is not ubuntu-latest, the same step
+# everywhere; a pull_request_target workflow checks out km at most, never the pull request
+kmpy - "$REPO/src/km/templates/team" <<'PY' && ok "every team workflow job runs on the brain's runner, no runs-on a pull request reaches reads a variable, the tools step runs on self-hosted runners only; no pull_request_target job checks out the pull request" || no "team workflow runners"
 import re, sys, yaml
 from pathlib import Path
-RUNNER = "${{ vars.KM_RUNNER || 'ubuntu-latest' }}"
-PINS = "${{ vars.MOUNTED_PINS_RUNNER || vars.KM_RUNNER || 'ubuntu-latest' }}"
+from km.runner import labels, rendered, unrendered
+RUNNER = "my-runner"
+PINS = "${{ vars.MOUNTED_PINS_RUNNER || 'my-runner' }}"
+GATE = "runner.environment != 'github-hosted'"
 TOOL = "the tools this job runs, where the runner lacks them"
 problems, scripts = [], set()
 files = sorted(Path(sys.argv[1]).glob("*.yml"))
 for f in files:
-    wf = yaml.safe_load(f.read_text(encoding="utf-8"))
+    raw = f.read_text(encoding="utf-8")
+    text = raw.replace("<RUNNER>", RUNNER)                         # as km init and km upgrade render it
+    # every placeholder is a spot km recognises, and nothing else is one: rendering is the plain replace, and reverts
+    rendered(raw, "a.b-c_1") == raw.replace("<RUNNER>", "a.b-c_1") and unrendered(text) == raw and labels(text) <= {RUNNER} \
+        or problems.append(f"{f.name}: the runner does not round-trip")
+    wf = yaml.safe_load(text)
     on = wf.get(True, wf.get("on"))
     if not isinstance(wf.get("jobs"), dict):
         continue                                                   # dependabot.yml
+    if f.name == "bump-mounted-pins.yml":                          # its variable: it never runs on a pull request
+        set(on) <= {"schedule", "workflow_dispatch"} or problems.append(f"{f.name}: a pull request may start it ({sorted(on)})")
     for name, job in wf["jobs"].items():
         want = PINS if f.name == "bump-mounted-pins.yml" else RUNNER
         job["runs-on"] == want or problems.append(f"{f.name} {name}: runs-on {job['runs-on']!r}")
+        "vars." not in str(job["runs-on"]) or f.name == "bump-mounted-pins.yml" or problems.append(f"{f.name} {name}: runs-on reads a variable")
         if "timeout-minutes" not in job:
             problems.append(f"{f.name} {name}: no timeout-minutes (the default holds a runner for 6 hours)")
         steps = job["steps"]
         tools = steps[0].get("env", {}).get("TOOLS", "").split() if steps[0].get("name") == TOOL else []
         if tools:
             scripts.add(steps[0]["run"])
-            steps[0].get("if", "").startswith("vars.KM_RUNNER != ''") or problems.append(f"{f.name} {name}: the tools step runs on GitHub's runners too")
+            steps[0].get("if", "").startswith(GATE) or problems.append(f"{f.name} {name}: the tools step is not gated on the runner")
         if tools and any("create-github-app-token" in s.get("uses", "") for s in steps) and "app != '1'" not in steps[0]["if"]:
             problems.append(f"{f.name} {name}: a downloaded tool would hold the App's token")
         runs = "\n".join(s.get("run", "") for s in (steps[1:] if tools else steps))
@@ -1189,7 +1210,7 @@ sync="$(jq -c "$control"' if any(.[]; .want) and any(.[]; .want | not) then [.[]
 else no "the approve-fork-ci tests need jq"; fi
 
 # --- review-request-guide: one comment that says what comes before asking the maintainer ---
-RG=.github/workflows/review-request-guide.yml; RGT="$REPO/src/km/templates/team/review-request-guide.yml"
+RG=.github/workflows/review-request-guide.yml; RGT="$RT/review-request-guide.yml"
 cmp -s "$T/$RG" "$RGT" && ok "init --team writes the review-request-guide workflow" || no "init --team review-request-guide"
 rm "$O/$RG"; out="$(km upgrade --root "$O" 2>&1)"
 { cmp -s "$O/$RG" "$RGT" && out_has "added $RG" && out_has "until the repository variable KM_MAINTAINERS"; } && ok "upgrade adds review-request-guide to a team brain that lacks it" || no "upgrade adds review-request-guide ($out)"
