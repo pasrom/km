@@ -93,19 +93,19 @@ OLD_COPIES = {
 # shipped_hash of every version km shipped, the current one included (a test checks it): a copy that
 # is still one of them is replaced by the current template, an edited one is left with a note.
 SHIPPED = {
-    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e", "139a62edc4339833"},
+    "team/bump-mounted-pins.yml": {"c72b295b1ba76e65", "bb30b4db64fb033e", "139a62edc4339833", "20994093d5d54451"},
     "team/bump-mounted-pins.py": {"52f798d7ca2f7d32", "9dc066d86b74a44f"},
-    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388", "bac7f4477dadece9"},
-    "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7"},
-    "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e"},
-    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a", "de0b3cc467824c05", "9ee47ce4374f2938", "c61b4233e5119f6d"},
+    "team/approve-fork-ci.yml": {"accf1785f4710b4e", "70ad9729fd426ebd", "e10d6138ae696efb", "5f87b231aff97388", "bac7f4477dadece9", "b944e6b5358d92dd"},
+    "team/review-request-guide.yml": {"e2a600682b732ddc", "1a0d3ea14f80d3e7", "bf78ce9ff5ddd127"},
+    "team/main-guard.yml": {"c2896be807a78e55", "80921af35464658e", "75dee4df6004f801"},
+    "team/automerge.yml": {"ecae0d6c1aa0ed2a", "5803e8303b7cf540", "5ad6d46ffa325bc7", "7af086f2b99c3493", "dde68b9c6272983a", "de0b3cc467824c05", "9ee47ce4374f2938", "c61b4233e5119f6d", "9c4ff32ba808ba4c"},
 }
 # approve-fork-ci versions that approved data endings only: the later ones approve any file but control
 # files, safe only beside km's ci and a km from 1.11.0 on, so upgrade does not widen one of these otherwise
 ALLOWLIST_AFC = {"accf1785f4710b4e", "70ad9729fd426ebd"}
 # ci_hash of every km team ci version: upgrade adds approve-fork-ci only where ci.yml is one of these, since
 # a fork's approved run is safe only while ci runs nothing but km. A change to team/ci.yml adds its hash here.
-KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f"}
+KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f", "76dc97b57c9649e3", "0606bf55cf58761c", "a1f4566802ede1da", "2e8e021af1f8ada5"}
 DIGEST_AFTER = (1, 10, 1)   # the last km release that does not record or check approved_digest
 INDEX_AFTER = (1, 11, 0)    # the last km release whose gen-index writes a title as YAML reads it (1.10 as 1.1)
 

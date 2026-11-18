@@ -216,9 +216,9 @@ out="$(cd "$T" && PATH="$T/bin:$PATH" kmpy -c 'import sys, km.automerge as a; a.
 # --self: the workflow's own pending check is left out, another name's is not
 setup 26; run --self other-name; grep -q "the check automerge/act is pending" <<<"$out" && ok "--self leaves out only the named workflow's own checks" || no "--self ($out)"
 # --- the workflow's act job: its own script, against the same stand-in ---
-# step JOB [ID]: the script of JOB's step ID (the first step without one)
+# step JOB [ID]: the script of JOB's step ID (without one, the first step but the one that fetches the tools)
 step(){ kmpy -c 'import sys, yaml; steps = yaml.safe_load(open(sys.argv[1]))["jobs"][sys.argv[2]]["steps"]
-print(next(s for s in steps if s.get("id") == sys.argv[3])["run"] if len(sys.argv) > 3 else steps[0]["run"])' \
+print(next(s for s in steps if s.get("id") == sys.argv[3])["run"] if len(sys.argv) > 3 else next(s for s in steps if "TOOLS" not in s.get("env", {}))["run"])' \
   "$REPO/src/km/templates/team/automerge.yml" "$@"; }
 # the merge step's script; MERGE_TOKEN and APP (the App's token, KM_AUTOMERGE_APP) from the environment,
 # GH_TOKEN as GitHub's: the stand-in logs the token of each write

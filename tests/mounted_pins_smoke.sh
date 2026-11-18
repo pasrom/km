@@ -23,7 +23,7 @@ def need(cond, what):
 need(wf["defaults"]["run"]["shell"] == "bash", "defaults.run.shell is bash (a container job runs sh otherwise)")
 need(wf["permissions"] == {"contents": "read"}, "read-only by default")
 for name, job in jobs.items():
-    need(job["runs-on"] == "${{ vars.MOUNTED_PINS_RUNNER || 'ubuntu-latest' }}", f"{name}: ubuntu-latest unless the brain names a runner")
+    need(job["runs-on"] == "${{ vars.MOUNTED_PINS_RUNNER || vars.KM_RUNNER || 'ubuntu-latest' }}", f"{name}: ubuntu-latest unless the brain names a runner")
     need("@sha256:" in job.get("container", ""), f"{name}: the image is pinned by digest")
     uses = [s["uses"].split("@")[0] for s in job["steps"] if "uses" in s]
     allowed = ["actions/checkout", "actions/create-github-app-token"] if name == "resolve" else ["actions/checkout"]

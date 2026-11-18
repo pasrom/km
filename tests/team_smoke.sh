@@ -903,7 +903,7 @@ case "$1" in
 esac
 SH
 printf '#!/bin/sh\n' > "$SB/sleep"; chmod +x "$SB/gh" "$SB/sleep"
-kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["check"]["steps"][0]["run"])' "$T/.github/workflows/main-guard.yml" > "$F/guard.sh"
+kmpy -c 'import sys, yaml; print(next(s["run"] for s in yaml.safe_load(open(sys.argv[1]))["jobs"]["check"]["steps"] if "TOOLS" not in s.get("env", {})))' "$T/.github/workflows/main-guard.yml" > "$F/guard.sh"
 # guard FORCED COMMITS [CREATED [BRANCHES [PRS]]]: the repository's branches and its pull request count as gh answers them
 guard(){ GH_LOG="$F/gh.log" PATH="$SB:$PATH" REPO=o/r FORCED="$1" COMMITS="$2" CREATED="${3:-false}" \
   BRANCHES="${4:-main}" PRS="${5:-0}" PUSHER=p RUN=u bash "$F/guard.sh" >/dev/null 2>&1; }
@@ -925,12 +925,59 @@ unflagged true main down || bad+=" pulls-down"
   || no "main-guard first push:$bad"
 kmpy -c 'import km.upgrade as u; from km.init import template; raise SystemExit(u.ci_hash(template("team/ci.yml", {})) not in u.KM_CI)' \
   && ok "KM_CI lists the current team ci template" || no "team/ci.yml changed: add its ci_hash to KM_CI in upgrade.py"
-kmpy - <<'PY' && ok "a km ci.yml with the sign-off step turned on by upgrade still counts as km's" || no "with_signoff result not in KM_CI"
+kmpy - <<'PY' && ok "km's earlier ci.yml copies (ubuntu-latest; runs-on changed by hand to KM_RUNNER) and the current one count as km's, with the sign-off step or without it" || no "a km ci.yml copy is not in KM_CI"
 import re, km.upgrade as u
 from km.init import template
-t = template("team/ci.yml", {})
-old, n = re.subn(r"(?m)^( *)env:\n *BASE: .*\n( *)run: km validate .*\n", r"\2run: km validate\n", t)
-raise SystemExit(n != 1 or u.ci_hash(u.with_signoff(old)) not in u.KM_CI)
+new = template("team/ci.yml", {})
+hand = new.replace("    timeout-minutes: 15\n", "", 1)                        # runs-on edited by hand, no timeout
+old = hand.replace("${{ vars.KM_RUNNER || 'ubuntu-latest' }}", "ubuntu-latest")   # before KM_RUNNER
+bad = len({new, hand, old}) != 3
+for t in (new, hand, old):
+    unsigned, n = re.subn(r"(?m)^( *)env:\n *BASE: .*\n( *)run: km validate .*\n", r"\2run: km validate\n", t)
+    bad |= n != 1 or u.ci_hash(unsigned) not in u.KM_CI or u.ci_hash(u.with_signoff(unsigned)) not in u.KM_CI or u.ci_hash(t) not in u.KM_CI
+raise SystemExit(bad)
+PY
+# Every job of every team workflow runs on the runner the brain names (KM_RUNNER; bump-mounted-pins'
+# own variable first), and a job that runs gh, jq or yq first fetches the ones the runner lacks, with
+# the same step everywhere; a pull_request_target workflow checks out km at most, never the pull request
+kmpy - "$REPO/src/km/templates/team" <<'PY' && ok "every team workflow job runs on KM_RUNNER or ubuntu-latest and fetches the gh, jq and yq it runs where they are missing; no pull_request_target job checks out the pull request" || no "team workflow runners"
+import re, sys, yaml
+from pathlib import Path
+RUNNER = "${{ vars.KM_RUNNER || 'ubuntu-latest' }}"
+PINS = "${{ vars.MOUNTED_PINS_RUNNER || vars.KM_RUNNER || 'ubuntu-latest' }}"
+TOOL = "the tools this job runs, where the runner lacks them"
+problems, scripts = [], set()
+files = sorted(Path(sys.argv[1]).glob("*.yml"))
+for f in files:
+    wf = yaml.safe_load(f.read_text(encoding="utf-8"))
+    on = wf.get(True, wf.get("on"))
+    if not isinstance(wf.get("jobs"), dict):
+        continue                                                   # dependabot.yml
+    for name, job in wf["jobs"].items():
+        want = PINS if f.name == "bump-mounted-pins.yml" else RUNNER
+        job["runs-on"] == want or problems.append(f"{f.name} {name}: runs-on {job['runs-on']!r}")
+        if "timeout-minutes" not in job:
+            problems.append(f"{f.name} {name}: no timeout-minutes (the default holds a runner for 6 hours)")
+        steps = job["steps"]
+        tools = steps[0].get("env", {}).get("TOOLS", "").split() if steps[0].get("name") == TOOL else []
+        if tools:
+            scripts.add(steps[0]["run"])
+            steps[0].get("if", "").startswith("vars.KM_RUNNER != ''") or problems.append(f"{f.name} {name}: the tools step runs on GitHub's runners too")
+        if tools and any("create-github-app-token" in s.get("uses", "") for s in steps) and "app != '1'" not in steps[0]["if"]:
+            problems.append(f"{f.name} {name}: a downloaded tool would hold the App's token")
+        runs = "\n".join(s.get("run", "") for s in (steps[1:] if tools else steps))
+        used = {t for t in ("gh", "jq", "yq") if re.search(rf"(?<![-\w.]){t}\b", runs)}
+        if "km automerge" in runs:
+            used.add("gh")                                         # km automerge reads GitHub through gh
+        if "container" not in job and not used <= set(tools):
+            problems.append(f"{f.name} {name}: runs {sorted(used)}, fetches {tools}")
+        if "pull_request_target" in (on or {}):
+            for s in steps:
+                if s.get("uses", "").startswith("actions/checkout") and s.get("with", {}).get("repository") != "pasrom/km":
+                    problems.append(f"{f.name} {name}: a pull_request_target job checks out {s.get('with')}")
+len(scripts) == 1 or problems.append(f"{len(scripts)} versions of the tools step")
+print(*problems, sep="\n")
+raise SystemExit(bool(problems) or len(files) < 7)
 PY
 kmpy -c 'import km.upgrade as u
 assert [u.ci_hash(t) is None for t in ("jobs: {a: {steps: 3}}", "a: &x [*x]", "- a", "{1: a, b: c}")] == [False, True, True, False]' \
@@ -960,7 +1007,7 @@ case "$*" in
 esac
 SH
 chmod +x "$AB/gh"
-kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["approve"]["steps"][0]["run"])' "$T/$AF" > "$F/af.sh"
+kmpy -c 'import sys, yaml; print(next(s["run"] for s in yaml.safe_load(open(sys.argv[1]))["jobs"]["approve"]["steps"] if "TOOLS" not in s.get("env", {})))' "$T/$AF" > "$F/af.sh"
 # afrun FILES-JSON [CHANGED]: 0 when it approved run 7; 1 when it left it to a person with a notice and
 # exit 0; 2 when it exited 0 with neither; 3 when it failed (a crash would turn every fork pull request
 # red). TREE, PRS, PRS2 (the pull requests from the second lookup on, the one right before approving),
@@ -1169,7 +1216,7 @@ esac
 SH
 chmod +x "$RB/gh"
 command -v timeout >/dev/null || { printf '#!/usr/bin/env bash\nshift; exec "$@"\n' > "$RB/timeout"; chmod +x "$RB/timeout"; }   # stock macOS has none
-kmpy -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["jobs"]["guide"]["steps"][0]["run"])' "$T/$RG" > "$F/rg.sh"
+kmpy -c 'import sys, yaml; print(next(s["run"] for s in yaml.safe_load(open(sys.argv[1]))["jobs"]["guide"]["steps"] if "TOOLS" not in s.get("env", {})))' "$T/$RG" > "$F/rg.sh"
 fmd(){ printf -- '---\n%s\n---\nbody\n' "$1"; }       # a doc with this frontmatter
 EVIL='d/`'$'\n''```'$'\n''@everyone ::error::pwned.md'   # a file name that would close a code block, mention and pose as a command
 # rgrun: run the script on the pull request of the docs in rg_docs (path<TAB>content, one per
