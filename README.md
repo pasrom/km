@@ -114,6 +114,16 @@ Set each one up in this order:
 
 `km doctor` notes a missing `mounted-pins` environment in a brain with mounts, and either environment when it is open to more than the default branch.
 
+### Running on your own runners
+
+Every job of the team workflows runs on `${{ vars.KM_RUNNER || 'ubuntu-latest' }}`: set the repository or organisation variable `KM_RUNNER` to one runner label (`my-runner`, say) and they run there; unset, they run on GitHub's runners. bump-mounted-pins reads its own variable `MOUNTED_PINS_RUNNER` first. A brain written by an earlier km gets the change in the shipped workflows through `km upgrade`; `ci.yml` and `staleness.yml` are the brain's own, so change their `runs-on` lines by hand to exactly the template's `runs-on: ${{ vars.KM_RUNNER || 'ubuntu-latest' }}`, and below it, if you like, exactly the template's `timeout-minutes: 15` (km then still counts that `ci.yml` as its own; with any other line `km upgrade` takes it for the brain's own and does not add approve-fork-ci or automerge).
+
+A plain Ubuntu 24.04 VM with git, curl and tar is enough for every workflow but bump-mounted-pins: its jobs run in a container, so its runner needs docker, usable by the runner's user; without docker set `MOUNTED_PINS_RUNNER` to `ubuntu-latest`, and bump-mounted-pins stays on GitHub's runners. Each job that runs `gh`, `jq` or `yq` first fetches the ones the runner lacks (mikefarah's yq v4: Ubuntu's `yq` package is another program), pinned by version and sha256, into the job's temp folder, without sudo; that step runs only while `KM_RUNNER` is set. A runner image that has gh, jq and mikefarah's yq saves those downloads. Where the step fetches gh, that gh runs in jobs that hold a write `GITHUB_TOKEN` (automerge's act without the App, main-guard's issue), as a pinned action would. automerge's act job never fetches them where it merges with the App (`KM_AUTOMERGE_APP`): its token is not handed to a downloaded tool, so there the runner's image must have gh and jq, or nothing is merged and the run fails. The km action installs its Python with `actions/setup-python`, which needs a writable tool cache and network access to GitHub and PyPI. Every job has a `timeout-minutes` (15 at most), so a stuck job does not hold a runner for GitHub's default 6 hours.
+
+Security: approve-fork-ci, review-request-guide and automerge run on `pull_request_target` and never check out the pull request's code, but ci does run on a fork's pull request. If GitHub passes the repository's variables to that run, a fork author's pull request runs on your hardware, in the network the runner sits in, and approve-fork-ci starts that run without a person when the pull request changes no control file (ci then runs km on the fork's docs, nothing from the checkout); otherwise fork ci stays on GitHub's runner. So use `KM_RUNNER` with ephemeral, isolated runners only: one job per fresh VM, with a network that gives the job no more than it needs. On a persistent or non-isolated runner, do not set `KM_RUNNER` while approve-fork-ci auto-approves.
+
+Known limit: whether GitHub passes repository and organisation variables to a fork's or Dependabot's `pull_request` run is not verified yet; until it is, read the security note as if it does. `km doctor` names the runner `KM_RUNNER` sets, and notes it when `ci.yml` does not read it.
+
 ## Layout
 
 ```
