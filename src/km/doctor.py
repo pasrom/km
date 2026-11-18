@@ -552,6 +552,41 @@ def check_environment(repo: str, name: str, if_missing: tuple[str, str] | None, 
                f"Settings, Environments, {name}: deployment branches, selected branches, `{default}` only")
 
 
+RUNS_ON_RUNNER = re.compile(r"(?m)^[ \t]*runs-on:[^#\n]*vars\.KM_RUNNER")
+
+
+def check_runner(root: Path, repo: str) -> None:
+    """The variable KM_RUNNER of the repository, else of its organisation, as far as gh may read them,
+    beside km's team ci.yml (one that installs km through pasrom/km@): a note naming the runner when the
+    runs-on lines of ci.yml and staleness.yml read it, or which of them do not. Unset or unreadable,
+    nothing is said; a repository variable gh may not read is not stood in for by the organisation's."""
+    files = [p for p in (root / ".github/workflows/ci.yml", root / ".github/workflows/staleness.yml") if p.is_file()]
+    texts = {p.name: p.read_text(encoding="utf-8", errors="replace") for p in files}
+    if "pasrom/km@" not in texts.get("ci.yml", ""):
+        return
+    for args in ((f"repos/{repo}/actions/variables/KM_RUNNER", "--jq", ".value"),
+                 ("--paginate", f"repos/{repo}/actions/organization-variables",
+                  "--jq", '.variables[] | select(.name == "KM_RUNNER") | .value')):
+        if (res := ask(f"for the variable KM_RUNNER of {repo}", "api", "--hostname", "github.com", *args,
+                       status="note")) is None:
+            return
+        if res[0] == 0 and (label := printable(res[1].strip())):
+            break
+        if res[0] != 0 and "Not Found" not in res[1]:
+            return                                    # not readable (a 403): the organisation's would mislead
+    else:
+        return
+    if ignoring := [name for name, text in texts.items() if not RUNS_ON_RUNNER.search(text)]:
+        report("note", f"the variable KM_RUNNER names the runner {label}, but the runs-on line of {' and '.join(ignoring)} "
+                       f"does not read it: that workflow stays where the line says",
+               "set their runs-on to `${{ vars.KM_RUNNER || 'ubuntu-latest' }}` (km's README, \"Running on your own runners\")")
+    else:
+        report("note", f"the team workflows run on the runner {label} (the variable KM_RUNNER; bump-mounted-pins reads "
+                       f"MOUNTED_PINS_RUNNER first): if GitHub passes the brain's variables to a fork's pull request run, "
+                       f"that ci runs on it too, otherwise on GitHub's runner",
+               "use ephemeral, isolated runners only, one job per fresh machine (km's README, \"Running on your own runners\")")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="km doctor", description="check that this computer is set up to work on a brain")
     ap.add_argument("--offline", action="store_true", help="skip the checks that need the network")
@@ -571,6 +606,7 @@ def main() -> int:
         check_line_endings(root)
         if repo := check_github(origin, args.offline):
             check_environments(root, repo)
+            check_runner(root, repo)
         check_git_login(root, origin)
         check_km_version(root)
         check_plugins(root)
