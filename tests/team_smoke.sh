@@ -533,7 +533,7 @@ else echo "  skip: git prints no non-ASCII error in a Latin-1 locale here"; fi
 
 # --- km's dependencies are pinned to the same exact versions everywhere ---
 v="$(grep -oE 'pyyaml==[0-9.]+' "$REPO/pyproject.toml")"
-{ [ -n "$v" ] && grep -q "$v" "$REPO/action.yml" && grep -q "$v" "$REPO/skills/km/bin/km" && grep -q '"setuptools==' "$REPO/pyproject.toml"; } \
+{ [ -n "$v" ] && grep -q "$v" "$REPO/action/install.sh" && grep -q "$v" "$REPO/skills/km/bin/km" && grep -q '"setuptools==' "$REPO/pyproject.toml"; } \
   && ok "PyYAML and setuptools are pinned exactly, the same in pyproject, action and launcher" || no "dependency pins"
 
 # --- one version everywhere ---
