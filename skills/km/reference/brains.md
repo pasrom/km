@@ -99,11 +99,11 @@ Add or update a doc in a brain you have READ (not write) on, e.g. a shared team 
    ```
    `--owner` is for a NEW doc: who keeps it true in the target, you unless the user names someone. Where the target's `schema.local.yaml` sets `owners:` and you are not on it, ask the user whom from that list to name; the gate refuses an owner off it. With `--replace`, leave `--owner` out (the doc keeps its owner) unless the user asks to reassign it, or promote refuses because that owner is no longer on the roster: then ask the user whom from it to name.
    To UPDATE a doc already `accepted` on the target, add `--replace` (the PR then shows the approval drop, which IS the review signal). A doc already in `review` on the target cannot be re-promoted; edit it in the clone as in `brain fix`.
-6. Track the doc so `km gen-index` sees it, regenerate the indexes, run the whole-repo gate, then commit ONLY the doc and the `_index.md` files that changed. If `<target-folder>` is new, first write its `_index.md` by hand (frontmatter with a `description:`, an empty `## Documents` heading) and track it too: a team brain's generator refuses a folder with docs but no index, and the parent folder's list gains a link to the new one.
+6. Track the doc so `km gen-index` sees it, regenerate the indexes, run the whole-repo gate, then commit ONLY the doc and the `_index.md` files that changed. If `<target-folder>` is new, `km gen-index` creates and stages its `_index.md` (and a missing parent folder's), and the parent folder's list gains a link to it. Do not write it by hand or add an intro in this PR: only an index exactly as gen-index creates it leaves the PR at level `ai`; an intro goes in a PR of its own, which a person merges. gen-index creates an index for every folder that lacks one, not only yours; each is a bare scaffold that keeps the PR at level `ai`: name them in the PR body.
    ```
-   git -C /tmp/km-contrib-<slug> add -- <target-folder>/<slug>.md   # track it FIRST (and a new folder's _index.md): gen-index / check_index read git ls-files
+   git -C /tmp/km-contrib-<slug> add -- <target-folder>/<slug>.md   # track it FIRST: gen-index / check_index read git ls-files
    km gen-index --root /tmp/km-contrib-<slug>              # rewrites only '## Documents' lists; an index without one is left alone
-   git -C /tmp/km-contrib-<slug> add -u -- '*_index.md'   # every index the generator rewrote, parents included
+   git -C /tmp/km-contrib-<slug> add -u -- '*_index.md'   # every index the generator rewrote, parents included (one it created is staged already)
    km validate --root /tmp/km-contrib-<slug>               # WHOLE-REPO gate; the per-file promote gate never sees index-incomplete. Fix any error.
    git -C /tmp/km-contrib-<slug> diff --cached --name-only   # MUST list ONLY the doc + _index.md files (never a terms file)
    git -C /tmp/km-contrib-<slug> commit -m "docs(<scope>): <what>"
