@@ -175,7 +175,7 @@ def regenerate_indexes(root: Path) -> tuple[list[str], list[str]]:
                                     for p in listed.stdout.split("\0") if p and (root / p).is_file()):
         return [], []
     from km.gen_index import regenerate
-    return regenerate()
+    return regenerate()[:2]
 
 
 USES = re.compile(r"(?m)^([ \t]*(?:-[ \t]+)?uses:[ \t]*([^@\s]+)@)\S+.*$")   # 1: up to the @, 2: the action
@@ -682,7 +682,7 @@ def main() -> int:
                         f"up to date too; check `git diff`")
         if unindexed:
             done.append(f"{', '.join(unindexed)} hold docs but no _index.md, which `km gen-index --check` fails on: "
-                        f"write one by hand (frontmatter, intro, an empty '## Documents' heading)")
+                        f"run `km gen-index`, which creates one, or write one by hand")
 
     if values and (not current or stray):
         sha = values["<KM_SHA>"]

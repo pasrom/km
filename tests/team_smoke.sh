@@ -90,7 +90,8 @@ folder_idx process/lone/deep "Deep"; G add -A
 out="$(kt gen-index --check)"; rc=$?
 { [ "$rc" = 1 ] && echo "$out" | grep -qx "  - process/lone/"; } && ok "--check fails on a folder with only a subfolder index" || no "--check fails on a folder with only a subfolder index ($out)"
 out="$(kt gen-index)"; rc=$?
-{ [ "$rc" = 1 ] && echo "$out" | grep -qx "  - process/lone/"; } && ok "write mode fails on it too" || no "write mode fails on it too ($out)"
+{ [ "$rc" = 0 ] && G diff --cached --name-only | grep -qx "process/lone/_index.md" && grep -q '(lone/_index.md)' "$T/process/_index.md"; } \
+  && ok "write mode creates and stages it, and the parent lists it" || no "write mode creates it ($rc: $out)"
 G rm -rqf --cached process/lone; rm -rf "$T/process/lone"; G checkout -q -- .
 mkdir -p "$T/process/misc"; printf '# readme\n' > "$T/process/misc/README.md"; G add -A
 out="$(kt gen-index --check)"; echo "$out" | grep -q "process/misc" && no "a folder with only a README is not reported" || ok "a folder with only a README is not reported"

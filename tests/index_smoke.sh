@@ -163,4 +163,40 @@ out="$(cd "$GS" && km serve --out x 2>&1)"; rc=$?
 { [ "$rc" = 2 ] && [ ! -e "$GS/dist" ]; } && ok "serve: an unknown option is a usage error" || no "serve --out ($rc: $out)"
 rm -rf "$GS"
 
+# gen-index creates a missing _index.md from the scaffold (ancestors too), fills its list and stages it,
+# only in a brain that already generates a list; --check writes nothing; no scaffold for an odd folder
+# name or over anything in the way (an untracked file, a dangling symlink, a tracked index deleted)
+GC="$(mktemp -d)"; mkdir -p "$GC/top/mid/leaf" "$GC/odd name" "$GC/busy" "$GC/sym" "$GC/hand" "$GC/gen"
+printf 'meta: {profile: idx}\ncheck_index: true\n' > "$GC/schema.local.yaml"
+doc "$GC/top/mid/leaf/n.md"; doc "$GC/odd name/o.md"; doc "$GC/busy/b.md"; doc "$GC/sym/s.md"; doc "$GC/hand/h.md"; doc "$GC/gen/g.md"
+idx "$GC/hand/_index.md" '# Hand\n\nMy intro.'
+( cd "$GC" && git init -q && git add -A && git "${G[@]}" commit -qm i ); rm "$GC/hand/_index.md"
+printf 'mine\n' > "$GC/busy/_index.md"; ln -s "$GC/outside.md" "$GC/sym/_index.md"
+out="$(cd "$GC" && km gen-index 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && [ -z "$(git -C "$GC" status --porcelain -- top gen)" ] && [ ! -e "$GC/top/mid/leaf/_index.md" ]; } \
+  && ok "gen-index: no scaffold in a brain without a generated list" || no "gen-index, no list ($rc: $out)"
+idx "$GC/gen/_index.md" '# Gen\n\n## Documents'; ( cd "$GC" && git add gen/_index.md )
+out="$(cd "$GC" && km gen-index --check 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && has "  - top/mid/leaf/" && has "creates one for a folder with a plain name" && [ ! -e "$GC/top/mid/leaf/_index.md" ]; } \
+  && ok "gen-index --check: a folder without an _index.md fails, nothing written" || no "gen-index --check, missing ($rc: $out)"
+out="$(cd "$GC" && PRE_COMMIT=1 km gen-index 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && has "stage them and commit again" && [ -f "$GC/top/mid/leaf/_index.md" ] && [ -z "$(git -C "$GC" diff --cached --name-only -- top)" ]; } \
+  && ok "gen-index under pre-commit: creates but stages nothing, the commit fails" || no "gen-index PRE_COMMIT ($rc: $out)"
+out="$(cd "$GC" && km gen-index 2>&1)"; rc=$?
+printf -- '---\ntype: reference\ntitle: "leaf/"\ndescription: "Documents in top/mid/leaf/."\nstatus: draft\ntags: [index]\n---\n\n# leaf\n\n## Documents\n\n- [t](n.md)\n' > "$GC/golden"
+staged="$(git -C "$GC" diff --cached --name-only)"
+{ [ "$rc" = 1 ] && cmp -s "$GC/top/mid/leaf/_index.md" "$GC/golden" && grep -qx -- '- \[mid/\](mid/_index.md): Documents in top/mid/.' "$GC/top/_index.md" \
+  && grep -qx -- '- \[leaf/\](leaf/_index.md): Documents in top/mid/leaf/.' "$GC/top/mid/_index.md" \
+  && grep -qx "top/_index.md" <<< "$staged" && grep -qx "top/mid/leaf/_index.md" <<< "$staged" && [ -z "$(git -C "$GC" diff --name-only -- top)" ] \
+  && [ ! -e "$GC/odd name/_index.md" ] && has "  - odd name/" && [ "$(cat "$GC/busy/_index.md")" = mine ] && has "  - busy/" \
+  && has "  - sym/" && [ ! -e "$GC/outside.md" ] && has "  - hand/" && [ ! -e "$GC/hand/_index.md" ]; } \
+  && ok "gen-index: takes back the unstaged scaffolds, stages them in full, parents list them; none for an odd name, an untracked file, a dangling symlink or a deleted tracked index" \
+  || no "gen-index create ($rc: $out; $(cat "$GC/top/mid/leaf/_index.md"))"
+rm -rf "$GC/odd name" "$GC/busy" "$GC/sym" "$GC/hand"; ( cd "$GC" && git add -A )
+out="$(cd "$GC" && km gen-index 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && has "up to date"; } && ok "gen-index: a rerun changes nothing" || no "gen-index rerun ($rc: $out)"
+out="$(cd "$GC" && km gen-index --check 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "gen-index --check: up to date after creating" || no "gen-index --check after create ($rc: $out)"
+rm -rf "$GC"
+
 summary index-smoke || exit 1

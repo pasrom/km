@@ -29,7 +29,7 @@ from km.pins import read_pins, repo_url, version_key
 
 COMMANDS = {
     "validate": ("km.validate", "check frontmatter, links, the gate and index completeness"),
-    "gen-index": ("km.gen_index", "regenerate the '## Documents' list in every _index.md (--check for CI)"),
+    "gen-index": ("km.gen_index", "regenerate the '## Documents' list in every _index.md, creating a missing one (--check for CI)"),
     "demote": ("km.demote", "demote served docs past review_by (--apply to write)"),
     "serve": ("km.serve", "build the served bundle under dist/served/"),
     "promote": ("km.promote", "move a note into the brain as a review doc, or `promote stub`"),
