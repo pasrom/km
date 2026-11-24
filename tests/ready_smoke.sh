@@ -116,6 +116,28 @@ setup "$(file a.md 1; file a/_index.md 35)"; cp "$F/base/x.md" "$F/base/a/_index
 printf '\357\273\277' | cat - "$F/blobs/$(sha 30)" > "$F/base/x.md"; printf '\357\273\277' | cat - "$F/blobs/$(sha 31)" > "$F/blobs/$(sha 36)"
 setup "$(file a.md 1; file a/_index.md 36)"; cp "$F/base/x.md" "$F/base/a/_index.md"; refused || bad+=" bom"
 [ -z "$bad" ] && ok "...level human beyond its list whatever its frontmatter (a changed intro at ai, a new one at ai with a later section), and left aside, even at level human, only when the list alone changed, not a later section, not under index_skip_prefixes, not with a heading-like line in its frontmatter, a BOM or CRLF line ends (gen-index reads those away), nor when it moved, became a doc or a doc became one" || no "index rules:$bad"
+# an _index.md km gen-index created: added, and above its list the text it writes for that path alone
+# (frozen here as written; index_smoke checks gen-index writes exactly this)
+scaf(){ printf -- '---\ntype: reference\ntitle: "%s/"\ndescription: "Documents in %s/."\nstatus: draft\ntags: [index]\n---\n\n# %s\n\n## Documents\n%b' \
+  "${3##*/}" "$3" "${3##*/}" "${4:-\n- [x](x.md)\n}" > "$F/blobs/$(sha "$1")"; }
+scaf 40 - a; scaf 41 - a/b-1.x; scaf 42 - b; scaf 43 - 'x y'; scaf 44 - a '\n- [x](x.md)\n\n## Notes\n\nx\n'
+sed 's/^# a$/# a /' "$F/blobs/$(sha 40)" > "$F/blobs/$(sha 45)"
+sed 's/^status: draft$/status: draft\naudience: internal/' "$F/blobs/$(sha 40)" > "$F/blobs/$(sha 46)"
+setup "$(file a.md 1; file a/_index.md 40 added; file a/b-1.x/_index.md 41 added)"
+counts && ok "...a new _index.md counts as km gen-index created it for its path, any list below" || no "scaffold ($rc: $out)"
+bad=""
+setup "$(file a.md 1; file a/_index.md 42 added)"; refused && grep -q "not as km gen-index creates it" <<< "$out" || bad+=" other-folder"
+setup "$(file a.md 1; file 'x y/_index.md' 43 added)"; refused || bad+=" name"
+setup "$(file a.md 1; file a/_index.md 44 added)"; refused || bad+=" tail"
+setup "$(file a.md 1; file a/_index.md 45 added)"; refused || bad+=" byte"
+setup "$(file a.md 1; file a/_index.md 46 added)"; refused || bad+=" field"
+setup "$(file a.md 1; file a/_index.md 40; base a/_index.md 20)"; refused || bad+=" over-intro"
+setup "$(file a.md 1; file a/_index.md 40 renamed b/_index.md)"; refused || bad+=" moved"
+setup "$(file a.md 1; file a/_index.md 40 added)"; printf 'index_skip_prefixes: [a/]\n' > "$F/schema"; refused || bad+=" index-skip"
+scaf 47 - ''; sed 's/^title: "\/"$/title: "."/' "$F/blobs/$(sha 47)" > "$F/blobs/$(sha 48)"
+setup "$(file a.md 1; file _index.md 47 added)"; refused || bad+=" root"
+setup "$(file a.md 1; file _index.md 48 added)"; refused || bad+=" root-dot"
+[ -z "$bad" ] && ok "...not another folder's, a folder name outside [A-Za-z0-9._-], a later section, a byte or a field more, an intro replaced by it, a moved one, one under index_skip_prefixes, nor the root's" || no "scaffold rules:$bad"
 setup "$(file a.md 1)"; base a.md 2
 refused && grep -q "level human at the base" <<< "$out" && ok "...and a doc the pull request lowered from level human does not count" || no "lowered ($rc: $out)"
 setup "$(file a.md 1)"; rm "$F/base/a.md"
