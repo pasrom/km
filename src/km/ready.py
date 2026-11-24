@@ -11,9 +11,10 @@ agent, an editor or a hook on a contributor's machine (the rule above CONTROL_NA
 any top-level file that is not a doc, agent instructions at any depth), on either side of a rename;
 so is a changed submodule, and any symlink in the trees read. An `_index.md` that keeps
 its path and changes only its `## Documents` list is left aside: `km gen-index` writes that list and
-CI checks it (outside index_skip_prefixes, which gen-index skips).
-Any other `_index.md` change, a new one included, is level human whatever its frontmatter says: km
-validate checks no sign-off on an index. The levels are km's rule (common.approval_level) on each
+CI checks it (outside index_skip_prefixes, which gen-index skips). So is a new one that is, outside
+that list, the text `km gen-index` creates for its path (gen_index.scaffolds; not the root index).
+Any other `_index.md` change is level human whatever its frontmatter says: km validate checks no
+sign-off on an index. The levels are km's rule (common.approval_level) on each
 doc's frontmatter, read from GitHub without checking the pull request out, with the brain's
 approval_default, field aliases, skip_prefixes, index_skip_prefixes, exempt_files and
 reserved_no_frontmatter from schema.local.yaml at the base commit. It judges the commits the first
@@ -49,7 +50,7 @@ from km import common
 from km.cites import fold
 from km.common import (_FM, OVERLAY_NAMES, approval_default_of, approval_level, merged_schema, split_frontmatter,
                        under, was_doc, with_aliases)
-from km.gen_index import kept_parts
+from km.gen_index import kept_parts, scaffolds
 from km.paths import printable
 from km.remotes import gh_run
 
@@ -321,9 +322,11 @@ def by_level(repo: str, number: str, head: str | None, pr: dict, events: list, m
     n = 0
     for (path, _, old), (now, then) in zip(docs, read):
         if is_index(path):
-            if (k := kept(now)) is not None and k == kept(then):
-                continue                            # only the generated list changed; `km gen-index --check` in CI
-            return False, f"{printable(path)} is an index changed beyond its list, which counts as level human"
+            # only the generated list changed, or km gen-index created it; `km gen-index --check` in CI
+            if (k := kept(now)) is not None and (k == kept(then) if old else k in map(kept, scaffolds(path))):
+                continue
+            return False, f"{printable(path)} is an index {'changed beyond its list' if old else 'not as km gen-index creates it'}, " \
+                          "which counts as level human"
         if (lv := level(now, schema)) != "ai" or (old and level(then, schema) != "ai"):
             return False, f"{printable(path)} is at level human" + (" at the base" if lv == "ai" else "")
         n += 1

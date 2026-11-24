@@ -82,6 +82,15 @@ blocks "a human-level page does not merge, even with another person's label (km 
 setup 2; doc human; blocks "a human-level page with the author's label does not merge" "the label does not count without a person: set by its author"
 setup 3; jq '.files[0].filename = "CLAUDE.md"' "$F/compare_$BASE...${HEAD}_per_page_1" > "$F/x" && mv "$F/x" "$F/compare_$BASE...${HEAD}_per_page_1"
 blocks "a control file does not merge" "the label does not count without a person: .*CLAUDE.md, a control file"
+# a new _index.md as km gen-index creates it, beside an AI-level page: merges with the author's label
+IDX=$(printf '2%.0s' {1..40})
+setup 3b; sed -i.bak 's/"changed_files":1/"changed_files":2/' "$F/pulls_9"
+jq --arg b "$IDX" '.files += [{"filename":"product/_index.md","status":"added","sha":$b}]' "$F/compare_$BASE...${HEAD}_per_page_1" > "$F/x" \
+  && mv "$F/x" "$F/compare_$BASE...${HEAD}_per_page_1"
+printf -- '---\ntype: reference\ntitle: "product/"\ndescription: "Documents in product/."\nstatus: draft\ntags: [index]\n---\n\n# product\n\n## Documents\n\n- [T](a.md)\n' > "$F/git_blobs_$IDX"
+run; [ "$rc" = 0 ] && [ "$out" = merge ] && ok "a new _index.md as km gen-index creates it merges with the author's label" || no "scaffold index (exit $rc: $out)"
+sed -i.bak 's/^# product$/# product\n\nAn intro./' "$F/git_blobs_$IDX"
+blocks "...one with an intro does not" "the label does not count without a person: .*_index.md is an index not as km gen-index creates it"
 setup 4; sed -i.bak "s/Last reviewed: $HEAD/Last reviewed: $OTHER/" "$F/pulls_9"
 blocks "a stale Last reviewed does not merge" "Last reviewed ccccccc is not the head aaaaaaa"
 setup 5; sed -i.bak "s/Last reviewed: $HEAD//" "$F/pulls_9"; blocks "no Last reviewed line does not merge" "its body has no .Last reviewed:. line"
