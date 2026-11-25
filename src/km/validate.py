@@ -42,6 +42,16 @@ branch that also changes docs or turns approval_default to ai.
 A tracked doc whose path has a part a clone on Windows cannot check out (km.common.unportable) is
 `portable-name`: a WARNING.
 
+A link in the body of any tracked .md outside skip_prefixes (an `_index.md`, a README and other exempt
+or reserved files included) whose target the git index does not list is `dead-link`: a WARNING, once per
+target and doc, with a hint where one applies (a case mismatch, a missing .md, a path that leaves the
+repository, a backslash, a path on one machine). Checked: inline and reference links, HTML src/href; a
+target resolves document-relative, then from the root (a leading / means the root), may be a file of any
+type or a folder (a trailing / a folder only), and counts below a mounted brain that is not checked out
+or below a mount inside a mount. Not checked: URLs, an anchor alone (and the anchor part of a link),
+links in code (indented and fenced blocks, code spans) or HTML comments, [[wiki]] links, and anything
+outside a git work tree. With FILEs, those files are checked against the whole index.
+
 A served doc whose content changed since its approval (`approved_digest`, see km.common.DIGEST_FIELDS)
 is `approval-stale`: an ERROR with the gate on (a team brain), a WARNING without it.
 
@@ -83,7 +93,7 @@ from pathlib import Path
 
 import yaml
 
-from km.common import APPROVAL_DEFAULT, APPROVAL_FIELDS, APPROVAL_LEVELS, EXEMPT, approval_default_of, approval_level, body_of, is_ai_approver, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part
+from km.common import APPROVAL_DEFAULT, APPROVAL_FIELDS, APPROVAL_LEVELS, EXEMPT, approval_default_of, approval_level, body_of, is_ai_approver, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part, mount_paths, paths_by_lower, tracked_paths
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -237,10 +247,12 @@ SECRET_PATTERNS = {
 }
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 HYPHENS = {0x2010: "-", 0x2011: "-", 0x2012: "-", 0x2013: "-", 0x2014: "-"}
-INLINE = re.compile(r"\]\(<?([^)>]+)>?\)")
-REFDEF = re.compile(r"(?m)^\s*\[(?!\^)[^\]]+\]:\s*(<[^>]*>|\S+)")   # (?!\^) skips footnotes; <...> keeps a spaced target
+_NEXT_LINE = r"""(?:\n[ \t]*(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\))?[ \t]*)?"""   # a title, or the `)`, on the next line
+INLINE = re.compile(r"\]\([ \t]*\n?[ \t]*(?:<([^>\n]*)>[^)\n]*" + _NEXT_LINE
+                    + r"|((?:[^()\n]|\([^()\n]*\))+" + _NEXT_LINE + r"))\)")   # p(1).md: one level of parentheses
+REFDEF = re.compile(r"""(?m)^\s*\[(?!\^)[^\]]+\]:\s*(<[^>]*>|\S+)(?=[ \t]*$|[ \t]+["'(])""")   # (?!\^) skips footnotes; <...> keeps a spaced target; prose after it is no definition
 WIKI = re.compile(r"\[\[([^\]|]+)")
-HREF = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.I)
+HREF = re.compile(r"""<[a-z][^<>]*?\s(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))""", re.I)   # not data-src
 TODAY = datetime.date.today()
 
 ISO = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})?)?$")
@@ -432,7 +444,7 @@ def _strip_blocks(s: str) -> str:
     """Fenced (``` or ~~~, closed by the same character, at least as long) and indented code blocks
     blanked, line by line. An indented block must follow a blank line whose text before is neither a
     list item, a footnote nor indented: there it is that item's next paragraph, whose links count.
-    Used for the cite:missing scan; the link checks keep `_strip_code` as it was."""
+    Used for the cite:missing scan; the link checks use `_strip_code`, which leaves indented blocks."""
     out, blank, last, fence, code = [], True, "", "", False
     for ln in s.split("\n"):
         if fence:
@@ -456,7 +468,7 @@ def _strip_blocks(s: str) -> str:
 
 def _strip_code(s: str) -> str:
     s = re.sub(r"<!--.*?-->", " ", s, flags=re.S)   # HTML comments are not links
-    s = re.sub(r"```.*?```", " ", s, flags=re.S)
+    s = re.sub(r"(?ms)```.*?```|^ {0,3}(~{3,}).*?^ {0,3}\1~*[ \t]*$", " ", s)   # ``` as before; a ~~~ fence by its lines
     return re.sub(r"`[^`]*`", " ", s)
 
 
@@ -465,20 +477,42 @@ def _redact(s: str) -> str:
     return s[:2] + "…" + s[-2:] if len(s) > 6 else "…"
 
 
-def link_targets(text: str):
-    body = _strip_code(text)
-    for pat in (INLINE, REFDEF, WIKI, HREF):
+def _targets(text: str, pats, strip=None):
+    body = (strip or _strip_code)(text)
+    for pat in pats:
         for m in pat.finditer(body):
-            yield m.group(1)
+            yield next(g for g in m.groups() if g is not None)
 
 
-_TITLE = re.compile(r'^(\S.*?)\s+("[^"]*"|\'[^\']*\')\s*$')   # strip a quoted title (either quote may nest in the other)
+def link_targets(text: str):
+    """Every link target in `text`: inline and reference links, [[wiki]] links, HTML href/src."""
+    return _targets(text, (INLINE, REFDEF, WIKI, HREF))
+
+
+def path_targets(text: str, strip=None):
+    """The link targets written as a path or URL: link_targets without the [[wiki]] links."""
+    return _targets(text, (INLINE, REFDEF, HREF), strip)
+
+
+_CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)   # a code span of any number of backticks
+
+
+def _strip_all(s: str) -> str:
+    """Code as the dead-link pass leaves it out, more than the gate's _strip_code: indented blocks, an
+    unclosed fence (_strip_blocks) and a code span of two or more backticks too."""
+    return _strip_code(_CODE_SPAN.sub(" ", re.sub(r"<!--.*?-->", " ", _strip_blocks(s), flags=re.S)))
+
+
+_TITLE = re.compile(r'^(\S.*?)\s+("[^"]*"|\'[^\']*\')\s*$')   # a quoted link title: either quote may nest in the other
+_PAREN_TITLE = re.compile(r"^(\S+)\s+\([^)]*\)\s*$")          # (title): only after a target without spaces
+_MACHINE = re.compile(r"(?i)file:|[a-z]:[\\/]|~/")                # a file URL, C:\ or C:/, a home folder
+_MACHINE_ROOTS = ("/Users/", "/home/", "/tmp/", "/private/", "/var/", "/mnt/", "/opt/")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*:", re.I)        # any URL scheme (http:, mailto:, ftp:, ...)
 
 
 def _join_repo(base: str, target: str) -> str | None:
     """Join a repo-relative link target onto `base` dir, collapse '.'/'..', reject escapes above
-    ROOT. Returns a normalized repo-relative path (no leading slash) or None."""
+    ROOT. Returns a normalized repo-relative path (no leading slash; '' for ROOT itself) or None."""
     segs: list[str] = []
     for seg in (f"{base}/{target}" if base else target).split("/"):
         if seg in ("", "."):
@@ -489,7 +523,96 @@ def _join_repo(base: str, target: str) -> str | None:
             segs.pop()
         else:
             segs.append(seg)
-    return "/".join(segs) or None
+    return "/".join(segs)
+
+
+_MD_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")   # a Markdown backslash escape of ASCII punctuation
+
+
+def _listed(index, path: str, folder: bool) -> tuple[bool, str | None]:
+    """(whether `index` lists `path` as a file, a folder or a mount, the mount `path` lies below or None)."""
+    files, dirs, mounts = index
+    if path in dirs or path in mounts or (not folder and path in files):
+        return True, None
+    return False, next((m for m in mounts if path.startswith(m + "/")), None)
+
+
+def _in_index(path: str, folder: bool = False) -> bool:
+    """Whether a repo path is a tracked file (not with `folder`) or folder, or lies in a mounted brain that
+    lists it. A path that cannot be checked counts: outside a git work tree, in a mount that is not checked
+    out (CI does not check out submodules), below a mount inside a mount."""
+    if (index := tracked_paths()) is None:
+        return True
+    hit, mount = _listed(index, path, folder)
+    if hit or mount is None or (own := mount_paths(mount)) is None:
+        return hit or mount is not None
+    hit, inner = _listed(own, path[len(mount) + 1:], folder)
+    return hit or inner is not None
+
+
+def _cands(base: str, t: str) -> list[str | None]:
+    """The repo paths a cleaned target may mean: from the root only for a leading /, else document-relative
+    first, then from the root (None: it leaves the repository)."""
+    return [_join_repo("", t[1:])] if t.startswith("/") else [_join_repo(base, t), _join_repo("", t)]
+
+
+def link_path(base: str, raw: str, wiki: bool = False) -> tuple[str | None, str, str]:
+    """Where a link target `raw` written in a doc of folder `base` ('' for the root) leads, as
+    (repo path or None, cleaned target, kind). kind is 'external' (a URL scheme, //host, an anchor
+    alone: no repo target), 'found', 'missing', 'outside' (it leaves the repository), 'machine' (a
+    path on one computer: file:, C:\\, ~/, /Users/ and the like) or 'backslash'. Angle brackets, a link
+    title (not for a [[wiki]] target), #anchor and ?query are stripped, then Markdown escapes and
+    %-escapes decoded. A target is found when the git index lists it as a file or folder (with a
+    trailing / a folder only), case-exact and NFC-normalised (a mounted brain's files by its own
+    index): document-relative first, then from the repo root (a leading / means the root only).
+    Outside a git work tree (tracked_paths is None) every target counts as found."""
+    t = str(raw).strip()
+    if not wiki and t.startswith("<") and ">" in t:
+        t = t[1:t.index(">")].strip()
+    elif not wiki and (mt := _TITLE.match(t) or _PAREN_TITLE.match(t)):
+        t = mt.group(1).strip()
+    t = re.split(r"[#?]", t, maxsplit=1)[0].strip()
+    if _MACHINE.match(t):
+        return None, t, "machine"
+    if not t or t.startswith("//") or _SCHEME.match(t):
+        return None, "", "external"
+    t = unicodedata.normalize("NFC", urllib.parse.unquote(_MD_ESCAPE.sub(r"\1", t)))
+    if "\\" in t:                              # left after the Markdown escapes: a Windows path
+        return None, t, "backslash"
+    cands = _cands(base, t)
+    for cand in cands:
+        if cand is not None and _in_index(cand, folder=t.endswith("/")):
+            return cand, t, "found"
+    return None, t, ("machine" if t.startswith(_MACHINE_ROOTS) else "outside" if cands[0] is None else "missing")
+
+
+def _dead_hint(base: str, target: str, kind: str) -> str:
+    """Why a target that link_path does not find is dead, where it can tell."""
+    if kind == "outside":
+        return "leaves the repository"
+    if kind == "backslash":
+        return "a backslash: separate folders with /"
+    if kind == "machine":
+        return "a path on one machine: link a file in the brain or write the path as text"
+    files = tracked_paths()[0]
+    for cand in filter(None, _cands(base, target)):
+        if (hit := paths_by_lower().get(cand.lower())) and hit != cand:
+            return f"differs only in case from {hit}"
+        if f"{cand}.md" in files:
+            return "add .md"
+    return ""
+
+
+def dead_links(rel: str, text: str) -> list[str]:
+    """The `dead-link` details for the doc `rel`: each link in its body (not the frontmatter, not
+    code, not a [[wiki]] link) whose target the git index does not list, once per target."""
+    base = "" if folder_of(rel) == "." else folder_of(rel)
+    out: dict[str, str] = {}
+    for raw in path_targets(body_of(text), _strip_all):
+        _p, clean, kind = link_path(base, raw)
+        if kind not in ("external", "found") and clean not in out:
+            out[clean] = _dead_hint(base, clean, kind)
+    return [f"links missing {t}" + (f": {h}" if h else "") for t, h in out.items()]
 
 
 def check_index_tree() -> None:
@@ -499,48 +622,21 @@ def check_index_tree() -> None:
                          no `_index.md` of its own
       * index-incomplete an `_index.md` fails to link a content doc in its own folder, or the
                          `_index.md` of a direct subfolder
-      * index-dead-link  an `_index.md` links a `.md` that is not a tracked repo file
-    'Content docs' = real articles only (excludes `_index.md`, exempt files, and index.md/log.md
-    — the same notion is_validatable() uses). The dead-link scan runs on EVERY `_index.md`,
-    including a navigation hub whose folder has no direct docs. Link targets resolve against the
-    FULL git-TRACKED file set (not disk), so results are clone-stable and case-exact and a link
-    into a skip_prefixes folder is not dead; a relative target resolves document-relative first
-    then repo-root, an absolute /path at the root only; angle brackets, a quoted title and a
-    #fragment are stripped and %-escapes decoded first. A bare [[slug]] that is no tracked path
-    falls back to the gate's lookup by name (resolve_slug); a doc of the index's own folder is always found as a path first, so that never
+    'Content docs' = real articles only (excludes `_index.md`, exempt files, and index.md/log.md:
+    the same notion is_validatable() uses). A dead link in an `_index.md` is the general
+    `dead-link` warning (dead_links), reported with or without this lint. Link targets resolve as
+    link_path reads them, against the git index (not disk), so results are clone-stable and
+    case-exact and a link into a skip_prefixes folder counts; a target without .md that is no
+    tracked path ([[./p]], [[slug]]) credits `<target>.md`, then the gate's lookup by name
+    (resolve_slug); a doc of the index's own folder is always found as a path first, so that never
     changes what an index is credited with. Each `_index.md` covers its own folder: its
     docs plus the `_index.md` of each direct subfolder, so every folder is reachable from the one
     above it. The root `_index.md` is optional; where it exists it must link the top-level folders
     that have an index. `skip_prefixes`
     folders and `index_skip_prefixes` folders are not linted (the latter is the index-only opt-out,
     leaving article validation on). Whole-repo only: skipped on per-file (pre-commit) runs."""
-    tracked = set(tracked_md(existing=False))                       # existence oracle: ALL tracked .md
-    walk = {p for p in tracked                                      # only these folders are linted
+    walk = {p for p in tracked_md(existing=False)                   # only these folders are linted
             if not p.startswith(SKIP_PREFIXES) and not p.startswith(INDEX_SKIP_PREFIXES)}
-
-    def _resolve(base: str, raw: str) -> tuple[str | None, str]:
-        """(tracked repo path or None, cleaned target for reporting). Existence is checked against
-        the FULL tracked set, so a link into a skip_prefixes folder is NOT a dead link."""
-        t = str(raw).strip()
-        if t.startswith("<") and t.endswith(">"):
-            t = t[1:-1].strip()
-        mt = _TITLE.match(t)                       # drop a quoted markdown title (not a bare space)
-        if mt:
-            t = mt.group(1).strip()
-        t = urllib.parse.unquote(t.split("#", 1)[0].strip())
-        if not t or _SCHEME.match(t):
-            return None, ""                        # external / non-repo target: never a dead *repo* link
-        probe = t if t.endswith(".md") else t + ".md"
-        if probe.startswith("/"):
-            cands = (_join_repo("", probe.lstrip("/")),)              # absolute: root only
-        else:
-            cands = (_join_repo(base, probe), _join_repo("", probe))  # doc-relative first, then root
-        for cand in cands:
-            if cand and cand in tracked:
-                return cand, t
-        if hit := resolve_slug(t):                                    # bare [[slug]]: by name, as the gate resolves it
-            return hit, t
-        return None, (t if t.endswith(".md") else "")                # unresolved slug/wiki: not a *.md dead link
 
     by_folder: dict[str, list[str]] = defaultdict(list)
     for p in walk:
@@ -562,15 +658,13 @@ def check_index_tree() -> None:
             warnings.append(("index-missing", f"{folder}/", "_index.md is tracked but absent from the worktree"))
             continue
         linked: set[str] = set()
-        dead: set[str] = set()                     # dedup identical dead targets
-        for _tgt in link_targets(idx_path.read_text(encoding="utf-8-sig", errors="replace")):
-            _tp, _clean = _resolve(base, _tgt)
+        _text = idx_path.read_text(encoding="utf-8-sig", errors="replace")
+        for _tgt, _wiki in [(t, False) for t in path_targets(_text)] + [(t, True) for t in _targets(_text, (WIKI,))]:
+            _tp, _clean, _kind = link_path(base, _tgt, wiki=_wiki)
+            if _kind in ("found", "missing") and not _clean.endswith(".md"):   # [[./p]], [[slug]]: a doc by its name first
+                _tp = link_path(base, _clean + ".md")[0] or resolve_slug(_clean) or _tp
             if _tp:
                 linked.add(_tp)
-            elif _clean.endswith(".md"):
-                dead.add(_clean)
-        for _dl in sorted(dead):
-            warnings.append(("index-dead-link", idx, f"links missing {_dl}"))
         for _d in sorted(set(docs) - linked):
             warnings.append(("index-incomplete", idx, f"does not link {_d}"))
 
@@ -977,9 +1071,12 @@ def main() -> int:
                 if _c != _own and _n in _scan and _rx.search(_scan):   # substring first: the regex is slow
                     errors.append(("gate-leak:code", _sf, f"project code {_redact(_c)} outside its own folder"))
 
-    for _pf in secret_targets(given):   # a doc a clone on Windows cannot check out (any tracked doc, as the secret scan)
-        if _bad := unportable_part(_pf):
+    _indexed = tracked_paths() is not None   # no dead links outside a git work tree: nothing to check against
+    for _pf in secret_targets(given):   # any tracked doc, as the secret scan: exempt and _index files included
+        if _bad := unportable_part(_pf):   # a doc a clone on Windows cannot check out
             warnings.append(("portable-name", _pf, f"{_bad[0]!r} {_bad[1]}, so a clone on Windows cannot check it out: rename it"))
+        if _indexed:
+            warnings.extend(("dead-link", _pf, _d) for _d in dead_links(_pf, (ROOT / _pf).read_text(encoding="utf-8-sig", errors="replace")))
 
     _target_list = targets(given)
     if not given:   # a changed doc HEAD's settings or a move leave unchecked, which the merge base checked

@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -436,7 +437,8 @@ def _drop_objects() -> None:
 def fresh_run() -> None:
     """Forget what an earlier run in this process looked up: the file list, the index, the pins."""
     _drop_objects()
-    for cached in (_ls_md, _md_index, md_named, submodule_prefixes, unstaged, staged_blob, pinned_blob, _body):
+    for cached in (_ls_md, _md_index, md_named, submodule_prefixes, unstaged, staged_blob, pinned_blob, _body,
+                   tracked_paths, mount_paths, paths_by_lower):
         cached.cache_clear()
 
 
@@ -679,6 +681,54 @@ def tracked_md(existing: bool = True) -> list[str]:
     if files is None:
         sys.exit(f"git ls-files failed (not a git repo?): {error}")
     return [p for p in files if not existing or (ROOT / p).is_file()]
+
+
+def _with_dirs(files) -> tuple[frozenset[str], frozenset[str]]:
+    """The paths, NFC-normalised, and every folder above them ('' for the root)."""
+    files = frozenset(unicodedata.normalize("NFC", f) for f in files)
+    dirs = {""}
+    for f in files:
+        while "/" in f:
+            f = f.rsplit("/", 1)[0]
+            dirs.add(f)
+    return files, frozenset(dirs)
+
+
+def _index_of(repo: Path) -> tuple[frozenset[str], frozenset[str], frozenset[str]] | None:
+    """(files, folders, mounts) the git index of `repo` lists, every file type and not only .md; a
+    mount is a gitlink (a mounted brain), listed as a file too. NFC-normalised, so a name a Mac wrote
+    decomposed compares equal to the one a Linux clone has. None where git cannot list them."""
+    res = git("ls-files", "-z", "-s", cwd=repo)
+    if res.returncode != 0:
+        return None
+    files, mounts = [], set()
+    for rec in res.stdout.split("\0"):
+        meta, _, path = rec.partition("\t")
+        if path:
+            files.append(path)
+            if meta.startswith("160000"):
+                mounts.add(unicodedata.normalize("NFC", path))
+    return *_with_dirs(files), frozenset(mounts)
+
+
+@functools.cache
+def tracked_paths() -> tuple[frozenset[str], frozenset[str], frozenset[str]] | None:
+    """The brain's own git index as _index_of lists it, once per run."""
+    return _index_of(ROOT)
+
+
+@functools.cache
+def mount_paths(mount: str) -> tuple[frozenset[str], frozenset[str], frozenset[str]] | None:
+    """A mounted brain's own index as _index_of lists it; None when the mount is not checked out (no
+    .git of its own: git there would answer for the brain around it)."""
+    return _index_of(ROOT / mount) if (ROOT / mount / ".git").exists() else None
+
+
+@functools.cache
+def paths_by_lower() -> dict[str, str]:
+    """The brain's tracked files and folders by their lower-case path, for a hint on a case mismatch."""
+    index = tracked_paths()
+    return {p.lower(): p for p in sorted(index[0] | index[1])} if index else {}
 
 
 @functools.cache
