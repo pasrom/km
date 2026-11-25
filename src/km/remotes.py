@@ -9,6 +9,7 @@ default branch on the host is then a second thing that can fall behind.
 from __future__ import annotations
 
 import functools
+import json
 import os
 import re
 import subprocess
@@ -18,6 +19,7 @@ from pathlib import Path
 from km.paths import git, printable
 
 TIMEOUT = 15                      # seconds per network call
+SHA = re.compile(r"[0-9a-f]{40,64}")    # a full commit or blob id (SHA-1 or SHA-256)
 OFFLINE = ("could not resolve host", "failed to connect", "connection timed out", "network is unreachable",
            "could not connect", "operation timed out", "connection refused", "no answer within")
 
@@ -97,6 +99,34 @@ def gh(*args: str) -> tuple[int, str]:
     if res is None:
         return -1, ""
     return res.returncode, res.stdout.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").strip()   # as text mode reads it
+
+
+def json_lines(text: str) -> list | None:
+    """gh's output as one JSON value per line (`--jq '... | tojson'`), or None when a line does not parse.
+    Split on "\n" only: jq leaves U+2028, U+2029 and U+0085 raw in a string, which splitlines() splits on."""
+    try:
+        return [json.loads(ln) for ln in text.split("\n") if ln.strip()]
+    except ValueError:
+        return None
+
+
+def resolve_url(url: str, base: str) -> str:
+    """A relative submodule url (`./x`, `../x`) resolved against `base` (the superproject's remote url)
+    as git does: each leading `../` drops the last part of base, at a `/` or, in scp form
+    (git@host:owner/name), at the `:`. Any other url, or one that cannot be resolved, comes back as it is."""
+    if not url.startswith(("./", "../")) or not base:
+        return url
+    rel, sep = url, "/"
+    while rel.startswith(("./", "../")):
+        if rel.startswith("./"):
+            rel = rel[2:]
+            continue
+        rel, base = rel[3:], base.rstrip("/")
+        i = max(base.rfind("/"), base.rfind(":"))
+        if i < 0:
+            return url
+        sep, base = base[i], base[:i]
+    return f"{base}{sep}{rel}" if base else url
 
 
 def github_repo(url: str) -> tuple[str, str] | None:

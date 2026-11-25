@@ -37,7 +37,6 @@ schema.local.yaml is such a line too. Exit 0 when the label counts, 1 when not, 
 from __future__ import annotations
 
 import argparse
-import json
 import posixpath
 import re
 import sys
@@ -52,7 +51,7 @@ from km.common import (_FM, OVERLAY_NAMES, approval_default_of, approval_level, 
                        under, was_doc, with_aliases)
 from km.gen_index import kept_parts, scaffolds
 from km.paths import printable
-from km.remotes import gh_run
+from km.remotes import SHA, gh_run, json_lines
 
 LABEL = "km:ready"
 TIMEOUT = 30                     # seconds per GitHub call
@@ -61,7 +60,6 @@ MAX_TEXT = 1_000_000             # bytes of a doc; a longer one counts as human
 MAX_BLOCK = 65_536               # bytes of a frontmatter block
 # a YAML anchor (an alias bomb) or a merge key, which the workflow review-request-guide leaves to CI too
 UNSAFE = re.compile(r"(^|[^\w])&\S|(<<|\"<<\"|'<<')\s*(:|$)", re.M)
-SHA = re.compile(r"[0-9a-f]{40,64}")
 GHOST = "ghost"                  # the login GitHub shows for a deleted account
 # Control files: a pull request touching one needs another person's label, whatever its docs' levels.
 # They are what CI runs or reads and what steers an agent, an editor or a hook on a contributor's
@@ -116,13 +114,7 @@ def lines(*args: str) -> list | None:
     """gh's output as one JSON value per line (`--jq '... | tojson'`), or None when the call failed or a
     line does not parse."""
     text = gh_text(*args)[0]
-    if text is None:
-        return None
-    try:
-        # "\n" only: jq leaves U+2028, U+2029 and U+0085 raw in a string, which splitlines() splits on
-        return [json.loads(ln) for ln in text.split("\n") if ln.strip()]
-    except ValueError:
-        return None
+    return None if text is None else json_lines(text)
 
 
 def base_schema(repo: str, base: str) -> dict | None:
