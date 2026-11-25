@@ -37,7 +37,7 @@ Read every file a row names with the Read tool, in full, before the flow starts 
 
 | Request (`/km ...` or in prose) | Read |
 | :- | :- |
-| a question, "was wissen wir über" | this file: "Search strategy", "Routing"; open PRs as a source: `${CLAUDE_SKILL_DIR}/reference/github-reads.md` |
+| a question, "was wissen wir über" | this file: "Search strategy", "Routing"; open PRs: `${CLAUDE_SKILL_DIR}/reference/github-reads.md` |
 | `@<name> ...`, `@all ...` | as a question, plus `${CLAUDE_SKILL_DIR}/reference/brains.md` (mounts, shared resources, `@all` sync) |
 | content to save, `update <doc>: ...`, a decision, a transcript, archive a page | this file: "Writing content" |
 | `help` | this table, one line per row, then `km --help` for the commands |
@@ -65,15 +65,15 @@ Read `CONVENTIONS.md` in the repo root. If missing, offer to initialize (`/km in
 
 ### Routing
 
-- `@<name>` → resolve in this order: (1) `brains/<name>/` if it exists, (2) shared resource `<name>/` if it exists. First match wins
-- `@all` → search current repo, then all brains, then all shared resources
-- No `@` → current repo only
+- `@<name>` → `brains/<name>/` if it exists, else shared resource `<name>/`
+- `@all` → current repo, all brains, then all shared resources
+- No `@` → current repo and all brains (`km search` default); shared resources only by `@`
 
 ### Citation format
 
 - Brain sources: `[<name>@<hash>] path/file.md`
-- Shared resource sources: `[<name>] path/file.md` (or as specified in the resource's `CLAUDE.md`)
-- Open pull request sources: `[<owner>/<repo>#<N>, not merged, <author>, <last update>] path/file.md` (see "Open pull requests" in `${CLAUDE_SKILL_DIR}/reference/github-reads.md`)
+- Shared resource sources: `[<name>] path/file.md` (or per the resource's `CLAUDE.md`)
+- Open pull request sources: `[<owner>/<repo>#<N>, not merged, <author>, <last update>] path/file.md`
 
 ## Consuming vs. authoring a mounted brain
 
@@ -84,21 +84,23 @@ A `brains/<name>/` submodule is a **read-only, pinned mirror**: query it, cite i
 - **You are a PRIMARY author** of a brain (a team brain you feed regularly) → do NOT author it through a submodule. Keep a **standalone clone** of that brain and work there: `git switch -c <ticket>` for one change, or `git worktree add ../<brain>-<ticket> -b <ticket>` off that clone for two at once. Merges land in the brain's own repo; a personal brain only ever *reads* it (mounted submodule, or just point at the sibling clone).
 - **Contribute without write access** (you have READ on a shared/team brain) → `contribute @<name>` (`${CLAUDE_SKILL_DIR}/reference/brains.md`): the throwaway-clone + PR (fork PR if read-only) flow, with the doc gated by the target brain's rules.
 
-Caveat when a brain you author in **itself mounts brains**: a fresh linked worktree has EMPTY submodule dirs until `km sync` (or `git submodule update --init`) checks them out at their pins.
+Caveat when a brain you author in **itself mounts brains**: a fresh linked worktree has EMPTY submodule dirs until `km sync` checks them out at their pins.
 
 ## Search strategy
 
-1. Frontmatter tags (skip `status: obsolete/superseded` unless asked). A question about the docs themselves (what lies in a folder, what waits for sign-off, what is overdue for review) is one `km list` call (`/km queue` is its own flow), not a read of each file: `km list <folder>`; waiting for a person's sign-off: `--status review --signoff human`; overdue: `--status accepted --due today`; also `--tag X`, `--fields path,title,owner`, `--json`. A mounted brain: `km list --root <its folder>`.
+For a question, first run `km search <terms>` (key words plus synonyms in the brain's languages; `@<name>` of a brain → `--brain <name>`), then read its hits and widen with the steps below; its coverage lines go under gaps.
+
+1. Frontmatter tags (skip `status: obsolete/superseded` unless asked). A question about the docs themselves (a folder's contents, what waits for sign-off, overdue reviews) is one `km list` call, not a read per file: `km list <folder>`; waiting for a person's sign-off: `--status review --signoff human`; overdue: `--status accepted --due today`; also `--tag X`, `--fields path,title,owner`, `--json`. A mounted brain: `km list --root <its folder>`.
 2. Folder structure + `_index.md` files
 3. H1/H2 headings scan, read matching files
-4. Full-text grep (only if needed)
+4. Grep synonyms
 5. Follow `related:` / `supersedes:` cross-references
 
-Response: summary, sources (with paths), recency, gaps, related topics.
+Response: summary, sources (with paths), recency, gaps (km search coverage), related topics.
 
 ### Query-to-wiki
 
-After answering, check: did the response synthesize information from 3+ sources or establish connections not found in any single file? If yes, offer to save the synthesis as a `type: summary` document. Save it per "Writing content"; `related:` lists every source. Pin them in `sources:` too and run `km repin` on the new doc (see "Source pins" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md`).
+After answering: if the response synthesized 3+ sources or made connections no single file holds, offer to save the synthesis as a `type: summary` document. Save it per "Writing content"; `related:` lists every source. Pin them in `sources:` too and run `km repin` on the new doc (see "Source pins" in `${CLAUDE_SKILL_DIR}/reference/pins-and-cites.md`).
 
 Do not offer for simple lookups or single-source answers. Never offer it on content from an open PR, and never base a `brain fix` on one alone: where a PR shows a merged doc is wrong, say so and point at the PR.
 

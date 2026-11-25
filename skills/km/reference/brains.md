@@ -32,7 +32,7 @@ Any git submodule **not** under `brains/` is a shared resource. Discover them fr
 
 ### `@all` sync
 
-Before searching, `km sync --quiet --max-age 15m` once: every mount is then at its pin, and a mount it could not bring there is named (pass that on, never fail silently). Then search in order: current repo → brains → shared resources.
+Before searching, `km sync --quiet --max-age 15m` once: every mount is then at its pin, and a mount it could not bring there is named (pass that on, never fail silently). Searching starts with `km search <terms>`, which covers the current repo and all brains (docs and open PRs) by default and prints a coverage line for each; then widen in order: current repo → brains → shared resources (`km search` does not cover these).
 
 ### Pin-bump PR (newer content of a mount)
 
