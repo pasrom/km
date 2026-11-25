@@ -61,3 +61,18 @@ brain_with_peer(){
   brain "$1" EV
   git -C "$1" "${G[@]}" submodule add -q "$T/peer" brains/peer && git -C "$1" "${G[@]}" commit -q -m "chore(brains): mount peer"
 }
+# brain_with_two_peers DIR: a brain that mounts brains/beta and brains/gamma; only gamma, the second,
+# holds the dew-point alarm fact (an accepted doc). Their origins are local paths, so km search can
+# read no open pull request of any of them.
+brain_with_two_peers(){
+  local T; T="$(mktemp -d)"
+  brain "$T/beta" BE
+  doc "$T/beta" docs/fan-speed.md "Fan speed" accepted "The cabinet fan runs at 40 percent below 30 degrees Celsius."
+  git -C "$T/beta" "${G[@]}" add -A && git -C "$T/beta" "${G[@]}" commit -q -m "docs: fan speed"
+  brain "$T/gamma" GA
+  doc "$T/gamma" docs/dew-point-alarm.md "Dew-point alarm" accepted "The cabinet dew-point alarm triggers when the dew point comes within 3 K of the cabinet air temperature."
+  git -C "$T/gamma" "${G[@]}" add -A && git -C "$T/gamma" "${G[@]}" commit -q -m "docs: dew-point alarm"
+  brain "$1" EV
+  git -C "$1" "${G[@]}" submodule add -q "$T/beta" brains/beta && git -C "$1" "${G[@]}" submodule add -q "$T/gamma" brains/gamma
+  git -C "$1" "${G[@]}" commit -q -m "chore(brains): mount beta and gamma"
+}
