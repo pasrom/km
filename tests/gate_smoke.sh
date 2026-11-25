@@ -859,9 +859,9 @@ N="$(mktemp -d)"; printf '%s' "$GATE_ON" > "$N/schema.local.yaml"   # not a git 
 draft "$N/nd.md"; acc "$N/nl.md" internal 'see [[nd]]'
 out="$(km validate --root "$N" "$N/nl.md" 2>&1)"; rc=$?
 { [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "nd.md"; } && ok "bergab: outside git a draft on disk is a link target" || no "bergab: no git, draft ($rc: $out)"
-acc "$N/n.md" internal 'see [top](#top) and [[n2]]'
+acc "$N/n.md" internal 'see [top](#top) and [[n2]] and [self](n.md)'
 out="$(km validate --root "$N" "$N/n.md" 2>&1)"; rc=$?
-{ [ "$rc" = 0 ] && ! out_has Traceback; } && ok "bergab: a brain outside git still validates per file" || no "bergab: no git ($rc: $out)"
+{ [ "$rc" = 0 ] && ! out_has Traceback && ! out_has dead-link; } && ok "bergab: a brain outside git still validates per file, no dead link without an index" || no "bergab: no git ($rc: $out)"
 # km validate takes FILEs only: an unknown option is a usage error, --help validates nothing, -- ends the options
 out="$(km validate --root "$S/b" --help 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && out_has "usage: km validate" && ! out_has "ERRORS" && ! out_has "WARNINGS"; } \
@@ -1020,6 +1020,30 @@ sup o2.md n2.md; acc "$L/n2.md" internal n2; doc "$L/d/n2.md" obsolete; page to-
 quiet to-o2.md "superseded_by resolves from the brain root first, as CONVENTIONS.md writes it"
 printf 'meta: {profile: smoke}\n' > "$L/schema.local.yaml"; bo lone.md
 { [ "$rc" = 0 ] && ! out_has gate-bergab; } && ok "bergab-old: with the gate off, no finding" || no "bergab-old gate off ($rc: $out)"
+rm -rf "$L"
+
+# the link forms the dead-link check reads (a target with parentheses, angle brackets, an unquoted src,
+# data-src, a ~~~ fence) give bergab no new finding: served targets pass, a draft outside a link is none
+L="$(mktemp -d)"; mkdir -p "$L/d"
+printf 'meta: {profile: smoke}\ngate:\n  enabled: true\n' > "$L/schema.local.yaml"
+acc "$L/d/p(1).md" internal p; acc "$L/d/ok.md" internal ok
+printf -- '---\ntype: note\ntitle: w\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nwip\n' > "$L/d/wip.md"
+acc "$L/d/page.md" internal '[a](p(1).md) [b](<ok.md>) <img src=ok.md> <img data-src="wip.md">
+
+~~~
+[c](wip.md)
+~~~'
+( cd "$L" && git init -q && git add -A )
+out="$(km validate --root "$L" "$L/d/page.md" 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! out_has gate-bergab && ! out_has dead-link; } && ok "bergab: the dead-link link forms add no finding" || no "bergab link forms ($rc: $out)"
+draft "$L/d/w(1).md"; ( cd "$L" && git add -A )
+for form in '[a](w(1).md)' '[a](<wip.md> "t")' '<img src=wip.md>' '[a](wip.md
+"a title")'; do
+  acc "$L/d/f.md" internal "$form"
+  out="$(km validate --root "$L" "$L/d/f.md" 2>&1)"; rc=$?
+  { [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "unfinished (draft) d/w"; } \
+    && ok "bergab: a draft linked as ${form%%$'\n'*}... is found" || no "bergab: draft via $form ($rc: $out)"
+done
 rm -rf "$L"
 
 summary smoke || exit 1

@@ -199,4 +199,125 @@ out="$(cd "$GC" && km gen-index --check 2>&1)"; rc=$?
 [ "$rc" = 0 ] && ok "gen-index --check: up to date after creating" || no "gen-index --check after create ($rc: $out)"
 rm -rf "$GC"
 
+# dead-link: a link in the body of any tracked .md outside skip_prefixes whose target the git index does
+# not list, with check_index off (independent of the index lint); read from km.validate.warnings, since the
+# report prints four rows per category
+D="$(mktemp -d)"; mkdir -p "$D/a/sub" "$D/a/Folder" "$D/a/_media" "$D/top" "$D/vendor" "$D/mnt"
+printf 'meta: {profile: idx}\nskip_prefixes: [vendor/]\n' > "$D/schema.local.yaml"
+dl(){ ( cd "$1" && shift && kmpy -P -c 'import contextlib, io, sys
+sys.argv = ["km validate", *sys.argv[1:]]
+from km import validate
+with contextlib.redirect_stdout(io.StringIO()):
+    rc = validate.main()
+for c, p, d in validate.warnings:
+    if c == "dead-link":
+        print(f"{p} | {d}")
+print(f"rc={rc}")' "$@" 2>&1 ); }
+doc "$D/a/ok.md"; doc "$D/a/$(printf 'caf\303\251')1.md"; doc "$D/a/$(printf 'cafe\314\201')2.md"; doc "$D/a/sub/x.md"; doc "$D/a/Folder/f.md"; doc "$D/a/a b.md"; doc "$D/a/p(1).md"; doc "$D/top/t.md"
+printf 'PNG\n' > "$D/a/_media/pic.png"; printf 'PDF\n' > "$D/a/doc.pdf"; printf 'skipped: [x](nope13.md)\n' > "$D/vendor/v.md"
+mkdir -p "$D/a/my doc (v2)"; doc "$D/a/my doc (v2)/in.md"
+printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\n%s\n' \
+'[a](ok.md) [b](./ok.md#sec) [c](#top) [d](https://example.com/x.md) [e](mailto:x@example.com) [f](//host/x.md)
+[g](../top/) [h](..) [i](.) [j](/a/ok.md) [k](a%20b.md) [l](<a b.md>) [m](p(1).md) [n](ok.md "title") [o](ok.md?x=1)
+[p [q] r](ok.md) ![s](_media/pic.png) [u](doc.pdf) [v](../vendor/v.md) [w](../mnt) [x](../mnt/m.md) [y](../emp/any.md)
+<img data-src="nope1.md" src="_media/pic.png"> `[z](nope2.md)` <!-- [z](nope3.md) -->
+
+```
+[z](nope4.md)
+```
+
+~~~
+[z](nope5.md)
+~~~
+
+[^1]: nope6.md
+[label]: nope8.md is prose, not a definition
+[[nope7]] [t](../top/t.md "it'\''s") [root fallback](top/t.md)
+'"[nfd link to an nfc name]($(printf 'cafe\314\201')1.md) [nfc link to an nfd name]($(printf 'caf\303\251')2.md)" > "$D/a/good.md"
+printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\n%s\n' \
+'[1](gone1.md) [1 again](gone1.md) ![2](_media/gone2.png) [3](OK.md) [4](folder/f.md) [5](ok) [6](../../gone3.md)
+[7](sub\x.md) [![8](_media/gone4.png)](ok.md) <img src=gone6.png> <a href='\''gone7.md'\''>11</a>
+[12](untracked8.md) [13](../mnt/gone9.md) [14](sub\_gone12.md)
+
+[r]: gone5.md "a title"' > "$D/a/bad.md"
+printf -- '---\ntype: note\ntitle: t\ndescription: "[x](nope12.md)"\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\n%s\n' \
+'[a](ok.md (t)) [b](my doc (v2)) [c](ok.md
+"title") [d](ok.md
+) [e](../mnt/inner/deep.md) [f](../mnt/inner/)
+
+    [indented](nope9.md)
+
+``[dbl `x` ](nope10.md)``
+
+```
+[unclosed](nope11.md)' > "$D/a/good2.md"
+printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\n%s\n' \
+'[m1](file:///etc/hosts) [m2](C:\Users\x\doc.md) [m3](C:/x/doc.md) [m4](~/notes/x.md) [m5](/Users/someone/x.md)
+[n1](gone13.md
+"title") [n2](gone14.md
+) [t](ok.md/)' > "$D/a/bad2.md"
+printf '# A\n- [Gone](gone10.md)\n' > "$D/a/_index.md"
+printf '# readme\n[x](a/gone11.md)\n' > "$D/README.md"
+git init -q "$D/mnt" && doc "$D/mnt/m.md" && git -C "$D/mnt" add -A && git -C "$D/mnt" "${G[@]}" commit -qm m \
+  && git -C "$D/mnt" update-index --add --cacheinfo "160000,$(git -C "$D/mnt" rev-parse HEAD),inner" \
+  && git -C "$D/mnt" "${G[@]}" commit -qm inner   # a mount with a mount of its own
+( cd "$D" && git init -q && git config core.precomposeunicode false \
+  && git -c advice.addEmbeddedRepo=false add -A 2>/dev/null && mkdir emp \
+  && git update-index --add --cacheinfo "160000,$(git -C mnt rev-parse HEAD),emp" && git "${G[@]}" commit -qm i )
+printf '# on disk, not tracked\n' > "$D/a/untracked8.md"
+out="$(dl "$D")"
+dead(){ grep -qxF "$1" <<< "$out" && ok "dead-link: $2" || no "dead-link: $2 ($out)"; }
+dead "a/bad.md | links missing gone1.md" "a missing .md"
+dead "a/bad.md | links missing _media/gone2.png" "a missing image in _media/"
+dead "a/bad.md | links missing OK.md: differs only in case from a/ok.md" "a file in the wrong case"
+dead "a/bad.md | links missing folder/f.md: differs only in case from a/Folder/f.md" "a folder in the wrong case"
+dead "a/bad.md | links missing ok: add .md" "a target without .md"
+dead "a/bad.md | links missing ../../gone3.md: leaves the repository" "a path out of the repository"
+grep -q '^a/bad.md | links missing sub\\x.md: .*backslash' <<< "$out" && ok "dead-link: a backslash path" || no "dead-link: backslash ($out)"
+dead "a/bad.md | links missing sub_gone12.md" "a Markdown escape is no backslash"
+M=": a path on one machine: link a file in the brain or write the path as text"
+dead "a/bad2.md | links missing file:///etc/hosts$M" "a file: URL"
+dead "a/bad2.md | links missing C:\\Users\\x\\doc.md$M" "a Windows path with backslashes"
+dead "a/bad2.md | links missing C:/x/doc.md$M" "a Windows path with slashes"
+dead "a/bad2.md | links missing ~/notes/x.md$M" "a home folder path"
+dead "a/bad2.md | links missing /Users/someone/x.md$M" "an absolute machine path"
+dead "a/bad2.md | links missing gone13.md" "a title on the next line"
+dead "a/bad2.md | links missing gone14.md" "the ) on the next line"
+dead "a/bad2.md | links missing ok.md/" "a trailing / on a file"
+[ "$(grep -c '^a/bad2.md' <<< "$out")" = 8 ] && ok "dead-link: nothing else in the second faulty doc" || no "dead-link: extra findings 2 ($out)"
+grep -q '^a/good2.md\|^vendor/' <<< "$out" && no "dead-link: valid forms 2 stay silent ($out)" \
+  || ok "dead-link: a paren title, a target with ( ), next-line titles, a mount inside a mount, indented and double-backtick code, an unclosed fence, the frontmatter and a skip_prefixes doc stay silent"
+dead "a/bad.md | links missing _media/gone4.png" "a dead image nested in a link"
+dead "a/bad.md | links missing gone5.md" "a dead reference definition"
+dead "a/bad.md | links missing gone6.png" "a dead unquoted <img src>"
+dead "a/bad.md | links missing gone7.md" "a dead <a href='...'>"
+dead "a/bad.md | links missing untracked8.md" "a file on disk git does not track"
+dead "a/bad.md | links missing ../mnt/gone9.md" "a file a checked-out mount lacks"
+dead "a/_index.md | links missing gone10.md" "an _index.md with check_index off"
+dead "README.md | links missing a/gone11.md" "a README"
+[ "$(grep -c 'links missing gone1.md' <<< "$out")" = 1 ] && ok "dead-link: a target linked twice is one finding" || no "dead-link dedupe ($out)"
+[ "$(grep -c '^a/bad.md' <<< "$out")" = 14 ] && ok "dead-link: nothing else in the faulty doc" || no "dead-link: extra findings ($out)"
+grep -q '^a/good.md' <<< "$out" && no "dead-link: valid links stay silent ($out)" || ok "dead-link: valid links, code, comments, footnotes and [[wiki]] stay silent"
+grep -qx "rc=0" <<< "$out" && ok "dead-link: a warning, the exit code stays 0" || no "dead-link exit code ($out)"
+km validate --root "$D" >/dev/null 2>&1 && ok "dead-link: km validate exits 0" || no "dead-link: km validate exit code"
+[ "$(dl "$D/a/sub")" = "$out" ] && ok "dead-link: a run from a subfolder finds the same" || no "dead-link: subfolder run ($(dl "$D/a/sub"))"
+outf="$(dl "$D" README.md)"
+[ "$outf" = "$(printf 'README.md | links missing a/gone11.md\nrc=0')" ] && ok "dead-link: a per-file run checks only the given file" || no "dead-link per file ($outf)"
+rm -rf "$D"
+# index: a target without .md credits the doc of that name before a folder the root fallback finds
+D="$(mktemp -d)"; mkdir -p "$D/x" "$D/y" "$D/tools" "$D/z" "$D/w"
+printf 'meta: {profile: idx}\ncheck_index: true\n' > "$D/schema.local.yaml"
+doc "$D/x/tools.md"; doc "$D/y/tools.md"; doc "$D/tools/t.md"; idx "$D/tools/_index.md" '# Tools\n- [T](t.md)'
+idx "$D/x/_index.md" '# X\n- [[tools]]'; idx "$D/y/_index.md" '# Y\n- [T](tools)'
+doc "$D/z/zz.md"; idx "$D/z/_index.md" '# Z\n- [Z](zz.md\n  "a title")'          # a title on the next line
+doc "$D/w/Page (2024).md"; idx "$D/w/_index.md" '# W\n- [[Page (2024)]]'           # ( ) in a wiki target is no title
+( cd "$D" && git init -q && git add -A )
+out="$(cd "$D" && km validate 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && ! has "does not link x/tools.md" && ! has "does not link y/tools.md"; } \
+  && ok "index: a doc by its name wins over a folder of that name" || no "index: doc over folder ($rc: $out)"
+{ ! has "does not link z/zz.md" && ! has "dead-link"; } && ok "index: a link with its title on the next line credits the doc" || no "index: next-line title ($out)"
+! has "does not link w/Page (2024).md" && ok "index: [[Page (2024)]] credits its doc" || no "index: wiki parens ($out)"
+rm -rf "$D"
+
+
 summary index-smoke || exit 1
