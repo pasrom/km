@@ -26,7 +26,8 @@ from km.paths import (ahead_behind, command, git, git_path, left_out, printable,
                       submodule_config)
 from km.pins import read_pins, version_key
 from km import remotes, runner
-from km.remotes import Upstream, find_upstream, first_line, gh, github_repo, no_login, no_network, remote, shown
+from km.remotes import (Upstream, find_upstream, first_line, gh, github_repo, no_login, no_network, remote,
+                        resolve_url, shown)
 
 UV_DOCS = "https://docs.astral.sh/uv/getting-started/installation/"
 NETWORK_FIX = "check the network or VPN; --offline skips the network checks"
@@ -171,19 +172,6 @@ def check_worktree(root: Path) -> None:
                "commit them, contribute them, or discard them; `git status` lists them")
     else:
         report("ok", "no uncommitted changes")
-
-
-def resolve_url(url: str, origin: str) -> str:
-    """A relative submodule URL (./x, ../x) resolved against origin, as git does; others unchanged."""
-    if not url.startswith(("./", "../")) or not origin:
-        return url
-    base = origin.rstrip("/")
-    for part in url.split("/"):
-        if part == "..":
-            base = base.rsplit("/", 1)[0] if "/" in base.split("://")[-1] else base.rsplit(":", 1)[0]
-        elif part not in (".", ""):
-            base = f"{base}/{part}"
-    return base
 
 
 def check_submodules(root: Path, origin: str, offline: bool) -> None:
