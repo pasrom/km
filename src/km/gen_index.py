@@ -13,6 +13,8 @@ can tell an index this script created from one written by hand; a folder whose n
 (SEGMENT) gets none and still fails the run, and so does one with anything in the way. The km-gen-index
 pre-commit hook runs it at every commit, so a rewritten or created index fails the commit until it is
 staged too (the hook stages nothing: on `git commit <paths>` that would land in a temporary index).
+It also fills the generated mounted-repositories table in CONVENTIONS.md from .gitmodules (km.ownership),
+where the file has its markers; with broken markers it writes nothing at all and exits 1.
 
 Run:  km gen-index [--root DIR] [--check]
 """
@@ -25,6 +27,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from km import ownership
 from km.common import INDEX_SKIP, ROOT, SKIP, fm_text, folder_of, is_article, read, split_frontmatter, tracked_md
 from km.paths import git, write_text
 
@@ -159,13 +162,26 @@ def regenerate(check: bool = False, create: bool = False, stage: bool = True) ->
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="km gen-index", allow_abbrev=False,
-                                 description="Regenerate the '## Documents' list in every _index.md, creating a missing one.")
-    ap.add_argument("--check", action="store_true", help="write nothing; exit 1 if an _index.md would change")
+                                 description="Regenerate the '## Documents' list in every _index.md, creating a missing one, and the "
+                                             "mounted-repositories table in CONVENTIONS.md.")
+    ap.add_argument("--check", action="store_true", help="write nothing; exit 1 if an _index.md or CONVENTIONS.md would change")
     check = ap.parse_args().check
     # under pre-commit, staging would go to the hook's temporary index on a `git commit <paths>`: the
     # commit fails instead, as on a rewritten list, and the next run takes the scaffold back
     hook = bool(os.environ.get("PRE_COMMIT"))
+    conv = ownership.read(ROOT)
+    for name in ownership.linked(ROOT):
+        print(f"km gen-index: {name} is a symbolic link: the ownership table in {ownership.FILE} is left alone")
+    if conv is not None and (why := ownership.marker_problem(conv)):
+        print(f"km gen-index: {ownership.FILE}: {why}")
+        return 1
     changed, unindexed, created = regenerate(check, create=True, stage=not hook)
+    # the ownership table: a commit under the hook fails on its rewrite, like pre-commit on any modified file
+    owned = conv is not None and (new := ownership.render(conv, ROOT)) is not None and new != conv
+    if owned:
+        changed.append(ownership.FILE)
+        if not check:
+            ownership.write(ROOT, new)
     if created:
         print(f"km gen-index: created {'' if hook else 'and staged '}{len(created)}: {', '.join(created)}"
               f"{'; stage them and commit again' if hook else ''}; an intro above '## Documents' goes in a "
@@ -186,7 +202,7 @@ def main() -> int:
         print(f"km gen-index: these folders have docs or a subfolder index to list but no _index.md; {fix}:")
         for u in unindexed:
             print(f"  - {u}")
-    return 1 if (check and changed) or unindexed or (hook and created) else 0
+    return 1 if (check and changed) or unindexed or (hook and (created or owned)) else 0
 
 
 if __name__ == "__main__":
