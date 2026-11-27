@@ -1036,13 +1036,40 @@ acc "$L/d/page.md" internal '[a](p(1).md) [b](<ok.md>) <img src=ok.md> <img data
 ( cd "$L" && git init -q && git add -A )
 out="$(km validate --root "$L" "$L/d/page.md" 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && ! out_has gate-bergab && ! out_has dead-link; } && ok "bergab: the dead-link link forms add no finding" || no "bergab link forms ($rc: $out)"
-draft "$L/d/w(1).md"; ( cd "$L" && git add -A )
-for form in '[a](w(1).md)' '[a](<wip.md> "t")' '<img src=wip.md>' '[a](wip.md
+draft "$L/d/w(1).md"; draft "$L/d/w x.md"; ( cd "$L" && git add -A )
+# w%20x.md: the gate reads a link as the dead-link pass does (link_path), %-escapes decoded; [[./wip]] and
+# [[wip#sec]]: a [[wiki]] target is tried as <target>.md, its anchor dropped; its own resolver missed all three
+for form in '[a](w(1).md)' '[a](w%20x.md)' '[[./wip]]' '[[wip#sec]]' '[a](<wip.md> "t")' '<img src=wip.md>' '[a](wip.md
 "a title")'; do
   acc "$L/d/f.md" internal "$form"
   out="$(km validate --root "$L" "$L/d/f.md" 2>&1)"; rc=$?
   { [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "unfinished (draft) d/w"; } \
     && ok "bergab: a draft linked as ${form%%$'\n'*}... is found" || no "bergab: draft via $form ($rc: $out)"
+done
+# frontmatter values are names as written, not Markdown link text: a ref is cut at its first @ (as resolve_ref
+# cuts it), "(old)" is part of the name, not a title
+draft "$L/d/notes (old).md"; ( cd "$L" && git add -A )
+for rv in '"d/wip.md@main"' '"d/wip.md@v1.2"' '"notes (old)"'; do
+  printf -- '---\ntype: concept\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: accepted\naudience: internal\ntags: [t]\nowner: X\napproved_by: X\napproved_at: 2026-08-26\nrelated: [%s]\n---\nx\n' "$rv" > "$L/d/f.md"
+  out="$(km validate --root "$L" "$L/d/f.md" 2>&1)"; rc=$?
+  { [ "$rc" = 1 ] && out_has "gate-bergab" && out_has "unfinished (draft) d/"; } \
+    && ok "bergab: a draft named in related: [$rv] is found" || no "bergab: related $rv ($rc: $out)"
+done
+if [ "$SEP" = ":" ]; then   # a ? in a wiki name is part of the name, no query; Windows holds no ? in a file name
+  draft "$L/d/why? x.md"; ( cd "$L" && git add -A ); acc "$L/d/f.md" internal 'see [[why? x]]'
+  out="$(km validate --root "$L" "$L/d/f.md" 2>&1)"; rc=$?
+  { [ "$rc" = 1 ] && out_has "unfinished (draft) d/why? x.md"; } && ok "bergab: [[why? x]] is the doc why? x.md" || no "bergab: [[why? x]] ($rc: $out)"
+fi
+# a [[name]] is a path first: the doc's own folder before the first doc of that name elsewhere
+mkdir -p "$L/a"; acc "$L/a/dup.md" internal a; draft "$L/d/dup.md"; ( cd "$L" && git add -A ); acc "$L/d/f.md" internal 'see [[dup]]'
+out="$(km validate --root "$L" "$L/d/f.md" 2>&1)"; rc=$?
+{ [ "$rc" = 1 ] && out_has "unfinished (draft) d/dup.md"; } && ok "bergab: [[dup]] is the doc of its own folder before a/dup.md" || no "bergab: [[dup]] own folder ($rc: $out)"
+# a name longer than the file system holds is no target, not a crash: an unclosed [[ before a long text, a long file name
+long=$(printf 'x%.0s' $(seq 1 300))
+for form in "an unclosed [[ $long" "[a](${long}.png)"; do
+  acc "$L/d/f.md" internal "$form"
+  out="$(km validate --root "$L" "$L/d/f.md" 2>&1)"; rc=$?
+  { [ "$rc" = 0 ] && ! out_has Traceback && ! out_has gate-bergab; } && ok "bergab: ${form:0:16}... of 300 bytes is no target, no crash" || no "bergab: long name ($rc: $out)"
 done
 rm -rf "$L"
 
