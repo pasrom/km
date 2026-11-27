@@ -76,3 +76,13 @@ brain_with_two_peers(){
   git -C "$1" "${G[@]}" submodule add -q "$T/beta" brains/beta && git -C "$1" "${G[@]}" submodule add -q "$T/gamma" brains/gamma
   git -C "$1" "${G[@]}" commit -q -m "chore(brains): mount beta and gamma"
 }
+# restate_brain DIR: a brain whose accepted docs/pump-controller.md states two values of the pump
+# controller; two docs in review restate them without linking it: a note with one value right and
+# the other one digit off, and a decision that quotes the rating it was based on, which differs
+restate_brain(){
+  brain "$1" EV
+  doc "$1" docs/pump-controller.md "Pump controller" accepted "The pump controller's supply input is rated for 3.5 A continuous. The controller shuts the pump down when its heatsink reaches 85 degrees Celsius."
+  doc "$1" inbox/coolant-pump-wiring.md "Coolant pump wiring" review "The coolant pump is fed from the 24 V auxiliary rail through the pump controller. Fuse the feed above the controller's 3.5 A continuous rating. The controller stops the pump when its heatsink reaches 95 degrees Celsius, so mount it away from the inverter."
+  printf -- '---\ntitle: Pump controller for the coolant loop\ntype: decision\nstatus: review\nauthor: EV\ndate: 2026-01-12\ntags: [eval]\n---\n\n# Pump controller for the coolant loop\n\nOn 2026-01-12 we chose the pump controller for the coolant loop: its supply rating of 3.2 A, as given in the offer we had then, covers the pump'"'"'s 2.8 A draw.\n' > "$1/inbox/coolant-pump-decision.md"
+  git -C "$1" "${G[@]}" add -A && git -C "$1" "${G[@]}" commit -q -m "docs: pump controller and coolant pump"
+}
