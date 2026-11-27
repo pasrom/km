@@ -1563,8 +1563,8 @@ git init -q "$F/own-peer" && git -C "$F/own-peer" "${G[@]}" commit -q --allow-em
 git -C "$W" init -q && git -C "$W" "${G[@]}" submodule add -q "$F/own-peer" brains/peer && git -C "$W" config -f .gitmodules submodule.brains/peer.km-owns "Pump timing"
 git -C "$W" add -A && git -C "$W" "${G[@]}" commit -qm init
 cp "$W/CONVENTIONS.md" "$F/own.before"
-out="$(km upgrade --root "$W" 2>&1)"
-{ ! grep -q "Ownership" "$W/CONVENTIONS.md" && ! out_has "Ownership"; } && ok "upgrade to this km (1.26.0 or below as the target) adds no ownership section" || no "ownership upgrade below the crossing ($out)"
+out="$(km upgrade --root "$W" --pin v1.11.0 2>&1)"
+{ ! grep -q "Ownership" "$W/CONVENTIONS.md" && ! out_has "Ownership"; } && ok "an upgrade that does not cross 1.26.0 adds no ownership section" || no "ownership upgrade below the crossing ($out)"
 out="$(km upgrade --root "$W" --pin v1.99.0 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && out_has "added the '## Ownership' section to CONVENTIONS.md" && [ "$(grep -c '^## Ownership$' "$W/CONVENTIONS.md")" = 1 ] \
   && grep -qx '| `brains/peer` | .* | default | Pump timing |' "$W/CONVENTIONS.md" && (cd "$W" && km gen-index --check >/dev/null 2>&1) \
