@@ -261,6 +261,16 @@ git -C "$P" init -q && git -C "$P" add -A
 { grep -q '^| `notes/` | Loose notes |$' "$P/CONVENTIONS.md" && [ -f "$P/inbox/_index.md" ] && grep -q "$PINH" "$P/.pre-commit-config.yaml" \
   && [ ! -e "$P/.github" ] && grep -q "eol=lf" "$P/.gitattributes"; } && ok "personal init: conventions, inbox, pinned hook, .gitattributes, no CI" || no "personal init: conventions, inbox, pinned hook, .gitattributes, no CI"
 out="$(km validate --root "$P" 2>&1)"; echo "$out" | grep -q "ERRORS: 0" && ok "personal brain validates clean" || no "personal brain validates clean ($out)"
+cp -R "$P" "$F/pg" && git -C "$F/pg" init -q && git -C "$F/pg" add -A
+out="$(cd "$F/pg" && km gen-index --check 2>&1 && km validate 2>&1)"
+{ out_has "WARNINGS: 0" && out_has "ERRORS: 0"; } && ok "personal brain in git: its ownership table is fresh and validate warns nothing" || no "personal ownership table ($out)"
+kmpy - "$REPO/src/km/templates" <<'PY' && ok "both CONVENTIONS templates carry km.ownership.SECTION verbatim, which render leaves as it is with no mount" || no "templates and SECTION"
+import sys, pathlib, km.ownership as o
+for name in ("CONVENTIONS.template.md", "team/CONVENTIONS.team.template.md"):
+    text = (pathlib.Path(sys.argv[1]) / name).read_text(encoding="utf-8")
+    assert text.count(o.SECTION) == 1, name
+assert o.SECTION.endswith("\n\n" + o.table([]) + "\n\n" + o.END + "\n")
+PY
 mkdir -p "$F/p2" && git -C "$F/p2" init -q && echo "# mine" > "$F/p2/CLAUDE.md" && printf '\xef\xbb\xbf*.bin binary\n' > "$F/p2/.gitattributes"
 out="$(km init "$F/p2" --initials PP 2>&1)"
 { grep -qx "# mine" "$F/p2/CLAUDE.md" && [ "$(cat "$F/p2/.gitattributes")" = $'\xef\xbb\xbf*.bin binary' ] && out_has "sets no line ending"; } \

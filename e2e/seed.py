@@ -295,6 +295,7 @@ def _build(b: Builder, out: Path, date: datetime.date, mount: tuple[str, str] | 
                                          f"\turl = {url}\n", encoding="utf-8")
         (out / "mounted" / "notes").mkdir(parents=True)   # an empty checkout: `git add -A` keeps the gitlink
         b.run("git", "update-index", "--add", "--cacheinfo", f"160000,{sha},mounted/notes")
+        b.km("gen-index")                                 # its row in the ownership table of CONVENTIONS.md
         b.commit("chore(mount): mount the notes repository")
 
     b.run("git", "add", "-A")
