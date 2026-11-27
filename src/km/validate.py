@@ -709,6 +709,21 @@ CODE_NEEDLES = [(c, n, re.compile(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])"))
                 for c in PROJECT_CODES if (n := _code_text(_norm(c)).strip())]
 
 
+def _own_mount_cells_blanked(text: str) -> str:
+    """CONVENTIONS.md with the Mount cell of each mount under project_prefix blanked inside the generated
+    ownership table: only the cell km writes for a path that is a gitlink in the index, which names its own
+    project folder as .gitmodules does. Every other cell, the text around it and a row for a path that is no
+    mount are scanned as usual."""
+    found = ownership.rows(ROOT)
+    if not found or not (span := ownership.generated_span(text)):
+        return text
+    block = text[span[0]:span[1]]
+    for path, *_ in found:
+        if path.startswith(PROJECT_PREFIX) and "/" in path[len(PROJECT_PREFIX):]:
+            block = block.replace(f"| {ownership._cell(path, code=True)} |", "|  |", 1)
+    return text[:span[0]] + block + text[span[1]:]
+
+
 def _term_errors(rel: str, scan: str) -> list[tuple[str, str, str]]:
     return [("gate-leak:term", rel, f"forbidden term {_redact(t)}") for t, n in TERM_NEEDLES if n in scan]
 
@@ -1096,6 +1111,8 @@ def main() -> int:
             if _rest is not None and "/" not in _rest:
                 continue                              # a hub file such as projects/_index.md lists every code
             _own = _rest.split("/", 1)[0] if _rest else None
+            if _sf == ownership.FILE and (_conv := ownership.read(ROOT)) is not None:   # as gen-index reads it
+                _stext = _norm(_own_mount_cells_blanked(_conv))
             _scan = _code_text(_stext)
             for _c, _n, _rx in CODE_NEEDLES:
                 if _c != _own and _n in _scan and _rx.search(_scan):   # substring first: the regex is slow

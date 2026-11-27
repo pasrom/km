@@ -339,6 +339,22 @@ V "$T/projects/_index.md" && ok "project_prefix: the hub index listing every cod
 printf -- '---\ndescription: b\n---\n# bms\nsee acme01\n' > "$T/bms/_index.md"
 V "$T/bms/_index.md" && no "project_prefix: a code in another folder's _index.md blocked" || ok "project_prefix: a code in another folder's _index.md blocked"
 rm -f "$T/bms/_index.md"
+# a mount under its own project folder: its path in km's generated ownership table is no leak, the rest is
+cp "$T/CONVENTIONS.md" "$T.conv.keep" 2>/dev/null || :
+git init -q "$T.mnt" && git -C "$T.mnt" "${G[@]}" commit -q --allow-empty -m one
+git -C "$T" -c protocol.file.allow=always submodule add -q "$T.mnt" projects/acme01/manual
+printf '\n## Ownership\n\n<!-- km:ownership:begin (generated) -->\n<!-- km:ownership:end -->\n' >> "$T/CONVENTIONS.md"
+(cd "$T" && km gen-index >/dev/null 2>&1); git -C "$T" add -A CONVENTIONS.md .gitmodules
+V "$T/CONVENTIONS.md" && ok "project_prefix: a mount's own path in the generated ownership table passes" || no "project_prefix: a mount's own path in the generated ownership table passes"
+cp "$T/CONVENTIONS.md" "$T.conv.gen"
+sed -i.bak 's/| default |/| default acme01 |/' "$T/CONVENTIONS.md"; git -C "$T" add CONVENTIONS.md
+V "$T/CONVENTIONS.md" && no "project_prefix: a code hand-written into the generated table still blocked" || ok "project_prefix: a code hand-written into the generated table still blocked"
+cp "$T.conv.gen" "$T/CONVENTIONS.md"; sed -i.bak 's/^<!-- km:ownership:end -->/| `projects\/acme01\/other` | `x` | default | x |\n&/' "$T/CONVENTIONS.md"; git -C "$T" add CONVENTIONS.md
+V "$T/CONVENTIONS.md" && no "project_prefix: a row for a path that is no mount still blocked" || ok "project_prefix: a row for a path that is no mount still blocked"
+cp "$T.conv.gen" "$T/CONVENTIONS.md"; printf '\nThe acme01 notes.\n' >> "$T/CONVENTIONS.md"; git -C "$T" add CONVENTIONS.md
+V "$T/CONVENTIONS.md" && no "project_prefix: a code beside the ownership table still blocked" || ok "project_prefix: a code beside the ownership table still blocked"
+git -C "$T" rm -q -f projects/acme01/manual; git -C "$T" config --remove-section submodule.projects/acme01/manual 2>/dev/null || :
+if [ -f "$T.conv.keep" ]; then cp "$T.conv.keep" "$T/CONVENTIONS.md"; else rm -f "$T/CONVENTIONS.md"; fi; rm -f "$T/CONVENTIONS.md.bak" "$T/.gitmodules"; git -C "$T" add -A CONVENTIONS.md .gitmodules
 acc "$T/bms/pc7.md" internal "see [log](ACME01_bench_log.md)"
 V "$T/bms/pc7.md" && no "project_prefix: a code joined by '_' in a file name blocked" || ok "project_prefix: a code joined by '_' in a file name blocked"
 acc "$T/bms/pc8.md" internal "run log_acme01 again"
