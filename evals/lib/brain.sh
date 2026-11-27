@@ -52,16 +52,19 @@ review_brain(){
   doc "$1" inbox/thermal-derating.md "Thermal derating curve" review "Above 45 degrees Celsius the charge current is reduced by 2 percent per degree."
   git -C "$1" "${G[@]}" add -A && git -C "$1" "${G[@]}" commit -q -m "docs(inbox): thermal derating"
 }
-# brain_with_peer DIR: a brain that mounts a peer brain under brains/peer; the peer holds one accepted doc
+# brain_with_peer DIR: a brain that mounts a peer brain under brains/peer, its row in the Ownership table of
+# CONVENTIONS.md generated in the same commit; the peer holds one accepted doc
 brain_with_peer(){
   local T; T="$(mktemp -d)"
   brain "$T/peer" PE
   doc "$T/peer" docs/pump-timing.md "Pump timing" accepted "The coolant pump starts 850 ms after the main contactor closes."
   git -C "$T/peer" "${G[@]}" add -A && git -C "$T/peer" "${G[@]}" commit -q -m "docs: pump timing"
   brain "$1" EV
-  git -C "$1" "${G[@]}" submodule add -q "$T/peer" brains/peer && git -C "$1" "${G[@]}" commit -q -m "chore(brains): mount peer"
+  git -C "$1" "${G[@]}" submodule add -q "$T/peer" brains/peer && km gen-index --root "$1" >/dev/null
+  git -C "$1" "${G[@]}" add CONVENTIONS.md && git -C "$1" "${G[@]}" commit -q -m "chore(brains): mount peer"
 }
-# brain_with_two_peers DIR: a brain that mounts brains/beta and brains/gamma; only gamma, the second,
+# brain_with_two_peers DIR: a brain that mounts brains/beta and brains/gamma (their rows in the Ownership
+# table of CONVENTIONS.md generated in the same commit); only gamma, the second,
 # holds the dew-point alarm fact (an accepted doc). Their origins are local paths, so km search can
 # read no open pull request of any of them.
 brain_with_two_peers(){
@@ -74,6 +77,7 @@ brain_with_two_peers(){
   git -C "$T/gamma" "${G[@]}" add -A && git -C "$T/gamma" "${G[@]}" commit -q -m "docs: dew-point alarm"
   brain "$1" EV
   git -C "$1" "${G[@]}" submodule add -q "$T/beta" brains/beta && git -C "$1" "${G[@]}" submodule add -q "$T/gamma" brains/gamma
+  km gen-index --root "$1" >/dev/null && git -C "$1" "${G[@]}" add CONVENTIONS.md
   git -C "$1" "${G[@]}" commit -q -m "chore(brains): mount beta and gamma"
 }
 # restate_brain DIR: a brain whose accepted docs/pump-controller.md states two values of the pump
@@ -85,4 +89,19 @@ restate_brain(){
   doc "$1" inbox/coolant-pump-wiring.md "Coolant pump wiring" review "The coolant pump is fed from the 24 V auxiliary rail through the pump controller. Fuse the feed above the controller's 3.5 A continuous rating. The controller stops the pump when its heatsink reaches 95 degrees Celsius, so mount it away from the inverter."
   printf -- '---\ntitle: Pump controller for the coolant loop\ntype: decision\nstatus: review\nauthor: EV\ndate: 2026-01-12\ntags: [eval]\n---\n\n# Pump controller for the coolant loop\n\nOn 2026-01-12 we chose the pump controller for the coolant loop: its supply rating of 3.2 A, as given in the offer we had then, covers the pump'"'"'s 2.8 A draw.\n' > "$1/inbox/coolant-pump-decision.md"
   git -C "$1" "${G[@]}" add -A && git -C "$1" "${G[@]}" commit -q -m "docs: pump controller and coolant pump"
+}
+# ownership_brain DIR: restate_brain plus docs/pump-controller-ratings.md, which a row of the Ownership table in
+# CONVENTIONS.md names as the home of the pump controller's ratings; docs/pump-controller.md states them too
+ownership_brain(){
+  restate_brain "$1"
+  doc "$1" docs/pump-controller-ratings.md "Pump controller ratings" accepted $'Supply input: 3.5 A continuous, 6 A peak for 100 ms.\n\nThermal shutdown: the controller stops the pump when its heatsink reaches 85 degrees Celsius and restarts it below 70 degrees Celsius.'
+  kmpy - "$1/CONVENTIONS.md" <<'PY'
+import sys
+p = sys.argv[1]; t = open(p, encoding="utf-8").read(); head = "|-------|------|-------|\n"
+row = ("| Pump controller ratings (supply current, thermal shutdown) | "
+       "[docs/pump-controller-ratings.md](docs/pump-controller-ratings.md) | from the controller datasheet |\n")
+assert head in t, "the Ownership section of CONVENTIONS.md"
+open(p, "w", encoding="utf-8", newline="\n").write(t.replace(head, head + row, 1))
+PY
+  git -C "$1" "${G[@]}" add -A && git -C "$1" "${G[@]}" commit -q -m "docs: pump controller ratings, their home in the ownership table"
 }
