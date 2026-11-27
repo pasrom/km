@@ -40,9 +40,10 @@ A pin moves only on a branch and through a pull request, never on `main`. When t
 
 ## Brain management
 
-- `brain add <url> [name]` → `git submodule add <url> brains/<name>`, validate CONVENTIONS.md exists, `git config submodule.recurse true`, commit
+- `brain add <url> [name]` → `git submodule add <url> brains/<name>`, validate CONVENTIONS.md exists, `git config submodule.recurse true`; offer to say what it holds (`git config -f .gitmodules submodule.brains/<name>.km-owns "<topics>"`), then `km gen-index` and `git add .gitmodules CONVENTIONS.md` (the key edits `.gitmodules` after `submodule add` staged it), commit
 - `brain list` → table: name, URL, commit, last updated. Discover shared resources from `.gitmodules` and list them in a separate section
-- `brain remove <name>` → confirm, `git submodule deinit -f` + `git rm -f`, commit
+- `brain remove <name>` → confirm, `git submodule deinit -f` + `git rm -f`, `km gen-index` and `git add CONVENTIONS.md`, commit
+- Where `CONVENTIONS.md` has the generated mounted-repositories table, it lists every mount: a commit that adds, removes or renames one, or changes its url, branch or `km-owns`, carries `.gitmodules` and the regenerated `CONVENTIONS.md` together: without the regenerated table `km validate` warns `ownership-stale`, and in a team brain the km-gen-index hook and CI fail it. A pin bump changes nothing there
 - `brain reset <name>` → put a drifted submodule back at its pin (parent shows `+` / ` m`, or km sync reports it ahead or with changes). (1) `git -C brains/<name> status` and SHOW it; STOP if there are dirty files — they may be unpushed work, never discard them silently. (2) on OK: `git submodule update --init --checkout --force brains/<name>` (back to the pinned commit) and `git -C brains/<name> worktree prune`. (3) delete leftover local `fix/km-*` / `docs/km-*` branches whose PR has merged. With the throwaway-clone `brain fix` below, new drift no longer happens
 
 ## Foreign-brain corrections (`brain fix @<name> ...`)
