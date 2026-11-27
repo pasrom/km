@@ -168,5 +168,33 @@ else echo "  skip: no symbolic links here"; fi
 restore
 gi; git -C "$OW" add -A && git -C "$OW" "${G[@]}" commit -q --allow-empty -m restored; gi --check
 [ "$rc" = 0 ] && ok "ownership: back to the committed state, fresh" || no "ownership restored ($rc: $out)"
+# validate: the five warnings, each on its condition only; a dead row link is dead-link; exit 0
+vout(){ out="$(cd "$OW" && km validate 2>&1)"; rc=$?; }
+vout; { [ "$rc" = 0 ] && ! has "ownership-" && ! has "nope.md"; } \
+  && ok "ownership: a fresh table with every mount stated warns nothing; a mount's own dead links are not the brain's" || no "ownership validate clean ($rc: $out)"
+kmpy - "$OW/CONVENTIONS.md" <<'PY'
+import sys
+p = sys.argv[1]; t = open(p, encoding="utf-8").read()
+rows = ("| Pump ratings | [docs/pump.md](docs/pump.md) | datasheet |\n| Peer timing | [peer](brains/peer/) | |\n"
+        "| Resources | [res](tools/res2/) | |\n| Coil | https://example.com/coil | |\n\n<!-- an example:\n| Topic | Home |\n|---|---|\n| Example | no home here |\n-->\n")
+open(p, "w", encoding="utf-8", newline="\n").write(t.replace("|-------|------|-------|\n", "|-------|------|-------|\n" + rows, 1))
+PY
+git -C "$OW" "${G[@]}" commit -qam rows
+vout; { [ "$rc" = 0 ] && ! has "ownership-" && ! has "dead-link"; } && ok "ownership: hand rows with links and URLs, one to a mount root, and a row in a comment warn nothing" || no "ownership hand rows ($rc: $out)"
+git -C "$OW" submodule deinit -q -f tools/res2
+vout; ! has "dead-link" && ok "ownership: a link to a mount root not checked out is no dead link" || no "ownership unchecked mount ($out)"
+kmpy - "$OW/CONVENTIONS.md" <<'PY'
+import sys
+p = sys.argv[1]; t = open(p, encoding="utf-8").read()
+open(p, "w", encoding="utf-8", newline="\n").write(t.replace("| Coil | https://example.com/coil | |\n",
+    "| Coil | ask the bench team | |\n| pump  RATINGS | [x](docs/gone.md) | |\n", 1))
+PY
+git -C "$OW" config -f .gitmodules --unset submodule.brains/peer.km-owns; git -C "$OW" add -A
+vout; { [ "$rc" = 0 ] && has "ownership-home" && has "'Coil' names no home" && has "ownership-duplicate" && has "'pump  RATINGS' has more than one row" \
+  && has "ownership-stale" && has "ownership-topic" && has "the mount brains/peer does not say what it holds" && has "links missing docs/gone.md" && ! has "ownership-markers"; } \
+  && ok "ownership: home, duplicate, stale and topic warn on their condition, a dead row link is dead-link, exit 0" || no "ownership warnings ($rc: $out)"
+printf '<!-- km:ownership:begin -->\n' >> "$OW/CONVENTIONS.md"
+vout; { [ "$rc" = 0 ] && has "ownership-markers" && ! has "ownership-stale"; } && ok "ownership: a second begin line is ownership-markers, not stale too" || no "ownership markers ($rc: $out)"
+out="$(cd "$OW" && km validate CONVENTIONS.md docs/pump.md 2>&1)"; ! has "ownership-" && ok "ownership: per-file runs skip the table" || no "ownership per-file ($out)"
 
 summary ownership-smoke || exit 1

@@ -54,6 +54,13 @@ inside a mount. Not checked: URLs, an anchor alone (and the anchor part of a lin
 links in code (indented and fenced blocks, code spans) or HTML comments, [[wiki]] links, and anything
 outside a git work tree. With FILEs, those files are checked against the whole index.
 
+The `## Ownership` section of CONVENTIONS.md (km.ownership), in whole-repo runs only: `ownership-stale`
+(the generated mounted-repositories table differs from .gitmodules), `ownership-markers` (its begin or
+end line missing, doubled or out of order), `ownership-topic` (a mount without km-owns),
+`ownership-home` (a row of the hand-written Topic table with no link and no URL) and
+`ownership-duplicate` (a topic, case-folded, in two rows): all WARNINGS. A dead link in a row is
+`dead-link`.
+
 A served doc whose content changed since its approval (`approved_digest`, see km.common.DIGEST_FIELDS)
 is `approval-stale`: an ERROR with the gate on (a team brain), a WARNING without it.
 
@@ -96,6 +103,7 @@ from pathlib import Path
 import yaml
 
 from km.common import APPROVAL_DEFAULT, APPROVAL_FIELDS, APPROVAL_LEVELS, EXEMPT, approval_default_of, approval_level, body_of, is_ai_approver, doc_at, OVERLAY, PIN, RETIRED_STATUS, ROOT, SCHEMA, approval_problem, approved_digest, colliding_keys, unquoted_scalars, as_list, brain_path, folder_of, fresh_run, known_file, pin_state, resolve_slug, submodule_prefixes, tracked_md, under, unportable_part, mount_paths, paths_by_lower, tracked_paths
+from km import ownership
 from km.cites import opaque as cite_opaque, problems as cite_problems, uncited
 from km.paths import git
 from km.pins import movable_refs
@@ -1259,6 +1267,8 @@ def main() -> int:
 
     if CHECK_INDEX and not given:   # whole-repo lint only; skip on per-file (pre-commit) runs
         check_index_tree()
+    if not given and (_conv := ownership.read(ROOT)) is not None:   # the ownership table, whole-repo only
+        warnings.extend((_c, ownership.FILE, _d) for _c, _d in ownership.problems(_conv, ROOT))
     if not given:                    # code the brain runs from a movable ref instead of a commit (see km.pins)
         for _f, _what in movable_refs(ROOT):
             warnings.append(("movable-ref", _f, f"runs {_what}, a ref that can be moved; pin it by commit "
