@@ -232,6 +232,10 @@ printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: 
 
 [^1]: nope6.md
 [label]: nope8.md is prose, not a definition
+[Status]: open
+[Topic]: cooling
+[Version]: 1.2
+[Date]: 27.11.2026
 [[nope7]] [t](../top/t.md "it'\''s") [root fallback](top/t.md)
 '"[nfd link to an nfc name]($(printf 'cafe\314\201')1.md) [nfc link to an nfd name]($(printf 'caf\303\251')2.md)" > "$D/a/good.md"
 printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\n%s\n' \
@@ -239,7 +243,9 @@ printf -- '---\ntype: note\ntitle: t\ntimestamp: 2026-08-26\nauthor: X\nstatus: 
 [7](sub\x.md) [![8](_media/gone4.png)](ok.md) <img src=gone6.png> <a href='\''gone7.md'\''>11</a>
 [12](untracked8.md) [13](../mnt/gone9.md) [14](sub\_gone12.md)
 
-[r]: gone5.md "a title"' > "$D/a/bad.md"
+[r]: gone5.md "a title"
+[s]: sub/gone15
+[Status]: open' > "$D/a/bad.md"
 printf -- '---\ntype: note\ntitle: t\ndescription: "[x](nope12.md)"\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\n%s\n' \
 '[a](ok.md (t)) [b](my doc (v2)) [c](ok.md
 "title") [d](ok.md
@@ -289,6 +295,7 @@ grep -q '^a/good2.md\|^vendor/' <<< "$out" && no "dead-link: valid forms 2 stay 
   || ok "dead-link: a paren title, a target with ( ), next-line titles, a mount inside a mount, indented and double-backtick code, an unclosed fence, the frontmatter and a skip_prefixes doc stay silent"
 dead "a/bad.md | links missing _media/gone4.png" "a dead image nested in a link"
 dead "a/bad.md | links missing gone5.md" "a dead reference definition"
+dead "a/bad.md | links missing sub/gone15" "a dead reference definition with a path and no extension"
 dead "a/bad.md | links missing gone6.png" "a dead unquoted <img src>"
 dead "a/bad.md | links missing gone7.md" "a dead <a href='...'>"
 dead "a/bad.md | links missing untracked8.md" "a file on disk git does not track"
@@ -296,8 +303,8 @@ dead "a/bad.md | links missing ../mnt/gone9.md" "a file a checked-out mount lack
 dead "a/_index.md | links missing gone10.md" "an _index.md with check_index off"
 dead "README.md | links missing a/gone11.md" "a README"
 [ "$(grep -c 'links missing gone1.md' <<< "$out")" = 1 ] && ok "dead-link: a target linked twice is one finding" || no "dead-link dedupe ($out)"
-[ "$(grep -c '^a/bad.md' <<< "$out")" = 14 ] && ok "dead-link: nothing else in the faulty doc" || no "dead-link: extra findings ($out)"
-grep -q '^a/good.md' <<< "$out" && no "dead-link: valid links stay silent ($out)" || ok "dead-link: valid links, code, comments, footnotes and [[wiki]] stay silent"
+[ "$(grep -c '^a/bad.md' <<< "$out")" = 15 ] && ok "dead-link: nothing else in the faulty doc" || no "dead-link: extra findings ($out)"
+grep -q '^a/good.md' <<< "$out" && no "dead-link: valid links stay silent ($out)" || ok "dead-link: valid links, code, comments, footnotes, label lines such as [Status]: open and [[wiki]] stay silent"
 grep -qx "rc=0" <<< "$out" && ok "dead-link: a warning, the exit code stays 0" || no "dead-link exit code ($out)"
 km validate --root "$D" >/dev/null 2>&1 && ok "dead-link: km validate exits 0" || no "dead-link: km validate exit code"
 [ "$(dl "$D/a/sub")" = "$out" ] && ok "dead-link: a run from a subfolder finds the same" || no "dead-link: subfolder run ($(dl "$D/a/sub"))"

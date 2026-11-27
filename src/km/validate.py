@@ -45,10 +45,12 @@ A tracked doc whose path has a part a clone on Windows cannot check out (km.comm
 A link in the body of any tracked .md outside skip_prefixes (an `_index.md`, a README and other exempt
 or reserved files included) whose target the git index does not list is `dead-link`: a WARNING, once per
 target and doc, with a hint where one applies (a case mismatch, a missing .md, a path that leaves the
-repository, a backslash, a path on one machine). Checked: inline and reference links, HTML src/href; a
-target resolves document-relative, then from the root (a leading / means the root), may be a file of any
-type or a folder (a trailing / a folder only), and counts below a mounted brain that is not checked out
-or below a mount inside a mount. Not checked: URLs, an anchor alone (and the anchor part of a link),
+repository, a backslash, a path on one machine). Checked: inline and reference links, HTML src/href (a
+reference definition only where its target looks like a link: <...>, a URL scheme, a / or \\, an
+#anchor, . or .., or a file extension; `[Status]: open` is a label line, not a link); a target resolves
+document-relative, then from the root (a leading / means the root), may be a file of any type or a folder
+(a trailing / a folder only), and counts below a mounted brain that is not checked out or below a mount
+inside a mount. Not checked: URLs, an anchor alone (and the anchor part of a link),
 links in code (indented and fenced blocks, code spans) or HTML comments, [[wiki]] links, and anything
 outside a git work tree. With FILEs, those files are checked against the whole index.
 
@@ -477,11 +479,19 @@ def _redact(s: str) -> str:
     return s[:2] + "…" + s[-2:] if len(s) > 6 else "…"
 
 
+_REF_LINKISH = re.compile(r"^<|^\.\.?$|[/\\#]|\.[A-Za-z][A-Za-z0-9]*$")   # <...>, . or .., a separator, an #anchor, an extension
+
+
 def _targets(text: str, pats, strip=None):
     body = (strip or _strip_code)(text)
     for pat in pats:
         for m in pat.finditer(body):
-            yield next(g for g in m.groups() if g is not None)
+            t = next(g for g in m.groups() if g is not None)
+            # a label line such as `[Status]: open` has the shape of a reference definition: only a target
+            # that looks like a link (above, or a URL scheme) is read as one; `27.11.2026` or `1.2` is none
+            if pat is REFDEF and not (_REF_LINKISH.search(t) or _SCHEME.match(t)):
+                continue
+            yield t
 
 
 def link_targets(text: str):
