@@ -154,6 +154,10 @@ jobs:
         env:
           PYTHON: python
         run: bash tests/gate_smoke.sh
+      - name: km search on Windows (the cases with a stand-in gh run on POSIX only, see GH_STANDIN)
+        env:
+          PYTHON: python
+        run: bash tests/search_smoke.sh
       # then the same uv as in smoke, for sync_smoke's launcher cases
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:

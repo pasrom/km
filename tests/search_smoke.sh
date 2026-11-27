@@ -84,11 +84,17 @@ diff_of example-org/gamma-brain 7 docs/fan.md "The fan curve is new (gnuplotter)
 # a second file whose name git quotes in the diff header (non-ASCII)
 printf 'diff --git "a/docs/l\\303\\274fter.md" "b/docs/l\\303\\274fter.md"\n--- "a/docs/l\\303\\274fter.md"\n+++ "b/docs/l\\303\\274fter.md"\n@@ -1 +1,2 @@\n+the gnuplotter fan\n' >> "$F/example-org/gamma-brain/diff/7"
 
+# On Windows Python runs `gh` only as gh.exe, so the stand-in above cannot answer there: the cases that need it
+# run on POSIX only (GH_STANDIN); the rest stop before GitHub or, on Windows only, pass --no-prs ($NOPRS). A call
+# that slips through goes to a proxy that refuses it, never to the runner's own gh on the network.
+GH_STANDIN=1; NOPRS=""
+[ "$SEP" = ":" ] || { GH_STANDIN=""; NOPRS=--no-prs; export HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9; }
 S(){ rm -f "$F/calls"; out="$(cd "$B" && FAKE="$F" PATH="$T/bin:$PATH" km search "$@" 2>&1)"; rc=$?; }
 CACHE="$(cd "$B" && cd "$(git rev-parse --git-common-dir)" && pwd)/km-search"
 nocache(){ rm -rf "${CACHE:?}"; }
 cov(){ grep -E "^$1 " <<< "$out"; }                 # a brain's coverage line
 
+if [ -n "$GH_STANDIN" ]; then
 S wombatrix
 { [ "$rc" = 0 ] && grep -qx 'pr    example-org/beta-brain#41 (alice, 2026-11-20, base main, not merged) Pump timing update' <<< "$out" \
   && grep -qx '        docs/pump.md: +The pump also drives the wombatrix valve.' <<< "$out" \
@@ -179,19 +185,20 @@ split="$(printf '%s' "$out" | kmpy -c 'import re, sys; print(re.sub("[\u2028\u20
   && [ "$(grep -c '^result:' <<< "$split")" = 1 ] && grep -q '^pr    example-org/beta-brain#41 (alice, 2026-11-20, base main, not merged) Evil?brains/x' <<< "$out"; } \
   && ok "...nor a line or paragraph separator, NEL or bidi override in one (each printed as ?)" || no "unicode injection ($out)"
 pulls example-org/beta-brain "$(pr 41 'Pump timing update' "$H1")" "$(pr 42 'Typo fix' "$H2")"
+fi
 
 doc "$B" notes/regex.md accepted 'set the a.b* option'
 doc "$B" notes/axb.md accepted 'set the axbbb option'
 doc "$B" notes/flags.md accepted 'call it with -frobnicate'
 doc "$B" notes/widget-guide.md accepted 'nothing here'
 git -C "$B" add -A && git -C "$B" commit -q -m more
-S --brain . -- 'a.b*'
+S --brain . $NOPRS -- 'a.b*'
 { grep -q '^docs  notes/regex.md:6:' <<< "$out" && ! grep -q axb <<< "$out"; } && ok "a term is a fixed string, not a pattern" || no "regex term ($out)"
-S --brain . -- -frobnicate
+S --brain . $NOPRS -- -frobnicate
 grep -q '^docs  notes/flags.md:6: call it with -frobnicate' <<< "$out" && ok "...also one that starts with a dash" || no "dash term ($rc: $out)"
-S --brain . WIDGET-guide
+S --brain . $NOPRS WIDGET-guide
 grep -qx 'docs  notes/widget-guide.md   (path matches)   (accepted)' <<< "$out" && ok "a file's path matches too" || no "path match ($out)"
-S --brain . set --max-hits 1
+S --brain . $NOPRS set --max-hits 1
 { [ "$(grep -c '^docs  notes/' <<< "$out")" = 1 ] && grep -qx 'docs  \.: 1 more files (--max-hits 1)' <<< "$out" \
   && cov . | grep -q "2 hits"; } && ok "--max-hits caps the files listed, and says how many more" || no "--max-hits ($out)"
 
@@ -200,6 +207,7 @@ S quokkaline --no-prs
   && grep -q "coverage INCOMPLETE: . prs, brains/beta prs, brains/gamma prs" <<< "$out"; } \
   && ok "--no-prs asks GitHub nothing, and coverage is incomplete (exit 3)" || no "--no-prs ($rc: $out)"
 
+if [ -n "$GH_STANDIN" ]; then
 mkdir "$T/nogh"; for c in git "$(command -v "$PY")"; do ln -s "$(command -v "$c")" "$T/nogh/"; done
 nocache; out="$(cd "$B" && PY="$(command -v "$PY")" PATH="$T/nogh" km search quokkaline 2>&1)"; rc=$?
 { [ "$rc" = 3 ] && [ "$(grep -c '^[.b].*prs NOT SEARCHED (.*gh not installed)' <<< "$out")" = 3 ] && grep -q '^docs  \[beta@' <<< "$out"; } \
@@ -213,10 +221,12 @@ assert d["complete"] is True and d["terms"] == ["quokkaline"], d
 assert b["brains/beta"]["docs"]["hits"][0]["cite"].startswith("[beta@"), b
 assert b["brains/beta"]["prs"]["state"] == "searched" and b["brains/beta"]["repo"] == "example-org/beta-brain", b' <<< "$out"; } \
   && ok "--json is JSON with terms, brains and complete" || no "--json ($rc: $out)"
+fi
 
 S; [ "$rc" = 2 ] && ok "no term is a usage error (exit 2)" || no "no term ($rc: $out)"
 S x --brain nosuch; [ "$rc" = 2 ] && ok "an unknown --brain is a usage error" || no "unknown brain ($rc: $out)"
 
+if [ -n "$GH_STANDIN" ]; then
 # --- which repository: the parent of a fork, never the fork by mistake ---
 nocache; S nothing-matches-this --brain .
 { grep -qx "example-org/alpha-brain" "$F/calls" && grep -q '"example-org/alpha-brain": ""' "$CACHE/forks.json"; } && S nothing-matches-this --brain . \
@@ -240,6 +250,7 @@ nocache; repo example-org/beta-brain upstream-org/beta-brain; pulls upstream-org
 S kiwiparent --brain beta
 { [ "$rc" = 0 ] && grep -q '^pr    upstream-org/beta-brain#9' <<< "$out"; } && ok "...a mount whose origin is a fork: its parent" || no "mount fork ($rc: $out)"
 repo example-org/beta-brain; nocache
+fi
 kmpy -c 'from km.remotes import resolve_url as r
 assert r("../../p/x.git", "git@github.com:o/r.git") == "git@github.com:p/x.git", r("../../p/x.git", "git@github.com:o/r.git")
 assert r("../x.git", "https://github.com/o/r.git") == "https://github.com/o/x.git"
@@ -250,8 +261,10 @@ assert r("https://h/x", "git@github.com:o/r.git") == "https://h/x"' && ok "a rel
 doc "$B" notes/luefter.md accepted "Der Lüfter hat die Größe 40."
 git -C "$B" add -A && git -C "$B" commit -q -m luefter
 hit='docs  notes/luefter.md:6: Der Lüfter hat die Größe 40.   (accepted)'
-out="$(cd "$B" && LC_ALL=C km search LÜFTER --brain . --no-prs 2>&1)"; one="$out"
-out="$(cd "$B" && LC_ALL=C km search GRÖSSE --brain . --no-prs 2>&1)"
+# km prints in the console's encoding (a code page on Windows): there it is asked for UTF-8, as $hit is written
+IOENC=""; [ "$SEP" = ":" ] || IOENC=utf-8
+out="$(cd "$B" && LC_ALL=C PYTHONIOENCODING="$IOENC" km search LÜFTER --brain . --no-prs 2>&1)"; one="$out"
+out="$(cd "$B" && LC_ALL=C PYTHONIOENCODING="$IOENC" km search GRÖSSE --brain . --no-prs 2>&1)"
 grep -qx "$hit" <<< "$one" && grep -qx "$hit" <<< "$out" \
   && ok "case folding beyond ASCII (LÜFTER, GRÖSSE for Größe), also under LC_ALL=C" || no "unicode fold ($out)"
 S x --brain . --no-prs; before="$(cov . | grep -o '[0-9]* files')"
@@ -259,6 +272,7 @@ rm "$B/notes/luefter.md"; S x --brain . --no-prs
 [ "$(cov . | grep -o '[0-9]* files')" = "$(( ${before% files} - 1 )) files" ] && ok "a tracked file missing here is not counted" || no "missing file ($before; $out)"
 git -C "$B" checkout -q notes/luefter.md
 
+if [ -n "$GH_STANDIN" ]; then
 # --- what a diff changes ---
 printf 'diff --git a/docs/typo.md b/docs/typo.md\n--- a/docs/typo.md\n+++ b/docs/typo.md\n@@ -1 +1,2 @@\n+++ b/kangarooz.md\ndiff --git a/old-numbat.md b/new.md\nsimilarity index 90%%\nrename from old-numbat.md\nrename to new.md\ndiff --git a/img-numbat.png b/img-numbat.png\nBinary files a/img-numbat.png and /dev/null differ\ndiff --git a/gone-numbat.md b/gone-numbat.md\ndeleted file mode 100644\n--- a/gone-numbat.md\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n' > "$F/example-org/beta-brain/diff/42"
 nocache; S kangarooz --brain beta
@@ -300,6 +314,7 @@ S docs/ --brain beta --max-hits 1
   && S docs/ --brain beta --max-hits 1 --json && kmpy -c 'import json, sys
 p = json.loads(sys.stdin.read())["brains"][1]["prs"]; assert len(p["hits"]) == 1 and p["more"] == 1, p' <<< "$out" \
   && ok "--max-hits caps the pull requests listed too, in text and JSON" || no "pr max-hits ($out)"
+fi
 S "$(printf 'a\nb')"; [ "$rc" = 2 ] && ok "a term with a line break is a usage error" || no "newline term ($rc)"
 out="$(cd "$B" && KM_ROOT="$B" kmpy -c 'import sys, km.search as s
 s.search_docs = lambda *a: 1 / 0
@@ -307,6 +322,7 @@ sys.argv = ["km search", "x", "--no-prs"]; sys.exit(s.main())' 2>&1)"; rc=$?
 { [ "$rc" = 3 ] && grep -qx "result: coverage INCOMPLETE (internal error: ZeroDivisionError)" <<< "$out"; } \
   && ok "an internal error is coverage INCOMPLETE, exit 3, never a clean 0 or 1" || no "internal error ($rc: $out)"
 
+if [ -n "$GH_STANDIN" ]; then
 # a third mount, not on GitHub; then gamma not checked out, then left out
 git init -q "$T/delta" && doc "$T/delta" a.md accepted x && git -C "$T/delta" add -A && git -C "$T/delta" commit -q -m init
 git -C "$B" submodule add -q "$T/delta" brains/delta >/dev/null 2>&1
@@ -329,6 +345,7 @@ repo example-org/alpha-brain upstream-org/alpha-brain; repo upstream-org/gamma-b
 nocache; S zebrafin --brain gamma
 grep -q '^pr    upstream-org/gamma-brain#3' <<< "$out" && ok "...its relative url resolves against the brain's parent when the brain is a fork" || no "relative on fork ($out)"
 repo example-org/alpha-brain
+fi
 
 # entries that are no mount: a path leaving brains/, a gitlink whose name could pass for a coverage line;
 # and a mount under a sub-folder whose last part is also beta
@@ -344,13 +361,14 @@ git -C "$B" config -f .gitmodules submodule.team.url https://github.com/example-
 git -C "$B" update-index --add --cacheinfo 160000,"$BETA",brains/team/beta
 for k in team/kea old/kea; do git -C "$B" config -f .gitmodules "submodule.$k.path" "brains/$k"; git -C "$B" update-index --add --cacheinfo 160000,"$BETA","brains/$k"; done
 git -C "$B" add .gitmodules && git -C "$B" commit -q -m entries
-S quokkaline
+S quokkaline $NOPRS
 { ! grep -q '^brains/evil\|^brains/\.\.\|^brains/ghost' <<< "$out" && grep -qx 'note: 3 .gitmodules entries under brains/ ignored (not a gitlink in HEAD, or a path that is not plain names)' <<< "$out" \
   && cov brains/team/beta | grep -q "docs NOT SEARCHED (not checked out"; } \
   && ok "only gitlinks under brains/ with plain names are mounts; the others are counted, never printed" || no "unsafe mounts ($out)"
 S x --brain kea; [ "$rc" = 2 ] && grep -q "ambiguous" <<< "$out" && ok "--brain by last part is a usage error where ambiguous" || no "ambiguous ($rc: $out)"
-S quokkaline --brain team/beta
+S quokkaline $NOPRS --brain team/beta
 { cov brains/team/beta | grep -q "docs NOT SEARCHED" && cov brains/beta | grep -q "not in scope (--brain beta)" && cov brains/gamma | grep -q "not in scope"; } \
   && ok "...and by its path under brains/ it is not" || no "--brain path ($rc: $out)"
 
+[ -n "$GH_STANDIN" ] || echo "  skip: the cases that need the stand-in gh (it cannot run on Windows, see GH_STANDIN)"
 summary search_smoke
