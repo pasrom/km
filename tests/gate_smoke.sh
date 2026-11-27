@@ -819,12 +819,12 @@ S="$(mktemp -d)"; mkdir -p "$S/b/k" "$S/b/scratch"; git -C "$S" init -q   # the 
 GATE_ON=$'meta: {profile: smoke}\ngate:\n  enabled: true\n'; printf '%s' "$GATE_ON" > "$S/b/schema.local.yaml"
 draft(){ printf -- '---\ntype: note\ntitle: w\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nwip\n' > "$1"; }
 draft "$S/b/k/wip.md"
-acc "$S/b/k/glob.md" internal $'[Decision]: **use-LTC6813** for the stack\n\nsee [[wi*]] and [[w?p]] and [x](w[i]p)'
+acc "$S/b/k/glob.md" internal $'[Decision]: **use-LTC6813** for the stack\n[Status]: wip\n\nsee [[wi*]] and [[w?p]] and [x](w[i]p)'
 git -C "$S" add b
 for m in "" "$S/b/k/glob.md"; do
   out="$(km validate --root "$S/b" $m 2>&1)"; rc=$?
   { [ "$rc" = 0 ] && ! out_has Traceback && ! out_has gate-bergab; } \
-    && ok "bergab: a link target with glob characters is a name, not a pattern ($([ -n "$m" ] && echo per file || echo whole repo))" \
+    && ok "bergab: a label line [Status]: wip is no link, and a link target with glob characters is a name, not a pattern ($([ -n "$m" ] && echo per file || echo whole repo))" \
     || no "bergab glob target ${m:+per file} ($rc: $out)"
 done
 draft "$S/b/scratch/foo.md"; acc "$S/b/k/sl.md" internal 'see [[foo]]'; git -C "$S" add b/k/sl.md
