@@ -196,5 +196,39 @@ vout; { [ "$rc" = 0 ] && has "ownership-home" && has "'Coil' names no home" && h
 printf '<!-- km:ownership:begin -->\n' >> "$OW/CONVENTIONS.md"
 vout; { [ "$rc" = 0 ] && has "ownership-markers" && ! has "ownership-stale"; } && ok "ownership: a second begin line is ownership-markers, not stale too" || no "ownership markers ($rc: $out)"
 out="$(cd "$OW" && km validate CONVENTIONS.md docs/pump.md 2>&1)"; ! has "ownership-" && ok "ownership: per-file runs skip the table" || no "ownership per-file ($out)"
+# --- km upgrade past 1.26.0 appends the section: over undecodable bytes, in a CRLF file, past a fenced heading,
+# beside a mounts table of the brain's own ---
+U="$(mktemp -d)"; fake_km_remote "$U/remote"; export KM_REPO_URL="file://$U/remote"
+git -C "$U/remote" "${G[@]}" commit -q --allow-empty -m three && git -C "$U/remote" tag v1.99.0
+git -C "$U/remote" tag v1.11.0 "$(git -C "$U/remote" "${G[@]}" commit-tree -p v0.9.0 -m 1.11 'v0.9.0^{tree}')"
+old_brain(){ # old_brain DIR: a personal brain pinned to km 1.11.0, its CONVENTIONS.md without the section
+  km init "$1" --initials UU --pin v1.11.0 >/dev/null && kmpy - "$1/CONVENTIONS.md" <<'PY'
+import sys, km.ownership as o
+p = sys.argv[1]; t = open(p, encoding="utf-8").read()
+open(p, "w", encoding="utf-8", newline="\n").write(t.replace(o.SECTION + "\n", "", 1))
+PY
+  git -C "$1" init -q && git -C "$1" add -A && git -C "$1" "${G[@]}" commit -qm init; }
+upg(){ out="$(km upgrade --root "$1" --pin v1.99.0 2>&1)"; rc=$?; }
+upyhas(){ kmpy - "$1/CONVENTIONS.md" "$2" <<'PY'
+import sys
+b = open(sys.argv[1], "rb").read(); t = b.decode("utf-8")
+sys.exit(not eval(sys.argv[2]))
+PY
+}
+old_brain "$U/b1"; git -C "$U/b1" "${G[@]}" submodule add -q "$OS/peer" brains/peer && printf '\tkm-owns = Pr\xfcfst\xe4nde\n' >> "$U/b1/.gitmodules"
+git -C "$U/b1" add -A && git -C "$U/b1" "${G[@]}" commit -qm mount
+upg "$U/b1"; { [ "$rc" = 0 ] && upyhas "$U/b1" 't.startswith("# CONVENTIONS.md") and "\n## Ownership\n" in t and "| Pr�fst�nde |" in t and t.endswith("<!-- km:ownership:end -->\n")'; } \
+  && ok "ownership upgrade: a byte .gitmodules does not decode: the section is added whole, with U+FFFD" || no "ownership upgrade undecodable ($rc: $out)"
+old_brain "$U/b2"; kmpy -c 'import sys; p = sys.argv[1]; t = open(p, "rb").read(); open(p, "wb").write(t.replace(b"\n", b"\r\n"))' "$U/b2/CONVENTIONS.md"
+out="$(kmpy -c 'import sys, pathlib, km.upgrade as u; print(u.add_ownership(pathlib.Path(sys.argv[1])))' "$U/b2" 2>&1)"
+upyhas "$U/b2" 'b.count(b"\n") == b.count(b"\r\n") and b"\r\n## Ownership\r\n" in b' \
+  && ok "ownership upgrade: a CRLF CONVENTIONS.md gets the section in CRLF" || no "ownership upgrade CRLF ($out)"
+upg "$U/b2"; { [ "$rc" = 0 ] && upyhas "$U/b2" 'b.count(b"\r\n") in (0, b.count(b"\n")) and t.count("## Ownership") == 1'; } \
+  && ok "ownership upgrade: the whole upgrade of it leaves one line ending and one section" || no "ownership upgrade CRLF whole ($rc: $out)"
+old_brain "$U/b3"; printf '\n```markdown\n## Ownership\n```\n\n## Mounted repositories\n\n| Name | Repo |\n|---|---|\n| peer | example |\n' >> "$U/b3/CONVENTIONS.md"
+git -C "$U/b3" add -A && git -C "$U/b3" "${G[@]}" commit -qm own
+upg "$U/b3"; { [ "$rc" = 0 ] && out_has "added the '## Ownership' section" && out_has "already has a 'Mounted repositories' heading of its own" \
+  && upyhas "$U/b3" 't.count("<!-- km:ownership:begin") == 1 and "| peer | example |" in t'; } \
+  && ok "ownership upgrade: an '## Ownership' heading in a fence is none; a mounts heading of the brain's own gets a note" || no "ownership upgrade fence and mounts ($rc: $out)"
 
 summary ownership-smoke || exit 1

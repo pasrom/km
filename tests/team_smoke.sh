@@ -1543,6 +1543,46 @@ out="$(km upgrade --root "$P" --pin v1.99.0 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && ! out_has "regenerated" && [ -z "$(git -C "$P" status --porcelain -- '*_index.md')" ]; } \
   && ok "a brain with no generated list is left alone, its schema not read" || no "index regen, personal brain ($rc: $out)"
 
+# --- upgrade past 1.26.0 adds the ownership section to CONVENTIONS.md, once ---
+strip_ownership(){ kmpy - "$1/CONVENTIONS.md" <<'PY'   # CONVENTIONS.md as a km before the section wrote it
+import sys, km.ownership as o
+p = sys.argv[1]; t = open(p, encoding="utf-8").read()
+assert o.SECTION in t
+open(p, "w", encoding="utf-8", newline="\n").write(t.replace(o.SECTION + "\n", "", 1))
+PY
+}
+same_but_link(){ kmpy - "$@" <<'PY'   # BEFORE AFTER [all]: AFTER starts with BEFORE (all: is BEFORE), but for the base-schema link upgrade moves
+import re, sys
+link = lambda s: re.sub(r"blob/[0-9a-f]+/src/km/schema\.base\.yaml\) \(km [^)]*\)", "LINK", s)
+a, b = (link(open(p, encoding="utf-8").read()) for p in sys.argv[1:3])
+sys.exit(not (b == a if sys.argv[3:] else b.startswith(a.rstrip("\n"))))
+PY
+}
+W="$F/own"; km init "$W" --team --name W --desc w --initials WW --folder d=D --pin v1.11.0 >/dev/null; strip_ownership "$W"
+git init -q "$F/own-peer" && git -C "$F/own-peer" "${G[@]}" commit -q --allow-empty -m one
+git -C "$W" init -q && git -C "$W" "${G[@]}" submodule add -q "$F/own-peer" brains/peer && git -C "$W" config -f .gitmodules submodule.brains/peer.km-owns "Pump timing"
+git -C "$W" add -A && git -C "$W" "${G[@]}" commit -qm init
+cp "$W/CONVENTIONS.md" "$F/own.before"
+out="$(km upgrade --root "$W" 2>&1)"
+{ ! grep -q "Ownership" "$W/CONVENTIONS.md" && ! out_has "Ownership"; } && ok "upgrade to this km (1.26.0 or below as the target) adds no ownership section" || no "ownership upgrade below the crossing ($out)"
+out="$(km upgrade --root "$W" --pin v1.99.0 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && out_has "added the '## Ownership' section to CONVENTIONS.md" && [ "$(grep -c '^## Ownership$' "$W/CONVENTIONS.md")" = 1 ] \
+  && grep -qx '| `brains/peer` | .* | default | Pump timing |' "$W/CONVENTIONS.md" && (cd "$W" && km gen-index --check >/dev/null 2>&1) \
+  && same_but_link "$F/own.before" "$W/CONVENTIONS.md"; } \
+  && ok "upgrade past 1.26.0 appends the ownership section once, its table filled, the text before it kept" || no "ownership upgrade ($rc: $out; $(tail -12 "$W/CONVENTIONS.md"))"
+git -C "$W" add -A && git -C "$W" "${G[@]}" commit -qm upgrade; cp "$W/CONVENTIONS.md" "$F/own.after"
+out="$(km upgrade --root "$W" --pin v1.99.0 --force 2>&1)"
+{ cmp -s "$W/CONVENTIONS.md" "$F/own.after" && ! out_has "Ownership"; } && ok "a second upgrade leaves the section byte for byte" || no "ownership upgrade twice ($out)"
+strip_ownership "$W"; git -C "$W" "${G[@]}" commit -qam "a brain past 1.26.0 without the section"; cp "$W/CONVENTIONS.md" "$F/own.none"
+out="$(km upgrade --root "$W" --pin v1.99.0 2>&1)"
+{ cmp -s "$W/CONVENTIONS.md" "$F/own.none" && ! out_has "Ownership"; } && ok "a brain already past 1.26.0 without the section is left alone" || no "ownership past the crossing ($out)"
+W2="$F/own2"; km init "$W2" --team --name W --desc w --initials WW --folder d=D --pin v1.11.0 >/dev/null; strip_ownership "$W2"
+printf '\n## Ownership\n\n| Topic | Home | Notes |\n|---|---|---|\n| Pumps | [d](d/) | |\n' >> "$W2/CONVENTIONS.md"; cp "$W2/CONVENTIONS.md" "$F/own2.before"
+git -C "$W2" init -q && git -C "$W2" add -A && git -C "$W2" "${G[@]}" commit -qm init
+out="$(km upgrade --root "$W2" --pin v1.99.0 2>&1)"
+{ same_but_link "$F/own2.before" "$W2/CONVENTIONS.md" all && out_has "has an '## Ownership' section of its own"; } \
+  && ok "upgrade past 1.26.0 leaves a hand-written '## Ownership' as it is, with a note" || no "ownership own section ($out)"
+
 # --- a team brain: a type without expiry is accepted without review_by, the others still need it ---
 signed='approved_by: DD\napproved_at: 2026-01-15\n'
 RB= TYPE=decision acc_doc "$D/d/nx-decision.md" Decided accepted "$signed"

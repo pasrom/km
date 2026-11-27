@@ -42,6 +42,12 @@
   list is left alone, its schema not read; `--force` back to an older km regenerates nothing. Like the
   digests it runs before the pins move, so a schema km cannot read stops the upgrade there and the run
   after the fix still does it.
+- CONVENTIONS.md gets km's ownership section (km.ownership), once: when the brain moves from a km at
+  or below 1.26.0 to a later one, and only where it has neither an '## Ownership' heading nor the
+  table's markers (outside fenced code). Its mounted-repositories table is filled from .gitmodules, in
+  the file's line ending. A section of the brain's own gets a note and no change, a 'Mounted
+  repositories' heading of its own a note beside the new section; a brain already past 1.26.0 is left
+  as it is.
 - A team brain's km staleness workflow (one that pins km) whose checkout step sets no fetch-depth
   (km 1.3.0 and earlier wrote it so, and some brains dropped it) gets `fetch-depth: 0`: its run
   validates after demoting, and source pins need the full history. A checkout step this edit cannot
@@ -116,6 +122,7 @@ ALLOWLIST_AFC = {"accf1785f4710b4e", "70ad9729fd426ebd"}
 KM_CI = {"4ab8b6e4f2ef1e22", "e97892ef9bb0d77f", "76dc97b57c9649e3", "0606bf55cf58761c", "a1f4566802ede1da", "2e8e021af1f8ada5", "27f59d74938e41ae"}
 DIGEST_AFTER = (1, 10, 1)   # the last km release that does not record or check approved_digest
 INDEX_AFTER = (1, 11, 0)    # the last km release whose gen-index writes a title as YAML reads it (1.10 as 1.1)
+OWNERSHIP_AFTER = (1, 26, 0)   # the last km release without the ownership section in CONVENTIONS.md
 
 
 def record_digests() -> tuple[list[str], list[str]]:
@@ -176,6 +183,30 @@ def regenerate_indexes(root: Path) -> tuple[list[str], list[str]]:
         return [], []
     from km.gen_index import regenerate
     return regenerate()[:2]
+
+
+def add_ownership(root: Path) -> list[str]:
+    """Append km's ownership section to CONVENTIONS.md, its mounted-repositories table filled, where the
+    file has neither an `## Ownership` heading nor a marker line of the table (outside fenced code): what
+    it did, or a note where it has its own section; nothing where it has the markers or is no regular
+    file (km.ownership.read)."""
+    from km import ownership
+    text = ownership.read(root)
+    if text is None or ownership.has_markers(text):
+        return []
+    if ownership.has_heading(text, ownership._SECTION):
+        return [f"{ownership.FILE} has an '## Ownership' section of its own, without km's generated table: "
+                f"left as it is; to have km list the mounts there, add the table's two marker lines by hand "
+                f"(km's CONVENTIONS template shows them), then run `km gen-index`"]
+    notes = []
+    if ownership.has_heading(text, ownership.MOUNTS_HEADING):
+        notes.append(f"{ownership.FILE} already has a 'Mounted repositories' heading of its own: km's table now "
+                     f"lists the mounts in the new '## Ownership' section; remove the hand-written one or merge it there")
+    new = text.rstrip("\n") + "\n\n" + ownership.SECTION
+    ownership.write(root, ownership.render(new, root) or new)
+    return [f"added the '## Ownership' section to {ownership.FILE}, its mounted-repositories table generated "
+            f"from .gitmodules: fill in the topics table, and `km gen-index` keeps the mounts current; check `git diff`",
+            *notes]
 
 
 USES = re.compile(r"(?m)^([ \t]*(?:-[ \t]+)?uses:[ \t]*([^@\s]+)@)\S+.*$")   # 1: up to the @, 2: the action
@@ -430,7 +461,7 @@ def main() -> int:
         """Whether this upgrade moves a pin at or below that release to a km past it (decided before the pins move)."""
         return (version_key(target) or ()) > after and any(
             (k := version_key(p.version)) and k <= after for ps in pins.values() for p in ps)
-    digest_crossing, index_crossing = crosses(DIGEST_AFTER), crosses(INDEX_AFTER)
+    digest_crossing, index_crossing, ownership_crossing = crosses(DIGEST_AFTER), crosses(INDEX_AFTER), crosses(OWNERSHIP_AFTER)
     if rewrites or not current:               # decided before any write, so a failed lookup changes nothing
         values = pin_values(target, commit)
     else:                                      # already on the release: still check it is the release's commit
@@ -683,6 +714,9 @@ def main() -> int:
         if unindexed:
             done.append(f"{', '.join(unindexed)} hold docs but no _index.md, which `km gen-index --check` fails on: "
                         f"run `km gen-index`, which creates one, or write one by hand")
+    # once, when the brain crosses to a km with the ownership table: a brain that removed the section later keeps it out
+    if ownership_crossing:
+        done += add_ownership(root)
 
     if values and (not current or stray):
         sha = values["<KM_SHA>"]
