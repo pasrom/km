@@ -46,8 +46,9 @@ def sets_no_eol(repo: Path) -> bool:
 
 def write_text(path: Path, text: str) -> None:
     """Every file km writes: UTF-8 with LF, the bytes the repo holds, also where the default is a code
-    page and CRLF (Windows)."""
-    path.write_text(text, encoding="utf-8", newline="\n")
+    page and CRLF (Windows). Encoded before the file is opened, so text that cannot be written (a lone
+    surrogate from an undecodable name) raises without emptying the file."""
+    path.write_bytes(text.encode("utf-8"))
 
 
 def git_path(root: Path, name: str) -> Path:

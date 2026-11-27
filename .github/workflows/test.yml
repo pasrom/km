@@ -25,6 +25,7 @@ jobs:
           KM_REPO_URL="file://$GITHUB_WORKSPACE" /tmp/wheel/bin/km init /tmp/wheel-brain --team --name W --desc w --initials WW --folder d=D
       - run: bash tests/gate_smoke.sh
       - run: bash tests/index_smoke.sh
+      - run: bash tests/ownership_smoke.sh
       - run: bash tests/pins_smoke.sh
       - run: bash tests/cites_smoke.sh
       - run: bash tests/doctor_smoke.sh
@@ -154,6 +155,10 @@ jobs:
         env:
           PYTHON: python
         run: bash tests/gate_smoke.sh
+      - name: the ownership table on Windows (gen-index, validate, upgrade; the symlink cases skip without symlinks)
+        env:
+          PYTHON: python
+        run: bash tests/ownership_smoke.sh
       - name: km search on Windows (the cases with a stand-in gh run on POSIX only, see GH_STANDIN)
         env:
           PYTHON: python
