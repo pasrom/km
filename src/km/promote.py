@@ -40,14 +40,13 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import re
 import sys
 from pathlib import Path
 
 import yaml
 
-from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, brain_path, default_review_by, known_file,
-                       md_named, off_roster, owners_of, owners_problem, resolve_slug, review_by_default_problem, submodule_prefixes, under, unportable,
+from km.common import (APPROVAL_FIELDS, RETIRED_STATUS, ROOT, SCHEMA, SERVED_STATUS, brain_path, default_review_by,
+                       md_named, off_roster, owners_of, owners_problem, review_by_default_problem, submodule_prefixes, under, unportable,
                        unportable_part, yaml_reason)
 from km.edit import run_gate
 from km.paths import write_text
@@ -152,58 +151,27 @@ def _stub_source(src: Path, target_rel: str, prefixes: set[str], src_fm: dict, i
     return True
 
 
-_INLINE = re.compile(r"\]\(<?([^)>]+)>?\)")
-_REFDEF = re.compile(r"(?m)^\s*\[(?!\^)[^\]]+\]:\s*(<[^>]*>|\S+)")
-_WIKI = re.compile(r"\[\[([^\]|]+)")
-_HREF = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.I)
-_SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*:", re.I)
-
-
 def _nz(v):
     """A non-empty string, else None."""
     return v if isinstance(v, str) and v.strip() else None
 
 
-def _strip_code(s: str) -> str:
-    s = re.sub(r"<!--.*?-->", " ", s, flags=re.S)
-    s = re.sub(r"```.*?```", " ", s, flags=re.S)
-    return re.sub(r"`[^`]*`", " ", s)
-
-
-def _resolves_in_repo(target_dir: Path, raw: str, wiki: bool) -> bool:
-    """Does a link target resolve to a file inside ROOT that a clone of it has (km.common.known_file:
-    a gitignored doc is none)? Doc-relative then root-relative (containment checked); a bare [[slug]]
-    also by name, as `km validate` resolves it (km.common.resolve_slug: not under skip_prefixes). A
-    scheme URL or empty target counts as external."""
-    t = str(raw).strip()
-    if t.startswith("<") and t.endswith(">"):
-        t = t[1:-1].strip()
-    if not wiki:   # a Markdown link may carry a title after its target; a wiki name may hold spaces
-        t = (t.split() or [""])[0]
-    t = t.split("#", 1)[0].split("?", 1)[0].strip()
-    if not t or _SCHEME.match(t):
-        return True
-    probe = t if t.endswith(".md") or not wiki else t + ".md"
-    if any((r := brain_path(cand)) and known_file(r) for cand in (target_dir / probe, ROOT / probe.lstrip("/"))):
-        return True
-    return wiki and resolve_slug(t) is not None
-
-
 def outward_links(body: str, target_dir: Path) -> list[str]:
-    """Links in `body` that do NOT resolve inside ROOT (dead / source-repo paths). Code stripped first."""
-    stripped = _strip_code(body)
-    out: list[str] = []
-    seen: set[str] = set()
-    for pat, wiki in ((_INLINE, False), (_REFDEF, False), (_WIKI, True), (_HREF, False)):
-        for m in pat.finditer(stripped):
-            raw = m.group(1)
-            if _resolves_in_repo(target_dir, raw, wiki):
-                continue
-            label = f"[[{raw.strip()}]]" if wiki else raw.strip()
-            if label not in seen:
-                seen.add(label)
-                out.append(label)
-    return out
+    """Links in `body` that do NOT resolve inside ROOT (dead / source-repo paths), read as `km validate`
+    reads them: its extractor (code stripped first) and link_path, with the gate's existence test (a file a
+    clone of ROOT has, a doc not yet staged included; a gitignored one is none). A URL or an #anchor
+    alone is external; a [[wiki]] target must lead to a doc (link_doc: as a path, then by name)."""
+    from km.validate import gate_known, link_doc, link_path, link_targets   # its import reads the schema
+    base = "" if (rel := brain_path(target_dir)) in (None, ".") else rel
+    out: dict[str, None] = {}
+    for raw, wiki in link_targets(body):
+        if wiki and link_doc(base, raw, wiki=True):
+            continue
+        tp, _clean, kind = link_path(base, raw, wiki, known=gate_known)
+        if kind == "external" or (tp and not wiki):
+            continue
+        out[f"[[{raw.strip()}]]" if wiki else raw.strip()] = None
+    return list(out)
 
 
 def stub_main(argv: list[str]) -> int:

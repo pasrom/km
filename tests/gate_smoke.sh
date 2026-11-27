@@ -963,6 +963,22 @@ git -C "$S" rm -rq --cached b/brains/x b/k/real.md "b/k/two words.md"; rm -rf "$
 printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [x](target.md)\n' > "$N/p.md"
 out="$(km promote --root "$S/b" xr-path-ok "$N/p.md" --folder k --author X 2>&1)"; rc=$?
 { [ "$rc" = 0 ] && [ -e "$S/b/k/xr-path-ok.md" ]; } && ok "promote cross-repo: a path link to a doc of the brain resolves" || no "promote cross-repo path link ($rc: $out)"
+# promote reads links as km validate does (its extractor and link_path): a folder link, a %-escape and a label
+# line resolve or are no link, a link in a ~~~ fence is code; its own reader refused each of these
+printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\nsee [a](../k/) and [b](xr%%2Dpath-ok.md)\n[Status]: open\n\n~~~\n[c](gone.md)\n~~~\n' > "$N/p.md"
+out="$(km promote --root "$S/b" xr-forms "$N/p.md" --folder k --author X 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && [ -e "$S/b/k/xr-forms.md" ]; } && ok "promote cross-repo: a folder link, a %-escape, a label line and a ~~~ fence pass as km validate reads them" || no "promote cross-repo link forms ($rc: $out)"
+# a path into a mounted brain that is not checked out cannot be checked, so promote refuses it (the dead-link
+# warning trusts such a mount); a name longer than the file system holds is dead, not a crash
+mkdir -p "$S/b/brains/peer"; git -C "$S" update-index --add --cacheinfo "160000,$(printf '1%.0s' $(seq 1 40)),b/brains/peer"
+long=$(printf 'x%.0s' $(seq 1 300)); i=0
+for body in 'see [a](../brains/peer/nope.md)' "an unclosed [[ $long" "[a](${long}.png)"; do i=$((i+1))
+  printf -- '---\ntype: note\ntitle: P\ntimestamp: 2026-08-26\nauthor: X\nstatus: draft\ntags: [t]\n---\n%s\n' "$body" > "$N/p.md"
+  out="$(km promote --root "$S/b" "xr-dead$i" "$N/p.md" --folder k --author X 2>&1)"; rc=$?
+  { [ "$rc" = 2 ] && [ ! -e "$S/b/k/xr-dead$i.md" ] && out_has "do not resolve in the target" && ! out_has Traceback; } \
+    && ok "promote cross-repo: ${body:0:24}... is refused as a dead link" || no "promote cross-repo dead $i ($rc: $out)"
+done
+git -C "$S" rm -q --cached b/brains/peer; rm -rf "$S/b/brains"
 rm -rf "$S" "$N"
 
 # bergab-old: a link to a superseded doc is quiet when its superseded_by chain reaches the linking doc or a doc
