@@ -374,7 +374,7 @@ def _doc_meta(target_rel: str) -> tuple[str | None, list[tuple[str, str | None]]
         fm2 = frontmatter(p.read_text(encoding="utf-8-sig", errors="replace"))
         if isinstance(fm2, dict) and "__error__" not in fm2:
             st = fm2.get("status")
-            succ = [(v, resolve_path("_", v) or resolve_link(target_rel, v)) for v in   # "_": a doc at the root
+            succ = [(v, link_doc("", v, plain=True) or resolve_link(target_rel, v, plain=True)) for v in
                     (str(x).strip() for x in as_list(fm2.get("superseded_by")) if isinstance(x, str)) if v]
     _meta_cache[target_rel] = st, succ
     return st, succ
@@ -404,23 +404,31 @@ def successor_in_sight(rel: str, target: str, linked: dict[str, None]) -> tuple[
     return False, live
 
 
-def resolve_path(rel: str, target: str) -> str | None:
-    """Resolve a link/ref target to a repo-CONTAINED .md path, or None. Document-relative is
-    tried FIRST (Markdown semantics), then repo-root-relative; both are containment-checked so
-    `../escape.md` is never trusted as in-repo."""
-    parts = target.split()
-    target = (parts[0] if parts else "").split("@", 1)[0].split("#", 1)[0].strip()
-    if not target or not target.endswith(".md"):
-        return None
-    for cand in (((ROOT / rel).parent / target), (ROOT / target.lstrip("/"))):
-        if (rp := brain_path(cand)) and known_file(rp):   # a gitignored file is none, as for a slug
-            return rp
-    return None
+def gate_known(cand: str, folder: bool) -> bool:
+    """A link target as the gate and promote count it: a file a clone will have, staged or not yet (known_file:
+    the gate runs before `git add`; a gitignored file is none), or a file or folder the brain's own git index
+    lists. A path in a mounted brain counts only where that brain is checked out and has it on disk (unlike
+    the dead-link pass, which trusts a mount it cannot see); outside a git work tree only what is on disk."""
+    return known_file(cand) or ((index := tracked_paths()) is not None and _listed(index, cand, folder)[0])
 
 
-def resolve_link(rel: str, target: str) -> str | None:
-    """The doc a link or ref `target` in `rel` points at, as the gate reads it: a path, else a bare [[slug]]."""
-    return resolve_path(rel, target) or resolve_slug(target)
+def link_doc(base: str, raw: str, wiki: bool = False, plain: bool = False) -> str | None:
+    """The doc (.md) a link target `raw` written in folder `base` ('' for the root) leads to, as the gate
+    and promote read it: link_path with gate_known, cut at the first @ as resolve_ref cuts a ref (a source
+    pin's @hash, an @branch), a [[wiki]] target without .md tried as `<target>.md`, else by name
+    (resolve_slug); None when there is none. `plain`: a frontmatter value, a name as written (link_path)."""
+    raw = raw.split("@", 1)[0]
+    tp, clean, kind = link_path(base, raw, wiki, known=gate_known, plain=plain)
+    if kind == "missing" and wiki and not clean.endswith(".md"):
+        tp = link_path(base, clean + ".md", wiki, known=gate_known)[0]
+    if tp and tp.endswith(".md"):
+        return tp
+    return resolve_slug(clean) if kind in ("found", "missing") else None   # found: a folder or another file
+
+
+def resolve_link(rel: str, target: str, wiki: bool = False, plain: bool = False) -> str | None:
+    """The doc a link or ref `target` in the doc `rel` points at, as the gate reads it (link_doc)."""
+    return link_doc("" if folder_of(rel) == "." else folder_of(rel), target, wiki, plain)
 
 
 def _norm(s: str) -> str:
@@ -494,14 +502,14 @@ def _targets(text: str, pats, strip=None):
             yield t
 
 
-def link_targets(text: str):
-    """Every link target in `text`: inline and reference links, [[wiki]] links, HTML href/src."""
-    return _targets(text, (INLINE, REFDEF, WIKI, HREF))
-
-
 def path_targets(text: str, strip=None):
-    """The link targets written as a path or URL: link_targets without the [[wiki]] links."""
+    """The link targets written as a path or URL (inline and reference links, HTML href/src), not [[wiki]] links."""
     return _targets(text, (INLINE, REFDEF, HREF), strip)
+
+
+def link_targets(text: str) -> list[tuple[str, bool]]:
+    """Every link target in `text` as (target, whether it is a [[wiki]] link): path_targets, then the [[wiki]] links."""
+    return [(t, False) for t in path_targets(text)] + [(t, True) for t in _targets(text, (WIKI,))]
 
 
 _CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)   # a code span of any number of backticks
@@ -566,7 +574,7 @@ def _cands(base: str, t: str) -> list[str | None]:
     return [_join_repo("", t[1:])] if t.startswith("/") else [_join_repo(base, t), _join_repo("", t)]
 
 
-def link_path(base: str, raw: str, wiki: bool = False) -> tuple[str | None, str, str]:
+def link_path(base: str, raw: str, wiki: bool = False, known=None, plain: bool = False) -> tuple[str | None, str, str]:
     """Where a link target `raw` written in a doc of folder `base` ('' for the root) leads, as
     (repo path or None, cleaned target, kind). kind is 'external' (a URL scheme, //host, an anchor
     alone: no repo target), 'found', 'missing', 'outside' (it leaves the repository), 'machine' (a
@@ -575,23 +583,27 @@ def link_path(base: str, raw: str, wiki: bool = False) -> tuple[str | None, str,
     %-escapes decoded. A target is found when the git index lists it as a file or folder (with a
     trailing / a folder only), case-exact and NFC-normalised (a mounted brain's files by its own
     index): document-relative first, then from the repo root (a leading / means the root only).
-    Outside a git work tree (tracked_paths is None) every target counts as found."""
+    Outside a git work tree (tracked_paths is None) every target counts as found. `known(path, folder)`
+    replaces that index lookup where given (the gate's: gate_known). A [[wiki]] name keeps a ? (it is no
+    query), and a `plain` target (a frontmatter value: a name as written, not Markdown link text) also
+    keeps angle brackets, a title-like ending and its escapes; both are still cut at #."""
     t = str(raw).strip()
-    if not wiki and t.startswith("<") and ">" in t:
+    md = not (wiki or plain)
+    if md and t.startswith("<") and ">" in t:
         t = t[1:t.index(">")].strip()
-    elif not wiki and (mt := _TITLE.match(t) or _PAREN_TITLE.match(t)):
+    elif md and (mt := _TITLE.match(t) or _PAREN_TITLE.match(t)):
         t = mt.group(1).strip()
-    t = re.split(r"[#?]", t, maxsplit=1)[0].strip()
+    t = re.split(r"[#?]" if md else "#", t, maxsplit=1)[0].strip()
     if _MACHINE.match(t):
         return None, t, "machine"
     if not t or t.startswith("//") or _SCHEME.match(t):
         return None, "", "external"
-    t = unicodedata.normalize("NFC", urllib.parse.unquote(_MD_ESCAPE.sub(r"\1", t)))
+    t = unicodedata.normalize("NFC", t if plain else urllib.parse.unquote(_MD_ESCAPE.sub(r"\1", t)))
     if "\\" in t:                              # left after the Markdown escapes: a Windows path
         return None, t, "backslash"
     cands = _cands(base, t)
     for cand in cands:
-        if cand is not None and _in_index(cand, folder=t.endswith("/")):
+        if cand is not None and (known or _in_index)(cand, t.endswith("/")):
             return cand, t, "found"
     return None, t, ("machine" if t.startswith(_MACHINE_ROOTS) else "outside" if cands[0] is None else "missing")
 
@@ -669,7 +681,7 @@ def check_index_tree() -> None:
             continue
         linked: set[str] = set()
         _text = idx_path.read_text(encoding="utf-8-sig", errors="replace")
-        for _tgt, _wiki in [(t, False) for t in path_targets(_text)] + [(t, True) for t in _targets(_text, (WIKI,))]:
+        for _tgt, _wiki in link_targets(_text):
             _tp, _clean, _kind = link_path(base, _tgt, wiki=_wiki)
             if _kind in ("found", "missing") and not _clean.endswith(".md"):   # [[./p]], [[slug]]: a doc by its name first
                 _tp = link_path(base, _clean + ".md")[0] or resolve_slug(_clean) or _tp
@@ -1223,8 +1235,9 @@ def main() -> int:
             if served:
                 # every link once (one finding per target), resolved before any is judged: a successor the doc
                 # also links, a mounted brain's included, keeps the link to its predecessor quiet
-                _raw = dict.fromkeys([*link_targets(text), *map(str, as_list(fm.get("related")))])
-                _linked = dict.fromkeys(_tp for _tgt in _raw if (_tp := resolve_link(rel, _tgt)))
+                _raw = dict.fromkeys([*((t, w, False) for t, w in link_targets(text)),
+                                      *((str(v), False, True) for v in as_list(fm.get("related")))])
+                _linked = dict.fromkeys(_tp for _t, _w, _p in _raw if (_tp := resolve_link(rel, _t, _w, _p)))
                 for _tp in _linked:
                     if _tp == rel or _tp.startswith(SKIP_PREFIXES):
                         continue

@@ -765,9 +765,13 @@ def known_file(rel: str) -> bool:
     clones the brain, in md_named's sense: a .md file on disk that git tracks or would track (a draft
     not yet `git add`ed counts, a gitignored file does not). On disk is enough for a file in a mounted
     brain (a repository of its own, git lists none of its files), for any other file (an image, a PDF:
-    git lists the .md files only) and in a brain that is not a git work tree. Case-exact, as md_named."""
+    git lists the .md files only) and in a brain that is not a git work tree. Case-exact, as md_named.
+    A path the file system cannot hold (a name over its length limit, a NUL) is no file."""
     if not rel.endswith(".md") or under(rel, submodule_prefixes()):
-        return (ROOT / rel).is_file()
+        try:
+            return (ROOT / rel).is_file()
+        except (OSError, ValueError):
+            return False
     return rel in md_named(rel.rsplit("/", 1)[-1])
 
 
