@@ -132,6 +132,12 @@ def has_heading(text: str, rx: re.Pattern) -> bool:
     return bool(_unfenced(rx, text))
 
 
+def generated_span(text: str) -> tuple[int, int] | None:
+    """Where the generated table sits, from its begin line to the end of its end line, or None."""
+    m = _markers(text)
+    return (m[0].start(), m[1].end()) if isinstance(m, tuple) else None
+
+
 def marker_problem(text: str) -> str | None:
     """What is wrong with the marker lines, or None (both in place, or neither)."""
     m = _markers(text)
